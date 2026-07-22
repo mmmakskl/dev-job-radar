@@ -1,0 +1,7 @@
+telethon==1.44.0
+python-dotenv==1.2.2
+openai==2.46.0
+gspread==6.2.1
+google-auth==2.56.0
+qrcode==8.2
+pytest==8.4.2
