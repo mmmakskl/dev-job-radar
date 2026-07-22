@@ -375,7 +375,7 @@ def _export_to_sheets_sync(
     published_at: datetime,
 ) -> bool:
     """Дозаписывает отсутствующие строки и устойчив к частичному сбою."""
-    gc = gspread.service_account(filename="credentials.json")
+    gc = gspread.service_account(filename=config.GOOGLE_CREDENTIALS_PATH)
     spreadsheet = gc.open_by_url(config.GOOGLE_SHEET_URL)
     full_sheet = _get_or_create_worksheet(
         spreadsheet,
@@ -429,7 +429,7 @@ def _export_to_sheets_sync(
 
 def _get_existing_links_sync() -> set[str]:
     """Загружает ссылки из legacy первого листа для обратной совместимости."""
-    gc = gspread.service_account(filename="credentials.json")
+    gc = gspread.service_account(filename=config.GOOGLE_CREDENTIALS_PATH)
     spreadsheet = gc.open_by_url(config.GOOGLE_SHEET_URL)
     worksheet = spreadsheet.sheet1
     return {link.strip() for link in worksheet.col_values(2) if link.strip()}

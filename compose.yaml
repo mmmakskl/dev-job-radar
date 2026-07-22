@@ -1,0 +1,23 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data
+      SESSION_PATH: ""
+      STATE_FILE_PATH: /app/data/state.jsonl
+      GOOGLE_CREDENTIALS_PATH: /run/secrets/google-credentials.json
+    volumes:
+      - ./data:/app/data
+      - ./secrets/google-credentials.json:/run/secrets/google-credentials.json:ro
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

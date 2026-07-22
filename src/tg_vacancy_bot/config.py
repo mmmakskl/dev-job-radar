@@ -4,6 +4,8 @@
 import os
 from dotenv import load_dotenv
 
+from tg_vacancy_bot.paths import resolve_session_path, resolve_state_path
+
 load_dotenv()
 
 # Telegram API credentials
@@ -12,9 +14,18 @@ try:
 except ValueError:
     API_ID = 0
 API_HASH = os.getenv('API_HASH') or os.getenv('TG_API_HASH', '')
-SESSION_NAME = os.getenv('SESSION_NAME', 'my_account')
+DATA_DIR = os.getenv('DATA_DIR') or None
+SESSION_NAME = resolve_session_path(
+    os.getenv('SESSION_NAME', 'my_account'),
+    data_dir=DATA_DIR,
+    session_path=os.getenv('SESSION_PATH') or None,
+)
 MISTRAL_API_KEY = os.getenv('MISTRAL_API_KEY', '')
 GOOGLE_SHEET_URL = os.getenv('GOOGLE_SHEET_URL', '')
+GOOGLE_CREDENTIALS_PATH = os.getenv(
+    'GOOGLE_CREDENTIALS_PATH',
+    'credentials.json',
+)
 OUTPUT_TIMEZONE = os.getenv('OUTPUT_TIMEZONE', 'Europe/Moscow')
 GOOGLE_SHEET_FULL_TITLE = os.getenv(
     'GOOGLE_SHEET_FULL_TITLE',
@@ -40,7 +51,10 @@ for ch in _raw_channels:
 KEYWORD_FILTER = ['go', 'golang']  # Регистронезависимый поиск
 
 # Долговременная дедупликация успешно экспортированных вакансий
-STATE_FILE_PATH = os.getenv('STATE_FILE_PATH', 'data/state.jsonl')
+STATE_FILE_PATH = resolve_state_path(
+    data_dir=DATA_DIR,
+    state_path=os.getenv('STATE_FILE_PATH') or None,
+)
 TEXT_HASH_TTL_DAYS = int(os.getenv('TEXT_HASH_TTL_DAYS', '30'))
 
 # Очередь live listener. Для последовательного rate limit рекомендуется 1 worker.

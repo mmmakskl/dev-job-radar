@@ -3,11 +3,13 @@ VENV ?= venv
 PIP := $(VENV)/bin/pip
 PY := $(VENV)/bin/python
 PYTHONPATH := src
+DOCKER_COMPOSE ?= docker compose
 
 .DEFAULT_GOAL := help
 
 .PHONY: help init venv install env data auth auth-force run live history \
-	discover channels smoke compile test check doctor state-info clean-cache clean
+	discover channels smoke compile test check doctor state-info clean-cache clean \
+	docker-build docker-up docker-down docker-logs docker-status docker-check
 
 help:
 	@echo "Telegram Go Vacancy Bot"
@@ -35,6 +37,14 @@ help:
 	@echo "  make doctor        проверить локальное окружение"
 	@echo "  make state-info    показать информацию о data/state.jsonl"
 	@echo "  make clean-cache   удалить только безопасные Python/tool caches"
+	@echo ""
+	@echo "Docker Compose:"
+	@echo "  make docker-build  собрать production-образ"
+	@echo "  make docker-up     собрать и запустить bot в фоне"
+	@echo "  make docker-down   остановить Compose без удаления persistent data"
+	@echo "  make docker-logs   следить за логами bot"
+	@echo "  make docker-status показать состояние Compose"
+	@echo "  make docker-check  проверить compose.yaml без запуска"
 
 venv:
 	@test -x "$(PY)" || $(PYTHON) -m venv "$(VENV)"
@@ -124,3 +134,21 @@ clean-cache:
 	@echo "Safe Python/tool caches removed"
 
 clean: clean-cache
+
+docker-build:
+	$(DOCKER_COMPOSE) build
+
+docker-up:
+	$(DOCKER_COMPOSE) up -d --build --remove-orphans
+
+docker-down:
+	$(DOCKER_COMPOSE) down
+
+docker-logs:
+	$(DOCKER_COMPOSE) logs --tail=200 -f bot
+
+docker-status:
+	$(DOCKER_COMPOSE) ps
+
+docker-check:
+	$(DOCKER_COMPOSE) config --quiet

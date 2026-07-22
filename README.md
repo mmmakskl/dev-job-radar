@@ -211,3 +211,311 @@ data/
 ```
 
 Файлы `.env`, `credentials.json`, Telegram-сессии и сгенерированные данные остаются локальными и игнорируются Git.
+
+## Production deployment
+
+Production использует один Docker Compose service `bot` без опубликованных
+портов. Контейнер работает не от root, автоматически перезапускается политикой
+`unless-stopped` и получает SIGTERM напрямую. Постоянные файлы находятся
+в `/app/data` и bind-mounted из `./data` на VPS. Google credential
+монтируется отдельно и read-only.
+
+### Требования к VPS
+
+- Ubuntu 24.04;
+- пользователь `deploy` с рабочим SSH-входом;
+- Docker Engine и Docker Compose plugin;
+- доступ пользователя `deploy` к Docker;
+- каталог `/home/deploy/apps/dev-job-radar`;
+- минимум несколько гигабайт свободного диска и настроенный swap.
+
+Проверка:
+
+```bash
+ssh deploy@<VPS_HOST>
+docker --version
+docker compose version
+docker info >/dev/null
+```
+
+Не добавляйте `deploy` в `sudoers` без необходимости. Для Docker
+обычно достаточно членства в группе `docker`:
+
+```bash
+sudo usermod -aG docker deploy
+newgrp docker
+```
+
+После команды нужно заново войти по SSH.
+
+### Read-only Deploy Key: VPS → GitHub
+
+На VPS под пользователем `deploy`:
+
+```bash
+install -d -m 700 ~/.ssh
+ssh-keygen -t ed25519 -f ~/.ssh/dev-job-radar-github -C "dev-job-radar deploy key"
+```
+
+Файл без `.pub` — приватный и остаётся только на VPS. Содержимое
+`~/.ssh/dev-job-radar-github.pub` добавьте в GitHub:
+`Repository Settings → Deploy keys → Add deploy key`. Доступ на запись
+не включайте.
+
+Настройте отдельный identity:
+
+```sshconfig
+Host github.com
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/dev-job-radar-github
+    IdentitiesOnly yes
+```
+
+Затем:
+
+```bash
+chmod 600 ~/.ssh/config ~/.ssh/dev-job-radar-github
+ssh -T git@github.com
+```
+
+GitHub обычно отвечает, что аутентификация успешна, но shell access не
+предоставляется.
+
+### Первое клонирование и локальные production-файлы
+
+```bash
+mkdir -p /home/deploy/apps
+cd /home/deploy/apps
+git clone git@github.com:mmmakskl/dev-job-radar.git
+cd dev-job-radar
+git branch --show-current
+```
+
+Последняя команда должна вывести `master`.
+
+Создайте production `.env` непосредственно на VPS:
+
+```bash
+cp .env.example .env
+chmod 600 .env
+nano .env
+```
+
+Не коммитьте и не выводите его содержимое. Compose принудительно задаёт
+`DATA_DIR=/app/data`, `STATE_FILE_PATH=/app/data/state.jsonl` и
+`GOOGLE_CREDENTIALS_PATH=/run/secrets/google-credentials.json`.
+
+Подготовьте постоянные каталоги для non-root UID контейнера `10001`:
+
+```bash
+mkdir -p data secrets
+sudo chown -R 10001:10001 data secrets
+sudo chmod 700 data secrets
+```
+
+Передайте Google service-account JSON на VPS безопасным каналом во временный
+файл, затем установите его без вывода содержимого:
+
+```bash
+sudo install -o 10001 -g 10001 -m 0400 \
+  /path/to/uploaded/google-credentials.json \
+  /home/deploy/apps/dev-job-radar/secrets/google-credentials.json
+```
+
+Исходный временный файл после проверки можно удалить вручную. Production-файл
+никогда не добавляется в Git.
+
+### Telegram session и миграция state
+
+Рекомендуемый первый вход выполняется прямо в одноразовом Compose container:
+
+```bash
+cd /home/deploy/apps/dev-job-radar
+docker compose config --quiet
+docker compose build
+docker compose run --rm bot python scripts/auth.py
+```
+
+QR-код появится в терминале, а session сохранится в
+`./data/my_account.session`. Не запускайте одновременно auth, history и
+live с одной session.
+
+Если нужно перенести старые локальные файлы, сначала скопируйте их на VPS под
+временными именами, затем:
+
+```bash
+sudo install -o 10001 -g 10001 -m 0600 \
+  /tmp/my_account.session \
+  /home/deploy/apps/dev-job-radar/data/my_account.session
+sudo install -o 10001 -g 10001 -m 0600 \
+  /tmp/state.jsonl \
+  /home/deploy/apps/dev-job-radar/data/state.jsonl
+```
+
+Не переносите `.session-journal` во время работающего Telethon-процесса.
+Сначала корректно остановите локальный bot.
+
+### Первый ручной запуск
+
+```bash
+cd /home/deploy/apps/dev-job-radar
+docker compose config --quiet
+docker compose build
+docker compose up -d --remove-orphans
+docker compose ps
+docker compose logs --tail=100 bot
+```
+
+Убедитесь, что `bot` имеет статус `running` и в логах есть успешная
+Telegram-авторизация. Только после ручной проверки production можно считать
+запущенным.
+
+Управление:
+
+```bash
+make docker-status
+make docker-logs
+docker compose restart bot
+make docker-down
+make docker-up
+```
+
+Для последующих ручных fast-forward deploy используется та же логика, что и в
+GitHub Actions:
+
+```bash
+cd /home/deploy/apps/dev-job-radar
+bash scripts/deploy.sh
+```
+
+`docker compose down` не удаляет bind-mounted `data`. Никогда не
+используйте `down -v` и не удаляйте каталог `data`: там находятся
+Telegram session и дедупликация.
+
+### GitHub Actions → VPS
+
+Создайте отдельный SSH-ключ C на доверенной машине. Его нельзя переиспользовать
+как личный ключ или GitHub Deploy Key:
+
+```bash
+ssh-keygen -t ed25519 \
+  -f ~/.ssh/github-actions-dev-job-radar \
+  -C "github-actions dev-job-radar"
+ssh-copy-id -i ~/.ssh/github-actions-dev-job-radar.pub deploy@<VPS_HOST>
+```
+
+Приватный файл `~/.ssh/github-actions-dev-job-radar` добавляется только в
+GitHub Secret `VPS_SSH_KEY`. Удобнее сделать это без печати:
+
+```bash
+gh secret set VPS_SSH_KEY < ~/.ssh/github-actions-dev-job-radar
+gh secret set VPS_HOST
+gh secret set VPS_USER
+```
+
+Для `VPS_USER` используйте `deploy`. IP/hostname хранится только в
+`VPS_HOST`.
+
+### VPS_KNOWN_HOSTS и проверка fingerprint
+
+Сначала на VPS через уже доверенное соединение получите fingerprint host key:
+
+```bash
+sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+```
+
+На Mac получите публичный key, не отключая host verification:
+
+```bash
+ssh-keyscan -t ed25519 <VPS_HOST> > /tmp/dev-job-radar-known-hosts
+ssh-keygen -lf /tmp/dev-job-radar-known-hosts
+```
+
+Сравните SHA256 fingerprints по двум независимым каналам. Только при полном
+совпадении добавьте файл в Secret:
+
+```bash
+gh secret set VPS_KNOWN_HOSTS < /tmp/dev-job-radar-known-hosts
+```
+
+Итого workflow использует четыре Secrets:
+
+- `VPS_HOST`;
+- `VPS_USER`;
+- `VPS_SSH_KEY`;
+- `VPS_KNOWN_HOSTS`.
+
+Workflow запускается после push в `master` и вручную через
+`workflow_dispatch`. Он делает только fast-forward pull, проверяет Compose,
+собирает image, запускает service, проверяет running status и удаляет только
+dangling images. `.env`, credentials, session и `data` не
+передаются из GitHub Actions.
+
+После успешного первого ручного запуска сделайте следующий push в `master`
+или откройте `Actions → Deploy production → Run workflow`, затем проверьте
+job и на VPS:
+
+```bash
+cd /home/deploy/apps/dev-job-radar
+docker compose ps
+docker compose logs --tail=100 bot
+```
+
+### Три SSH-ключа: не перепутайте
+
+**Ключ A — Mac → VPS**
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/dev-job-radar-vps -C "Mac to VPS"
+ssh-copy-id -i ~/.ssh/dev-job-radar-vps.pub deploy@<VPS_HOST>
+ssh -i ~/.ssh/dev-job-radar-vps deploy@<VPS_HOST>
+```
+
+- приватный: `~/.ssh/dev-job-radar-vps`, остаётся на Mac;
+- публичный: файл с `.pub`, попадает в
+  `/home/deploy/.ssh/authorized_keys`.
+
+**Ключ B — VPS → GitHub Deploy Key**
+
+- создаётся на VPS как `~/.ssh/dev-job-radar-github`;
+- публичный `.pub` добавляется в Repository Settings → Deploy keys;
+- приватный остаётся только на VPS;
+- Deploy Key только read-only;
+- проверка: `ssh -T git@github.com`.
+
+**Ключ C — GitHub Actions → VPS**
+
+- отдельный ключ `github-actions-dev-job-radar`;
+- публичный ключ добавляется в
+  `/home/deploy/.ssh/authorized_keys`;
+- приватный добавляется в GitHub Secret `VPS_SSH_KEY`;
+- приватный ключ не отправляется в чат и не коммитится.
+
+### Recovery и контроль диска
+
+При неудачном deploy сначала смотрите:
+
+```bash
+docker compose ps
+docker compose logs --tail=200 bot
+git status --short
+git log -5 --oneline
+```
+
+Исправление выпускается новым commit либо безопасным `git revert` с
+последующим push в `master`. Не используйте `git reset --hard` или
+`git clean` на сервере.
+
+Контроль места:
+
+```bash
+df -h /
+docker system df
+docker image ls
+docker image prune -f
+```
+
+`docker image prune -f` удаляет только dangling images. Не запускайте
+`docker system prune --volumes`: volumes и bind-mounted данные должны
+сохраняться между сборками.

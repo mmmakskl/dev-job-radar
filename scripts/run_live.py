@@ -15,6 +15,10 @@ from tg_vacancy_bot.logging_config import configure_logging
 from tg_vacancy_bot.pipeline.dedupe_state import JsonlDedupeState
 from tg_vacancy_bot.pipeline.prefilter import contains_keywords
 from tg_vacancy_bot.pipeline.processor import VacancyProcessor
+from tg_vacancy_bot.runtime import (
+    install_shutdown_signal_handlers,
+    wait_for_disconnect_or_shutdown,
+)
 from tg_vacancy_bot.storage.sheets import (
     append_to_google_sheet,
     get_existing_links,
@@ -164,6 +168,8 @@ async def stop_workers(worker_tasks: list[asyncio.Task]) -> None:
 async def main():
     """Основная функция запуска бота"""
     config.validate_required_settings()
+    shutdown_event = asyncio.Event()
+    install_shutdown_signal_handlers(shutdown_event)
     if config.LIVE_QUEUE_MAXSIZE <= 0:
         raise RuntimeError("LIVE_QUEUE_MAXSIZE должен быть больше нуля")
     if config.LIVE_WORKERS <= 0:
@@ -206,7 +212,7 @@ async def main():
         logging.info(f"Авторизован как: {me.first_name} (@{me.username})")
         logging.info("Бот запущен. Ожидаю новые сообщения...")
 
-        await client.run_until_disconnected()
+        await wait_for_disconnect_or_shutdown(client, shutdown_event)
     finally:
         if client.is_connected():
             await client.disconnect()

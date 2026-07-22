@@ -1,5 +1,12 @@
 .env
+.env.*
+!.env.example
 credentials.json
+secrets/
+*.pem
+*.key
+id_rsa
+id_ed25519
 *.session
 *.session-journal
 
@@ -14,3 +21,10 @@ __pycache__/
 data/*.jsonl
 found_channels.json
 vacancies.xlsx
+logs/
+*.log
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
