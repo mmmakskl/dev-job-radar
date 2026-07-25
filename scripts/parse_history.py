@@ -36,9 +36,7 @@ client = TelegramClient(config.SESSION_NAME, config.API_ID, config.API_HASH)
 
 def build_history_notifier():
     """Включает history-уведомления только отдельным явным флагом."""
-    if not (
-        config.TELEGRAM_NOTIFY_ENABLED and config.TELEGRAM_NOTIFY_HISTORY
-    ):
+    if not (config.TELEGRAM_NOTIFY_ENABLED and config.TELEGRAM_NOTIFY_HISTORY):
         return None
 
     async def notify_vacancy(**kwargs) -> bool:
@@ -79,40 +77,38 @@ async def parse_history():
 
     # Принудительно кэшируем диалоги для корректной работы с приватными каналами
     await client.get_dialogs()
-    
+
     me = await client.get_me()
     logging.info(f"✅ Подключен как: {me.first_name} (@{me.username})")
-    
+
     # Вычисляем дату недели назад (с timezone для корректного сравнения)
     one_week_ago = datetime.now(timezone.utc) - timedelta(days=7)
     logging.info(f"📅 Парсим сообщения с {one_week_ago.strftime('%Y-%m-%d %H:%M:%S')}")
-    
+
     total_messages = 0
     total_filtered = 0
     total_matched = 0
-    
+
     # Итерируем по каждому каналу
     for channel_identifier in config.TARGET_CHANNELS:
         try:
             logging.info(f"\n🔍 Обработка канала: {channel_identifier}")
-            
+
             channel_messages = 0
             filtered_before = processor.keyword_matches
             matched_before = processor.saved_matches
-            
+
             # Получаем сообщения за последнюю неделю
             async for message in client.iter_messages(
-                channel_identifier,
-                offset_date=datetime.now(),
-                reverse=False
+                channel_identifier, offset_date=datetime.now(), reverse=False
             ):
                 # Проверяем дату сообщения
                 if message.date < one_week_ago:
                     break
-                
+
                 total_messages += 1
                 channel_messages += 1
-                
+
                 post_link = get_message_link(message)
                 try:
                     text = message.text or ''
@@ -130,18 +126,18 @@ async def parse_history():
             channel_matched = processor.saved_matches - matched_before
             total_filtered += channel_filtered
             total_matched += channel_matched
-            
+
             logging.info(
                 f"📊 Канал {channel_identifier}:\n"
                 f"   Всего сообщений: {channel_messages}\n"
                 f"   С ключевыми словами: {channel_filtered}\n"
                 f"   Релевантных вакансий: {channel_matched}"
             )
-            
+
         except Exception as e:
             logging.error(f"❌ Ошибка при обработке канала {channel_identifier}: {e}")
             continue
-    
+
     logging.info(
         f"\n\n🎯 ИТОГОВАЯ СТАТИСТИКА:\n"
         f"   Всего обработано сообщений: {total_messages}\n"

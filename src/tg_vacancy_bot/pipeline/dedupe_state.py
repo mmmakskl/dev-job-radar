@@ -57,9 +57,7 @@ class JsonlDedupeState:
 
         post_link = event["post_link"]
         text_hash = event["text_hash"]
-        created_at = datetime.fromisoformat(
-            event["created_at"].replace("Z", "+00:00")
-        )
+        created_at = datetime.fromisoformat(event["created_at"].replace("Z", "+00:00"))
         if created_at.tzinfo is None:
             raise ValueError("created_at должен содержать timezone")
         if not isinstance(post_link, str) or not isinstance(text_hash, str):

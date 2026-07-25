@@ -85,9 +85,7 @@ def _format_datetime(value: datetime) -> str:
     """Форматирует дату в OUTPUT_TIMEZONE; naive-дату считает UTC."""
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(ZoneInfo(config.OUTPUT_TIMEZONE)).strftime(
-        "%Y-%m-%d %H:%M"
-    )
+    return value.astimezone(ZoneInfo(config.OUTPUT_TIMEZONE)).strftime("%Y-%m-%d %H:%M")
 
 
 def _join(values: list[str]) -> str:
@@ -118,7 +116,11 @@ def _location_label(data: VacancyAnalysis) -> str:
 
 
 def _number_label(value: float | int) -> str:
-    return str(int(value)) if isinstance(value, float) and value.is_integer() else str(value)
+    return (
+        str(int(value))
+        if isinstance(value, float) and value.is_integer()
+        else str(value)
+    )
 
 
 def _salary_label(data: VacancyAnalysis) -> str:
@@ -137,9 +139,7 @@ def _salary_label(data: VacancyAnalysis) -> str:
     if salary_from is not None and salary_to is not None:
         if salary_from == salary_to:
             return f"{_number_label(salary_from)}{suffix}"
-        return (
-            f"{_number_label(salary_from)}–{_number_label(salary_to)}{suffix}"
-        )
+        return f"{_number_label(salary_from)}–{_number_label(salary_to)}{suffix}"
     if salary_from is not None:
         return f"от {_number_label(salary_from)}{suffix}"
     return f"до {_number_label(salary_to)}{suffix}"
@@ -308,7 +308,9 @@ def _format_worksheet(worksheet, headers: list[str], *, full: bool) -> None:
     worksheet.spreadsheet.batch_update({"requests": requests})
 
 
-def _get_or_create_worksheet(spreadsheet, title: str, headers: list[str], *, full: bool):
+def _get_or_create_worksheet(
+    spreadsheet, title: str, headers: list[str], *, full: bool
+):
     try:
         worksheet = spreadsheet.worksheet(title)
     except gspread.WorksheetNotFound:

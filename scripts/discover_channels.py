@@ -71,33 +71,35 @@ async def fetch_channels(queries: list[str], show_all: bool, output: str | None)
         require_google_sheets=False,
     )
     client = TelegramClient(config.SESSION_NAME, config.API_ID, config.API_HASH)
-    
+
     print("🔄 Подключаюсь к Telegram...")
     await client.connect()
-    
+
     # Проверяем, авторизован ли клиент
     if not await client.is_user_authorized():
         print("❌ Сессия не авторизована. Запустите make auth для авторизации.")
         await client.disconnect()
         return
     print(f"✓ Подключено к Telegram как: {await client.get_me()}")
-    
+
     found_channels = []
-    
+
     print("\nСканируем диалоги...")
     async for dialog in client.iter_dialogs():
         # Фильтруем только каналы и группы
         if not (dialog.is_channel or dialog.is_group):
             continue
-        
+
         if not matches_dialog_name(dialog.name, queries, show_all):
             continue
-        
+
         # Добавляем найденный канал
         channel_info = {
             "name": dialog.name,
-            "username": dialog.entity.username if hasattr(dialog.entity, 'username') else None,
-            "id": dialog.id
+            "username": (
+                dialog.entity.username if hasattr(dialog.entity, 'username') else None
+            ),
+            "id": dialog.id,
         }
         found_channels.append(channel_info)
         identifier = channel_info['username'] or channel_info['id']
@@ -106,19 +108,20 @@ async def fetch_channels(queries: list[str], show_all: bool, output: str | None)
             f"(@{channel_info['username'] or 'закрытый'}, id={channel_info['id']}) "
             f"-> TARGET_CHANNELS: {identifier}"
         )
-    
+
     # Сохраняем в файл
     output_file = resolve_output_path(output)
     output_file.parent.mkdir(parents=True, exist_ok=True)
     with output_file.open('w', encoding='utf-8') as f:
         json.dump(found_channels, f, ensure_ascii=False, indent=2)
-    
+
     print(f"\n{'='*60}")
     print(f"Найдено и сохранено каналов: {len(found_channels)}")
     print(f"Файл: {output_file}")
     print(f"{'='*60}")
-    
+
     await client.disconnect()
+
 
 if __name__ == '__main__':
     args = parse_args()

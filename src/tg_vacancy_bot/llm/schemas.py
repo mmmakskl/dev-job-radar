@@ -257,9 +257,9 @@ def validate_analysis_result(data: dict) -> VacancyAnalysis | None:
         ),
         salary_from=_number(data, "salary_from"),
         salary_to=_number(data, "salary_to"),
-        currency=_text(data, "currency").upper()
-        if data.get("currency")
-        else NOT_SPECIFIED,
+        currency=(
+            _text(data, "currency").upper() if data.get("currency") else NOT_SPECIFIED
+        ),
         salary_period=normalize_choice(
             _text(data, "salary_period"),
             SALARY_PERIODS,

@@ -60,7 +60,11 @@ def test_partial_sheet_failure_is_recovered(monkeypatch) -> None:
                 raise RuntimeError("temporary short-sheet failure")
             self.rows.extend(rows)
             row_number = len(self.rows) + 1
-            return {"updates": {"updatedRange": f"'{self.title}'!A{row_number}:M{row_number}"}}
+            return {
+                "updates": {
+                    "updatedRange": f"'{self.title}'!A{row_number}:M{row_number}"
+                }
+            }
 
         def insert_note(self, cell: str, note: str):
             self.notes[cell] = note
@@ -100,4 +104,3 @@ def test_partial_sheet_failure_is_recovered(monkeypatch) -> None:
     assert len(full_sheet.rows) == 1
     assert len(short_sheet.rows) == 1
     assert "vacancy_id:jobs_123" in short_sheet.notes.values()
-

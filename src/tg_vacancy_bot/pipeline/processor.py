@@ -69,9 +69,8 @@ class VacancyProcessor:
 
         text_hash = build_text_hash(raw_text)
         vacancy_id = build_vacancy_id(post_link)
-        if (
-            self.dedupe_state is not None
-            and self.dedupe_state.is_duplicate(post_link, text_hash, vacancy_id)
+        if self.dedupe_state is not None and self.dedupe_state.is_duplicate(
+            post_link, text_hash, vacancy_id
         ):
             logging.info("Пропуск: дубликат вакансии (%s)", post_link)
             return False

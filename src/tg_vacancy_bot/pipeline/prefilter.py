@@ -73,8 +73,7 @@ def candidate_profile_reasons(text: str) -> list[str]:
         return []
 
     has_hiring_signal = any(
-        re.search(pattern, text, re.IGNORECASE)
-        for pattern in _HIRING_SIGNAL_PATTERNS
+        re.search(pattern, text, re.IGNORECASE) for pattern in _HIRING_SIGNAL_PATTERNS
     )
     if has_hiring_signal:
         return []

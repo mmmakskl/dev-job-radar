@@ -1,6 +1,7 @@
 """
 Конфигурация системы агрегации вакансий из Telegram.
 """
+
 import os
 from dotenv import load_dotenv
 
@@ -11,11 +12,7 @@ load_dotenv()
 
 def parse_bool_env(value: str | None) -> bool:
     """Возвращает True только для явно включающих значений env."""
-    return (
-        value.strip().casefold() in {"1", "true", "yes", "on"}
-        if value
-        else False
-    )
+    return value.strip().casefold() in {"1", "true", "yes", "on"} if value else False
 
 
 def parse_telegram_target(value: str | None) -> str | int:

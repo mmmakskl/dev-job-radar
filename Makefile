@@ -2,14 +2,16 @@ PYTHON ?= python3
 VENV ?= venv
 PIP := $(VENV)/bin/pip
 PY := $(VENV)/bin/python
+PIP_AUDIT := $(VENV)/bin/pip-audit
 PYTHONPATH := src
 DOCKER_COMPOSE ?= docker compose
 
 .DEFAULT_GOAL := help
 
 .PHONY: help init venv install env data auth auth-force run live history \
-	discover channels smoke compile test check doctor state-info clean-cache clean \
-	docker-build docker-up docker-down docker-logs docker-status docker-check
+	discover channels smoke compile test check lint format-check coverage security ci \
+	doctor state-info clean-cache clean docker-build docker-build-check docker-up \
+	docker-down docker-logs docker-status docker-check
 
 help:
 	@echo "Telegram Go Vacancy Bot"
@@ -17,7 +19,7 @@ help:
 	@echo "Setup:"
 	@echo "  make init          создать venv, установить зависимости, подготовить .env и data/"
 	@echo "  make venv          создать virtualenv, если он отсутствует"
-	@echo "  make install       обновить pip и установить requirements.txt"
+	@echo "  make install       обновить pip и установить runtime/dev зависимости"
 	@echo "  make env           создать .env из .env.example без перезаписи существующего"
 	@echo ""
 	@echo "Run (используют внешние API):"
@@ -32,8 +34,13 @@ help:
 	@echo ""
 	@echo "Validation and diagnostics (без API-запросов):"
 	@echo "  make compile       проверить синтаксис src и scripts"
-	@echo "  make test          запустить pytest"
+	@echo "  make test          запустить изолированные pytest-тесты без live"
 	@echo "  make check         выполнить compile и test"
+	@echo "  make lint          проверить код через ruff"
+	@echo "  make format-check  проверить форматирование через black"
+	@echo "  make coverage      запустить тесты с pytest-cov"
+	@echo "  make security      проверить runtime зависимости через pip-audit"
+	@echo "  make ci            выполнить все обязательные CI-проверки"
 	@echo "  make doctor        проверить локальное окружение"
 	@echo "  make state-info    показать информацию о data/state.jsonl"
 	@echo "  make clean-cache   удалить только безопасные Python/tool caches"
@@ -52,6 +59,7 @@ venv:
 install: venv
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt
+	$(PIP) install -r requirements-dev.txt
 
 env:
 	@if [ -f .env ]; then \
@@ -92,9 +100,26 @@ compile: venv
 	PYTHONPATH=$(PYTHONPATH) $(PY) -m compileall -q src scripts
 
 test: venv
-	PYTHONPATH=$(PYTHONPATH) $(PY) -m pytest -q
+	PYTHONPATH=$(PYTHONPATH) $(PY) -m pytest -q -m "not live"
 
 check: compile test
+
+lint: venv
+	$(PY) -m ruff check src scripts tests
+
+format-check: venv
+	$(PY) -m black --check src scripts tests
+
+coverage: venv
+	PYTHONPATH=$(PYTHONPATH) $(PY) -m pytest --cov=tg_vacancy_bot --cov-report=term-missing -m "not live"
+
+security: venv
+	$(PIP_AUDIT) -r requirements.txt
+
+docker-build-check:
+	docker build --tag tg-vacancy-bot:ci .
+
+ci: compile test lint format-check security docker-build-check
 
 doctor:
 	@for item in .env .env.example requirements.txt credentials.json; do \

@@ -50,7 +50,11 @@ def _location_label(data: VacancyAnalysis) -> str | None:
 
 
 def _number_label(value: float | int) -> str:
-    return str(int(value)) if isinstance(value, float) and value.is_integer() else str(value)
+    return (
+        str(int(value))
+        if isinstance(value, float) and value.is_integer()
+        else str(value)
+    )
 
 
 def _salary_label(data: VacancyAnalysis) -> str | None:
@@ -95,9 +99,7 @@ def format_vacancy_notification(
         ("Зарплата", _salary_label(data)),
     ]
     stack = [
-        value
-        for value in data.required_stack + data.preferred_stack
-        if _known(value)
+        value for value in data.required_stack + data.preferred_stack if _known(value)
     ]
     if stack:
         fields.append(("Стек", ", ".join(stack[:6])))

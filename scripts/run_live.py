@@ -2,6 +2,7 @@
 Основной модуль системы агрегации вакансий из Telegram
 Использует Telethon для мониторинга каналов и обработки новых сообщений
 """
+
 import asyncio
 import logging
 from dataclasses import dataclass
@@ -37,11 +38,7 @@ configure_logging(
 )
 
 # Инициализация клиента
-client = TelegramClient(
-    config.SESSION_NAME,
-    config.API_ID,
-    config.API_HASH
-)
+client = TelegramClient(config.SESSION_NAME, config.API_ID, config.API_HASH)
 
 dedupe_state = JsonlDedupeState(
     path=config.STATE_FILE_PATH,
@@ -197,7 +194,9 @@ async def main():
     logging.info("=" * 60)
     logging.info("Система агрегации вакансий из Telegram")
     logging.info("=" * 60)
-    logging.info(f"Отслеживаемые каналы: {', '.join(str(ch) for ch in config.TARGET_CHANNELS)}")
+    logging.info(
+        f"Отслеживаемые каналы: {', '.join(str(ch) for ch in config.TARGET_CHANNELS)}"
+    )
     logging.info(f"Фильтр ключевых слов: {', '.join(config.KEYWORD_FILTER)}")
     if config.TELEGRAM_NOTIFY_ENABLED:
         logging.info(
@@ -212,9 +211,7 @@ async def main():
         config.LIVE_WORKERS,
     )
     if config.LIVE_WORKERS != 1:
-        logging.warning(
-            "Для последовательной обработки рекомендуется LIVE_WORKERS=1"
-        )
+        logging.warning("Для последовательной обработки рекомендуется LIVE_WORKERS=1")
     logging.info("=" * 60)
 
     worker_tasks: list[asyncio.Task] = []

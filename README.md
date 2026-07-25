@@ -280,6 +280,43 @@ data/
 
 Файлы `.env`, `credentials.json`, Telegram-сессии и сгенерированные данные остаются локальными и игнорируются Git.
 
+## CI/CD
+
+Workflow [CI](.github/workflows/ci.yml) запускается для каждого push в любую
+ветку, Pull Request и ручного запуска. Он не использует Telegram, Mistral или
+Google Sheets API и выполняет только локальные проверки:
+
+- синтаксис Python (`make compile`);
+- изолированные тесты без marker `live` (`make test`);
+- lint через Ruff (`make lint`);
+- проверку форматирования Black (`make format-check`);
+- аудит runtime-зависимостей через `pip-audit` (`make security`);
+- production Docker build (`make docker-build-check`).
+
+Главная локальная команда полностью повторяет CI:
+
+```bash
+make install
+make ci
+```
+
+Для отчёта покрытия используйте `make coverage`. Тесты, которым нужны реальные
+Telegram, Mistral или Google Sheets credentials, должны быть помечены
+`@pytest.mark.live`; обычные `make test`, `make ci` и workflow CI их не
+запускают. Live-проверка остаётся отдельной командой `make smoke` и не входит
+в branch/PR checks.
+
+Workflow [Deploy production](.github/workflows/deploy.yml) выполняется только
+для `master`. Сначала в отдельном job выполняется `make ci`; deploy job зависит
+от него и запускается только при успешных проверках и
+`github.ref == 'refs/heads/master'`. Push и Pull Request из feature/fix/chore/
+dev веток выполняют только CI и никогда не получают deploy.
+
+Production deploy использует GitHub Environment `production` и следующие
+Environment Secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`,
+`VPS_KNOWN_HOSTS`. В них не должны попадать `.env`, Google credentials,
+Telegram session или любые API keys: эти файлы остаются только на VPS.
+
 ## Production deployment
 
 Production использует один Docker Compose service `bot` без опубликованных
@@ -515,9 +552,11 @@ gh secret set VPS_KNOWN_HOSTS < /tmp/dev-job-radar-known-hosts
 - `VPS_KNOWN_HOSTS`.
 
 Workflow запускается после push в `master` и вручную через
-`workflow_dispatch`. Он делает только fast-forward pull, проверяет Compose,
-собирает image, запускает service, проверяет running status и удаляет только
-dangling images. `.env`, credentials, session и `data` не
+`workflow_dispatch`, если выбран `master`. Перед SSH deploy он обязан
+успешно выполнить полный `make ci`; ручные запуски из других веток пропускают
+все deploy jobs. После этого workflow делает только fast-forward pull,
+проверяет Compose, собирает image, запускает service, проверяет running status
+и удаляет только dangling images. `.env`, credentials, session и `data` не
 передаются из GitHub Actions.
 
 После успешного первого ручного запуска сделайте следующий push в `master`
