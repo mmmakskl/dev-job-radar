@@ -24,4 +24,3 @@ def build_text_hash(text: str) -> str:
     """Строит SHA-256 хэш нормализованного текста."""
     normalized = normalize_text_for_fingerprint(text)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-

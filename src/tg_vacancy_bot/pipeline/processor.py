@@ -15,6 +15,7 @@ from tg_vacancy_bot.telegram.links import build_vacancy_id
 KeywordFilter = Callable[[str], bool]
 AnalyzeText = Callable[[str], Awaitable[VacancyAnalysis | None]]
 AppendToSheet = Callable[..., Awaitable[bool]]
+NotifyVacancy = Callable[..., Awaitable[bool]]
 
 
 class DedupeState(Protocol):
@@ -44,11 +45,13 @@ class VacancyProcessor:
         analyze_text: AnalyzeText,
         append_to_sheet: AppendToSheet,
         dedupe_state: DedupeState | None = None,
+        notify_vacancy: NotifyVacancy | None = None,
     ) -> None:
         self.keyword_filter = keyword_filter
         self.analyze_text = analyze_text
         self.append_to_sheet = append_to_sheet
         self.dedupe_state = dedupe_state
+        self.notify_vacancy = notify_vacancy
         self.keyword_matches = 0
         self.saved_matches = 0
 
@@ -66,9 +69,8 @@ class VacancyProcessor:
 
         text_hash = build_text_hash(raw_text)
         vacancy_id = build_vacancy_id(post_link)
-        if (
-            self.dedupe_state is not None
-            and self.dedupe_state.is_duplicate(post_link, text_hash, vacancy_id)
+        if self.dedupe_state is not None and self.dedupe_state.is_duplicate(
+            post_link, text_hash, vacancy_id
         ):
             logging.info("Пропуск: дубликат вакансии (%s)", post_link)
             return False
@@ -122,4 +124,21 @@ class VacancyProcessor:
         if self.dedupe_state is not None:
             self.dedupe_state.mark_exported(post_link, text_hash, vacancy_id)
         self.saved_matches += 1
+
+        if self.notify_vacancy is not None:
+            try:
+                notified = await self.notify_vacancy(
+                    vacancy_id=vacancy_id,
+                    post_link=post_link,
+                    channel_name=channel_name,
+                    data=analysis_result,
+                    published_at=published_at,
+                )
+                if notified:
+                    logging.info("Telegram-уведомление отправлено: %s", vacancy_id)
+            except Exception:
+                logging.exception(
+                    "Не удалось отправить Telegram-уведомление: %s",
+                    vacancy_id,
+                )
         return True

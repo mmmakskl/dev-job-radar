@@ -2,6 +2,7 @@
 Основной модуль системы агрегации вакансий из Telegram
 Использует Telethon для мониторинга каналов и обработки новых сообщений
 """
+
 import asyncio
 import logging
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ from tg_vacancy_bot.telegram.links import (
     get_event_channel_name,
     get_event_message_link,
 )
+from tg_vacancy_bot.telegram.notifier import send_vacancy_notification
 
 
 # Настройка логирования
@@ -36,21 +38,35 @@ configure_logging(
 )
 
 # Инициализация клиента
-client = TelegramClient(
-    config.SESSION_NAME,
-    config.API_ID,
-    config.API_HASH
-)
+client = TelegramClient(config.SESSION_NAME, config.API_ID, config.API_HASH)
 
 dedupe_state = JsonlDedupeState(
     path=config.STATE_FILE_PATH,
     ttl_days=config.TEXT_HASH_TTL_DAYS,
 )
+
+
+def build_live_notifier():
+    """Создаёт callback уведомлений только при включённом feature flag."""
+    if not config.TELEGRAM_NOTIFY_ENABLED:
+        return None
+
+    async def notify_vacancy(**kwargs) -> bool:
+        return await send_vacancy_notification(
+            client=client,
+            target=config.TELEGRAM_NOTIFY_TARGET,
+            **kwargs,
+        )
+
+    return notify_vacancy
+
+
 processor = VacancyProcessor(
     keyword_filter=lambda text: contains_keywords(text, config.KEYWORD_FILTER),
     analyze_text=analyze_text,
     append_to_sheet=append_to_google_sheet,
     dedupe_state=dedupe_state,
+    notify_vacancy=build_live_notifier(),
 )
 
 message_queue: asyncio.Queue["LiveMessageJob"] = asyncio.Queue(
@@ -178,17 +194,24 @@ async def main():
     logging.info("=" * 60)
     logging.info("Система агрегации вакансий из Telegram")
     logging.info("=" * 60)
-    logging.info(f"Отслеживаемые каналы: {', '.join(str(ch) for ch in config.TARGET_CHANNELS)}")
+    logging.info(
+        f"Отслеживаемые каналы: {', '.join(str(ch) for ch in config.TARGET_CHANNELS)}"
+    )
     logging.info(f"Фильтр ключевых слов: {', '.join(config.KEYWORD_FILTER)}")
+    if config.TELEGRAM_NOTIFY_ENABLED:
+        logging.info(
+            "Telegram notifications: enabled (target: %s)",
+            config.TELEGRAM_NOTIFY_TARGET,
+        )
+    else:
+        logging.info("Telegram notifications: disabled")
     logging.info(
         "Live-очередь: maxsize=%d, workers=%d",
         config.LIVE_QUEUE_MAXSIZE,
         config.LIVE_WORKERS,
     )
     if config.LIVE_WORKERS != 1:
-        logging.warning(
-            "Для последовательной обработки рекомендуется LIVE_WORKERS=1"
-        )
+        logging.warning("Для последовательной обработки рекомендуется LIVE_WORKERS=1")
     logging.info("=" * 60)
 
     worker_tasks: list[asyncio.Task] = []

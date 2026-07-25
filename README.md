@@ -1,6 +1,6 @@
 # Telegram Vacancy Parser
 
-Умный Telegram-парсер вакансий: отслеживает заданные каналы, предварительно фильтрует сообщения по Go/Golang, отбрасывает резюме/профили кандидатов, анализирует вакансии через Mistral AI и сохраняет подходящие результаты в Google Sheets. Live-мониторинг принимает сообщения через ограниченную asyncio.Queue и передаёт их последовательному worker, а обработка истории остаётся последовательной. Ответ Mistral проверяется по строгой схеме, а временные API/JSON-ошибки получают не более двух попыток. Двухуровневая дедупликация хранит ссылки бессрочно, а SHA-256 нормализованного текста — 30 дней в append-only JSONL. В state попадают только релевантные вакансии после успешной записи в Google Sheets.
+Умный Telegram-парсер вакансий: отслеживает заданные каналы, предварительно фильтрует сообщения по Go/Golang, отбрасывает резюме/профили кандидатов, анализирует вакансии через Mistral AI и сохраняет подходящие результаты в Google Sheets. При включённом флаге он также публикует краткие уведомления в отдельный Telegram-канал. Live-мониторинг принимает сообщения через ограниченную asyncio.Queue и передаёт их последовательному worker, а обработка истории остаётся последовательной. Ответ Mistral проверяется по строгой схеме, а временные API/JSON-ошибки получают не более двух попыток. Двухуровневая дедупликация хранит ссылки бессрочно, а SHA-256 нормализованного текста — 30 дней в append-only JSONL. В state попадают только релевантные вакансии после успешной записи в Google Sheets.
 
 ## Стек технологий
 
@@ -57,6 +57,9 @@ STATE_FILE_PATH=data/state.jsonl
 TEXT_HASH_TTL_DAYS=30
 LIVE_QUEUE_MAXSIZE=1000
 LIVE_WORKERS=1
+TELEGRAM_NOTIFY_ENABLED=false
+TELEGRAM_NOTIFY_TARGET=@my_channel
+TELEGRAM_NOTIFY_HISTORY=false
 ```
 
 Сохраните ключ Service Account как `credentials.json` в корне проекта. Файлы `.env`, `credentials.json` и `*.session` содержат секреты и не должны попадать в Git.
@@ -181,6 +184,56 @@ Telegram-источник, описание, обязанности, требо�
 выставляется ботом непосредственно при записи строки. Обе даты переводятся в
 `OUTPUT_TIMEZONE` и форматируются как `YYYY-MM-DD HH:MM`.
 
+## Telegram-уведомления
+
+После нахождения и успешного сохранения релевантной вакансии в Google Sheets
+бот может отправлять краткий пост в ваш Telegram-канал. Уведомления выключены
+по умолчанию; ошибка отправки не отменяет запись в Sheets и не мешает дедупликации.
+
+Создайте приватный или публичный канал, добавьте в него Telegram-аккаунт,
+авторизованный для Telethon userbot через `make auth`, и дайте ему право
+публиковать сообщения, если для канала нужна роль администратора. Это не Bot API:
+пишет тот же пользовательский аккаунт, который работает в проекте.
+
+Включите уведомления в `.env`:
+
+```env
+TELEGRAM_NOTIFY_ENABLED=true
+TELEGRAM_NOTIFY_TARGET=@my_channel
+TELEGRAM_NOTIFY_HISTORY=false
+```
+
+В `TELEGRAM_NOTIFY_TARGET` укажите публичный username (`@my_channel`) либо
+приватный/числовой ID, если он известен и доступен этому аккаунту. Чтобы
+выключить отправку, задайте `TELEGRAM_NOTIFY_ENABLED=false` и перезапустите
+live-процесс. При включённом флаге без target запуск завершается с понятной
+ошибкой конфигурации.
+
+Обработка истории не публикует вакансии по умолчанию, даже когда live-
+уведомления включены. Чтобы намеренно отправлять и историю, добавьте:
+
+```env
+TELEGRAM_NOTIFY_HISTORY=true
+```
+
+Включайте этот флаг осторожно: `make history` может отправить пачку старых
+вакансий.
+
+Минимальная последовательность запуска:
+
+```bash
+cp .env.example .env
+# заполнить Telegram/Mistral/Google
+make auth
+# включить TELEGRAM_NOTIFY_ENABLED и TELEGRAM_NOTIFY_TARGET
+make run
+```
+
+Если вакансии появляются в Sheets, но не публикуются в канале, проверьте
+`TELEGRAM_NOTIFY_ENABLED`, `TELEGRAM_NOTIFY_TARGET` и права аккаунта в канале.
+Если запуск сообщает об `TELEGRAM_NOTIFY_TARGET`, заполните target или выключите
+фичу. Если history заспамил канал, выключите `TELEGRAM_NOTIFY_HISTORY`.
+
 ## Структура проекта
 
 ```text
@@ -199,6 +252,7 @@ src/
     telegram/
       __init__.py
       links.py                # формирование ссылок Telegram
+      notifier.py             # HTML-уведомления в Telegram-канал
     llm/
       __init__.py
       mistral.py              # интеграция с Mistral
@@ -216,6 +270,7 @@ tests/                        # изолированные автоматиче�
   test_pipeline.py            # префильтр и текстовые отпечатки
   test_dedupe_state.py        # долговременная дедупликация JSONL
   test_processor.py           # контракты экспорта общего pipeline
+  test_notifier.py            # формат и отправка Telegram-уведомлений
   test_llm_schemas.py         # схема и устойчивость JSON-анализа
   test_models.py              # грейды, зарплата, условия и стек
   test_sheets.py              # полная/краткая строки и частичный сбой
@@ -224,6 +279,43 @@ data/
 ```
 
 Файлы `.env`, `credentials.json`, Telegram-сессии и сгенерированные данные остаются локальными и игнорируются Git.
+
+## CI/CD
+
+Workflow [CI](.github/workflows/ci.yml) запускается для каждого push в любую
+ветку, Pull Request и ручного запуска. Он не использует Telegram, Mistral или
+Google Sheets API и выполняет только локальные проверки:
+
+- синтаксис Python (`make compile`);
+- изолированные тесты без marker `live` (`make test`);
+- lint через Ruff (`make lint`);
+- проверку форматирования Black (`make format-check`);
+- аудит runtime-зависимостей через `pip-audit` (`make security`);
+- production Docker build (`make docker-build-check`).
+
+Главная локальная команда полностью повторяет CI:
+
+```bash
+make install
+make ci
+```
+
+Для отчёта покрытия используйте `make coverage`. Тесты, которым нужны реальные
+Telegram, Mistral или Google Sheets credentials, должны быть помечены
+`@pytest.mark.live`; обычные `make test`, `make ci` и workflow CI их не
+запускают. Live-проверка остаётся отдельной командой `make smoke` и не входит
+в branch/PR checks.
+
+Workflow [Deploy production](.github/workflows/deploy.yml) выполняется только
+для `master`. Сначала в отдельном job выполняется `make ci`; deploy job зависит
+от него и запускается только при успешных проверках и
+`github.ref == 'refs/heads/master'`. Push и Pull Request из feature/fix/chore/
+dev веток выполняют только CI и никогда не получают deploy.
+
+Production deploy использует GitHub Environment `production` и следующие
+Environment Secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`,
+`VPS_KNOWN_HOSTS`. В них не должны попадать `.env`, Google credentials,
+Telegram session или любые API keys: эти файлы остаются только на VPS.
 
 ## Production deployment
 
@@ -460,9 +552,11 @@ gh secret set VPS_KNOWN_HOSTS < /tmp/dev-job-radar-known-hosts
 - `VPS_KNOWN_HOSTS`.
 
 Workflow запускается после push в `master` и вручную через
-`workflow_dispatch`. Он делает только fast-forward pull, проверяет Compose,
-собирает image, запускает service, проверяет running status и удаляет только
-dangling images. `.env`, credentials, session и `data` не
+`workflow_dispatch`, если выбран `master`. Перед SSH deploy он обязан
+успешно выполнить полный `make ci`; ручные запуски из других веток пропускают
+все deploy jobs. После этого workflow делает только fast-forward pull,
+проверяет Compose, собирает image, запускает service, проверяет running status
+и удаляет только dangling images. `.env`, credentials, session и `data` не
 передаются из GitHub Actions.
 
 После успешного первого ручного запуска сделайте следующий push в `master`

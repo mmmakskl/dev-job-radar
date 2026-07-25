@@ -1,0 +1,5 @@
+black==25.1.0
+pip-audit==2.8.0
+pytest==8.4.2
+pytest-cov==6.0.0
+ruff==0.9.10

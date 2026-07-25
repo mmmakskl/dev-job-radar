@@ -1,12 +1,27 @@
 """
 Конфигурация системы агрегации вакансий из Telegram.
 """
+
 import os
 from dotenv import load_dotenv
 
 from tg_vacancy_bot.paths import resolve_session_path, resolve_state_path
 
 load_dotenv()
+
+
+def parse_bool_env(value: str | None) -> bool:
+    """Возвращает True только для явно включающих значений env."""
+    return value.strip().casefold() in {"1", "true", "yes", "on"} if value else False
+
+
+def parse_telegram_target(value: str | None) -> str | int:
+    """Преобразует числовой Telegram ID из env в int."""
+    target = (value or '').strip()
+    if target.isdigit() or (target.startswith('-') and target[1:].isdigit()):
+        return int(target)
+    return target
+
 
 # Telegram API credentials
 try:
@@ -61,6 +76,11 @@ TEXT_HASH_TTL_DAYS = int(os.getenv('TEXT_HASH_TTL_DAYS', '30'))
 LIVE_QUEUE_MAXSIZE = int(os.getenv('LIVE_QUEUE_MAXSIZE', '1000'))
 LIVE_WORKERS = int(os.getenv('LIVE_WORKERS', '1'))
 
+# Уведомления о сохранённых вакансиях в Telegram-канал.
+TELEGRAM_NOTIFY_ENABLED = parse_bool_env(os.getenv('TELEGRAM_NOTIFY_ENABLED'))
+TELEGRAM_NOTIFY_TARGET = parse_telegram_target(os.getenv('TELEGRAM_NOTIFY_TARGET'))
+TELEGRAM_NOTIFY_HISTORY = parse_bool_env(os.getenv('TELEGRAM_NOTIFY_HISTORY'))
+
 
 def validate_required_settings(
     *,
@@ -77,6 +97,8 @@ def validate_required_settings(
         missing.append('MISTRAL_API_KEY')
     if require_google_sheets and not GOOGLE_SHEET_URL:
         missing.append('GOOGLE_SHEET_URL')
+    if TELEGRAM_NOTIFY_ENABLED and not TELEGRAM_NOTIFY_TARGET:
+        missing.append('TELEGRAM_NOTIFY_TARGET')
 
     if missing:
         names = ', '.join(missing)

@@ -31,7 +31,9 @@ def test_candidate_profile_filter_matches_resume_post() -> None:
     assert "опыт работы" in candidate_profile_reasons(text)
 
 
-def test_candidate_profile_filter_keeps_regular_vacancy_with_resume_instruction() -> None:
+def test_candidate_profile_filter_keeps_regular_vacancy_with_resume_instruction() -> (
+    None
+):
     text = """
     Вакансия: Senior Go Developer
     Мы ищем backend-разработчика в продуктовую команду.

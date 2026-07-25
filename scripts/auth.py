@@ -28,32 +28,32 @@ async def main(force_relogin: bool = False):
         os.remove(session_file)
 
     client = TelegramClient(config.SESSION_NAME, config.API_ID, config.API_HASH)
-    
+
     await client.connect()
-    
+
     if not await client.is_user_authorized():
         print("\n📱 Авторизация через QR-код...")
         print("👇 Отсканируйте QR-код в приложении Telegram:")
         print("   Settings → Devices → Link Desktop Device\n")
-        
+
         try:
             # Запрашиваем QR-логин
             qr_login = await client.qr_login()
-            
+
             # Генерируем ASCII QR-код
             qr = qrcode.QRCode(border=1)
             qr.add_data(qr_login.url)
             qr.make()
             qr.print_ascii()
-            
+
             print("\n⏳ Ожидаем сканирования (120 секунд)...")
-            
+
             # Ждём авторизации
             await qr_login.wait(timeout=120)
-            
+
             print("✅ Авторизация успешна!")
             print(f"👤 Вы вошли как: {(await client.get_me()).first_name}")
-            
+
         except asyncio.TimeoutError:
             print("\n❌ Время ожидания истекло. Запустите скрипт заново.")
             await client.disconnect()
@@ -67,7 +67,7 @@ async def main(force_relogin: bool = False):
         print(f"👤 Вы вошли как: {(await client.get_me()).first_name}")
         await client.disconnect()
         return
-    
+
     await client.disconnect()
     print(f"\n💾 Сессия сохранена в {session_file}")
     print("🚀 Теперь можно запускать make channels или make run")

@@ -133,3 +133,140 @@ def test_processor_skips_candidate_profile_before_llm(monkeypatch) -> None:
     assert state.marked == []
     assert processor.keyword_matches == 1
     assert processor.saved_matches == 0
+
+
+def test_processor_notifies_after_successful_sheet_export(monkeypatch) -> None:
+    async def no_delay(_seconds: float) -> None:
+        return None
+
+    async def analyze_text(_text: str):
+        return validate_analysis_result(valid_payload())
+
+    calls = []
+
+    async def successful_export(**_kwargs) -> bool:
+        calls.append("sheet")
+        return True
+
+    async def notify_vacancy(**kwargs) -> bool:
+        calls.append("notify")
+        assert kwargs["vacancy_id"] == "jobs_42"
+        return True
+
+    monkeypatch.setattr("tg_vacancy_bot.pipeline.processor.asyncio.sleep", no_delay)
+    processor = VacancyProcessor(
+        keyword_filter=lambda _text: True,
+        analyze_text=analyze_text,
+        append_to_sheet=successful_export,
+        notify_vacancy=notify_vacancy,
+    )
+
+    assert asyncio.run(
+        processor.process_message(
+            "Go vacancy",
+            "Go vacancy",
+            "https://t.me/jobs/42",
+            datetime(2026, 7, 22, tzinfo=timezone.utc),
+            "jobs",
+        )
+    )
+    assert calls == ["sheet", "notify"]
+
+
+def test_processor_does_not_notify_when_sheet_export_fails(monkeypatch) -> None:
+    async def no_delay(_seconds: float) -> None:
+        return None
+
+    async def analyze_text(_text: str):
+        return validate_analysis_result(valid_payload())
+
+    async def failed_export(**_kwargs) -> bool:
+        return False
+
+    async def notify_vacancy(**_kwargs) -> bool:
+        raise AssertionError("notifier must not be called")
+
+    monkeypatch.setattr("tg_vacancy_bot.pipeline.processor.asyncio.sleep", no_delay)
+    processor = VacancyProcessor(
+        keyword_filter=lambda _text: True,
+        analyze_text=analyze_text,
+        append_to_sheet=failed_export,
+        notify_vacancy=notify_vacancy,
+    )
+
+    assert not asyncio.run(
+        processor.process_message(
+            "Go vacancy",
+            "Go vacancy",
+            "https://t.me/jobs/42",
+            datetime(2026, 7, 22, tzinfo=timezone.utc),
+            "jobs",
+        )
+    )
+
+
+def test_processor_marks_export_when_notifier_fails(monkeypatch) -> None:
+    async def no_delay(_seconds: float) -> None:
+        return None
+
+    async def analyze_text(_text: str):
+        return validate_analysis_result(valid_payload())
+
+    async def successful_export(**_kwargs) -> bool:
+        return True
+
+    async def failing_notifier(**_kwargs) -> bool:
+        raise RuntimeError("notification failed")
+
+    monkeypatch.setattr("tg_vacancy_bot.pipeline.processor.asyncio.sleep", no_delay)
+    state = DedupeStateSpy()
+    processor = VacancyProcessor(
+        keyword_filter=lambda _text: True,
+        analyze_text=analyze_text,
+        append_to_sheet=successful_export,
+        dedupe_state=state,
+        notify_vacancy=failing_notifier,
+    )
+
+    assert asyncio.run(
+        processor.process_message(
+            "Go vacancy",
+            "Go vacancy",
+            "https://t.me/jobs/42",
+            datetime(2026, 7, 22, tzinfo=timezone.utc),
+            "jobs",
+        )
+    )
+    assert len(state.marked) == 1
+
+
+def test_processor_succeeds_when_notifier_returns_false(monkeypatch) -> None:
+    async def no_delay(_seconds: float) -> None:
+        return None
+
+    async def analyze_text(_text: str):
+        return validate_analysis_result(valid_payload())
+
+    async def successful_export(**_kwargs) -> bool:
+        return True
+
+    async def unsuccessful_notifier(**_kwargs) -> bool:
+        return False
+
+    monkeypatch.setattr("tg_vacancy_bot.pipeline.processor.asyncio.sleep", no_delay)
+    processor = VacancyProcessor(
+        keyword_filter=lambda _text: True,
+        analyze_text=analyze_text,
+        append_to_sheet=successful_export,
+        notify_vacancy=unsuccessful_notifier,
+    )
+
+    assert asyncio.run(
+        processor.process_message(
+            "Go vacancy",
+            "Go vacancy",
+            "https://t.me/jobs/42",
+            datetime(2026, 7, 22, tzinfo=timezone.utc),
+            "jobs",
+        )
+    )

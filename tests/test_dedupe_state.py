@@ -60,9 +60,7 @@ def test_broken_jsonl_line_is_skipped(tmp_path, caplog) -> None:
     state_path = tmp_path / "state.jsonl"
     recent_date = datetime.now(timezone.utc)
     state_path.write_text(
-        "not-json\n"
-        + _event("https://t.me/jobs/1", "valid-hash", recent_date)
-        + "\n",
+        "not-json\n" + _event("https://t.me/jobs/1", "valid-hash", recent_date) + "\n",
         encoding="utf-8",
     )
 

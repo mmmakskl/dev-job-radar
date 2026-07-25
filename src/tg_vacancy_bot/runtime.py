@@ -23,7 +23,9 @@ def install_shutdown_signal_handlers(
             )
 
 
-async def wait_for_disconnect_or_shutdown(client, shutdown_event: asyncio.Event) -> None:
+async def wait_for_disconnect_or_shutdown(
+    client, shutdown_event: asyncio.Event
+) -> None:
     """Waits for Telegram disconnect or requests it after SIGTERM/SIGINT."""
     connection_task = asyncio.create_task(
         client.run_until_disconnected(),

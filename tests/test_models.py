@@ -82,4 +82,3 @@ def test_required_and_preferred_stack_are_separate_and_normalized() -> None:
         "REST",
         "GitLab CI",
     ]
-

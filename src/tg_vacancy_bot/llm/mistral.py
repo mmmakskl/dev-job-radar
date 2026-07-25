@@ -1,6 +1,7 @@
 """
 LLM Analyzer для анализа текста вакансий через Mistral AI
 """
+
 import asyncio
 import json
 import logging
@@ -36,10 +37,10 @@ def _get_client() -> AsyncOpenAI:
 async def analyze_text(vacancy_text: str) -> VacancyAnalysis | None:
     """
     Анализирует текст вакансии через Mistral AI API
-    
+
     Args:
         vacancy_text: Текст вакансии из Telegram
-        
+
     Returns:
         Проверенная VacancyAnalysis или None в случае ошибки.
     """
