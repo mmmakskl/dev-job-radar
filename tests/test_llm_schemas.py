@@ -77,6 +77,24 @@ def test_text_fields_accept_string_lists_from_llm() -> None:
     assert result.additional_conditions == NOT_SPECIFIED
 
 
+def test_text_fields_accept_simple_objects_from_llm() -> None:
+    result = validate_analysis_result(
+        valid_payload(
+            contact={
+                "telegram": "@recruiter",
+                "email": "hr@example.com",
+                "phones": ["+79990000000", "+79991111111"],
+            }
+        )
+    )
+
+    assert result.contact == (
+        "telegram: @recruiter; "
+        "email: hr@example.com; "
+        "phones: +79990000000, +79991111111"
+    )
+
+
 def test_missing_is_match_is_rejected() -> None:
     data = valid_payload()
     data.pop("is_match")

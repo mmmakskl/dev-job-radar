@@ -63,6 +63,30 @@ def _invalid(message: str) -> None:
     raise InvalidAnalysisResultError(message)
 
 
+def _text_fragment(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        parts = [_text_fragment(item) for item in value]
+        return ", ".join(part for part in parts if part) or None
+    return None
+
+
+def _text_from_mapping(value: dict[str, Any]) -> str:
+    parts = []
+    for key, item in value.items():
+        fragment = _text_fragment(item)
+        if fragment:
+            parts.append(f"{key}: {fragment}")
+    return "; ".join(parts) or NOT_SPECIFIED
+
+
 def _text(data: dict[str, Any], name: str) -> str:
     value = data.get(name)
     if value is None or value == "":
@@ -70,8 +94,10 @@ def _text(data: dict[str, Any], name: str) -> str:
     if isinstance(value, list) and all(isinstance(item, str) for item in value):
         text = "; ".join(item.strip() for item in value if item.strip())
         return text or NOT_SPECIFIED
+    if isinstance(value, dict):
+        return _text_from_mapping(value)
     if not isinstance(value, str):
-        _invalid(f"{name} должно быть строкой, массивом строк или null")
+        _invalid(f"{name} должно быть строкой, массивом строк, объектом или null")
     return value.strip() or NOT_SPECIFIED
 
 
