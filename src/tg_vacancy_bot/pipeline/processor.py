@@ -8,6 +8,7 @@ from typing import Protocol
 
 from tg_vacancy_bot.models import VacancyAnalysis
 from tg_vacancy_bot.pipeline.fingerprints import build_text_hash
+from tg_vacancy_bot.pipeline.prefilter import candidate_profile_reasons
 from tg_vacancy_bot.telegram.links import build_vacancy_id
 
 
@@ -78,6 +79,16 @@ class VacancyProcessor:
         self.keyword_matches += 1
         logging.info("Найдено сообщение с ключевыми словами: %s", post_link)
         logging.debug("Текст: %s...", text[:200])
+
+        profile_reasons = candidate_profile_reasons(text)
+        if profile_reasons:
+            logging.info(
+                "Пропуск: сообщение похоже на резюме кандидата (%s). Признаки: %s",
+                post_link,
+                ", ".join(profile_reasons),
+            )
+            return False
+
         logging.info("Отправляем на анализ в Mistral...")
 
         await asyncio.sleep(1.5)

@@ -99,3 +99,37 @@ def test_processor_passes_metadata_and_marks_stable_id(monkeypatch) -> None:
     assert received["channel_name"] == "RemoteGeekJob"
     assert state.marked[0][2] == "remotegeekjob_40909"
 
+
+def test_processor_skips_candidate_profile_before_llm(monkeypatch) -> None:
+    async def no_delay(_seconds: float) -> None:
+        return None
+
+    async def analyze_text(_text: str):
+        raise AssertionError("candidate profile should not be sent to LLM")
+
+    async def successful_export(**_kwargs) -> bool:
+        raise AssertionError("candidate profile should not be exported")
+
+    monkeypatch.setattr("tg_vacancy_bot.pipeline.processor.asyncio.sleep", no_delay)
+    state = DedupeStateSpy()
+    processor = VacancyProcessor(
+        keyword_filter=lambda _text: True,
+        analyze_text=analyze_text,
+        append_to_sheet=successful_export,
+        dedupe_state=state,
+    )
+
+    saved = asyncio.run(
+        processor.process_message(
+            "Senior Golang Developer\nОпыт работы: 8 лет\nМой стек: Go, Kafka",
+            "Senior Golang Developer\nОпыт работы: 8 лет\nМой стек: Go, Kafka",
+            "https://t.me/myjobit/125461",
+            datetime(2026, 7, 22, tzinfo=timezone.utc),
+            "myjobit",
+        )
+    )
+
+    assert not saved
+    assert state.marked == []
+    assert processor.keyword_matches == 1
+    assert processor.saved_matches == 0
