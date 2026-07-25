@@ -104,13 +104,29 @@ def test_missing_is_match_is_rejected() -> None:
 
 
 def test_string_is_match_is_rejected() -> None:
-    with pytest.raises(InvalidAnalysisResultError):
+    with pytest.raises(InvalidAnalysisResultError) as exc_info:
         validate_analysis_result(valid_payload(is_match="true"))
+
+    message = str(exc_info.value)
+    assert "field=is_match" in message
+    assert "actual_type=str" in message
+    assert 'actual_preview="true"' in message
 
 
 def test_additional_field_is_rejected() -> None:
     with pytest.raises(InvalidAnalysisResultError):
         validate_analysis_result(valid_payload(unexpected="value"))
+
+
+def test_invalid_field_error_includes_actual_type_and_preview() -> None:
+    with pytest.raises(InvalidAnalysisResultError) as exc_info:
+        validate_analysis_result(valid_payload(experience_from={"years": 4}))
+
+    message = str(exc_info.value)
+    assert "field=experience_from" in message
+    assert "expected=number | null" in message
+    assert "actual_type=object" in message
+    assert 'actual_preview={"years": 4}' in message
 
 
 def test_garbage_json_does_not_crash_analyzer(monkeypatch) -> None:

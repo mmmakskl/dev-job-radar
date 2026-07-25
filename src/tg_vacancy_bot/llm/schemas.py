@@ -1,5 +1,6 @@
 """Строгая проверка и нормализация структурированных ответов Mistral."""
 
+import json
 import logging
 from typing import Any
 
@@ -56,11 +57,63 @@ EXPECTED_FIELDS = {
     "requirements",
     "additional_conditions",
 }
+_PREVIEW_LIMIT = 240
+_MISSING = object()
 
 
-def _invalid(message: str) -> None:
-    logging.warning("[MISTRAL] Невалидная схема ответа: %s", message)
-    raise InvalidAnalysisResultError(message)
+def _type_name(value: Any) -> str:
+    if value is _MISSING:
+        return "missing"
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, str):
+        return "str"
+    if isinstance(value, list):
+        item_types = sorted({_type_name(item) for item in value})
+        return f"list[{', '.join(item_types)}]" if item_types else "list[empty]"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, (int, float)):
+        return "number"
+    return type(value).__name__
+
+
+def _preview(value: Any) -> str:
+    if value is _MISSING:
+        return "<missing>"
+
+    try:
+        rendered = json.dumps(value, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        rendered = repr(value)
+
+    if len(rendered) > _PREVIEW_LIMIT:
+        return rendered[: _PREVIEW_LIMIT - 3] + "..."
+    return rendered
+
+
+def _invalid(
+    message: str,
+    *,
+    field: str | None = None,
+    expected: str | None = None,
+    actual: Any = _MISSING,
+) -> None:
+    details = []
+    if field:
+        details.append(f"field={field}")
+    if expected:
+        details.append(f"expected={expected}")
+    if actual is not _MISSING:
+        details.append(f"actual_type={_type_name(actual)}")
+        details.append(f"actual_preview={_preview(actual)}")
+
+    detail_text = "; ".join(details)
+    log_message = f"{message}; {detail_text}" if detail_text else message
+    logging.warning("[MISTRAL] Невалидная схема ответа: %s", log_message)
+    raise InvalidAnalysisResultError(log_message)
 
 
 def _text_fragment(value: Any) -> str | None:
@@ -97,7 +150,12 @@ def _text(data: dict[str, Any], name: str) -> str:
     if isinstance(value, dict):
         return _text_from_mapping(value)
     if not isinstance(value, str):
-        _invalid(f"{name} должно быть строкой, массивом строк, объектом или null")
+        _invalid(
+            f"{name} должно быть строкой, массивом строк, объектом или null",
+            field=name,
+            expected="str | list[str] | object | null",
+            actual=value,
+        )
     return value.strip() or NOT_SPECIFIED
 
 
@@ -106,7 +164,12 @@ def _number(data: dict[str, Any], name: str) -> float | int | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        _invalid(f"{name} должно быть числом или null")
+        _invalid(
+            f"{name} должно быть числом или null",
+            field=name,
+            expected="number | null",
+            actual=value,
+        )
     return value
 
 
@@ -115,22 +178,40 @@ def _string_list(data: dict[str, Any], name: str) -> list[str] | str | None:
     if value is None or isinstance(value, str):
         return value
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        _invalid(f"{name} должно быть массивом строк, строкой или null")
+        _invalid(
+            f"{name} должно быть массивом строк, строкой или null",
+            field=name,
+            expected="list[str] | str | null",
+            actual=value,
+        )
     return value
 
 
 def validate_analysis_result(data: dict) -> VacancyAnalysis | None:
     """Возвращает проверенную модель; для нерелевантной вакансии тоже модель."""
     if not isinstance(data, dict):
-        _invalid("корневое значение должно быть JSON-объектом")
+        _invalid(
+            "корневое значение должно быть JSON-объектом",
+            expected="object",
+            actual=data,
+        )
 
     extra_fields = set(data) - EXPECTED_FIELDS
     if extra_fields:
-        _invalid("неожиданные поля: " + ", ".join(sorted(extra_fields)))
+        _invalid(
+            "неожиданные поля: " + ", ".join(sorted(extra_fields)),
+            expected="только поля строгой схемы",
+            actual={field: data.get(field) for field in sorted(extra_fields)},
+        )
 
     is_match = data.get("is_match")
     if not isinstance(is_match, bool):
-        _invalid("is_match отсутствует или не является bool")
+        _invalid(
+            "is_match отсутствует или не является bool",
+            field="is_match",
+            expected="bool",
+            actual=data.get("is_match", _MISSING),
+        )
 
     raw_grade = " / ".join(
         value
