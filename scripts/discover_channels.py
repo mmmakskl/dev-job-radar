@@ -1,13 +1,55 @@
 import asyncio
+import argparse
 import json
 from telethon import TelegramClient
 
 from tg_vacancy_bot import config
 
 # Ключевые слова для фильтрации каналов
-KEYWORDS = ['job', 'ваканс', 'career', 'hr', 'work', 'go', 'golang', 'it', 'работа']
+KEYWORDS = [
+    'job',
+    'ваканс',
+    'вакансия',
+    'вакансии',
+    'career',
+    'hr',
+    'work',
+    'remote',
+    'go',
+    'golang',
+    'it',
+    'работа',
+]
 
-async def fetch_channels():
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description='Найти каналы/группы среди текущих Telegram dialogs.',
+    )
+    parser.add_argument(
+        '--query',
+        action='append',
+        default=[],
+        help='Дополнительная строка поиска по названию. Можно указать несколько раз.',
+    )
+    parser.add_argument(
+        '--all',
+        action='store_true',
+        help='Показать все каналы и группы без фильтра по названию.',
+    )
+    return parser.parse_args()
+
+
+def matches_dialog_name(name: str, queries: list[str], show_all: bool) -> bool:
+    if show_all:
+        return True
+
+    dialog_name_lower = name.lower()
+    search_terms = [*KEYWORDS, *(query.lower() for query in queries)]
+    return any(keyword in dialog_name_lower for keyword in search_terms)
+
+
+async def fetch_channels(queries: list[str], show_all: bool):
     """Сканирует все диалоги пользователя и находит каналы/группы с вакансиями"""
     config.validate_required_settings(
         require_mistral=False,
@@ -33,9 +75,7 @@ async def fetch_channels():
         if not (dialog.is_channel or dialog.is_group):
             continue
         
-        # Проверяем название на ключевые слова
-        dialog_name_lower = dialog.name.lower()
-        if not any(keyword in dialog_name_lower for keyword in KEYWORDS):
+        if not matches_dialog_name(dialog.name, queries, show_all):
             continue
         
         # Добавляем найденный канал
@@ -45,7 +85,12 @@ async def fetch_channels():
             "id": dialog.id
         }
         found_channels.append(channel_info)
-        print(f"  ✓ Найден: {dialog.name} (@{channel_info['username'] or 'закрытый'})")
+        identifier = channel_info['username'] or channel_info['id']
+        print(
+            f"  ✓ Найден: {dialog.name} "
+            f"(@{channel_info['username'] or 'закрытый'}, id={channel_info['id']}) "
+            f"-> TARGET_CHANNELS: {identifier}"
+        )
     
     # Сохраняем в файл
     output_file = 'found_channels.json'
@@ -60,4 +105,5 @@ async def fetch_channels():
     await client.disconnect()
 
 if __name__ == '__main__':
-    asyncio.run(fetch_channels())
+    args = parse_args()
+    asyncio.run(fetch_channels(args.query, args.all))

@@ -126,6 +126,18 @@ PYTHONPATH=src venv/bin/python scripts/auth.py
 PYTHONPATH=src venv/bin/python scripts/discover_channels.py
 ```
 
+Discovery по умолчанию ищет каналы и группы, в названии которых есть `job`,
+`ваканс`, `вакансия`, `вакансии`, `career`, `hr`, `work`, `remote`, `go`,
+`golang`, `it` или `работа`. Для приватной беседы с другим названием укажите
+поиск явно:
+
+```bash
+PYTHONPATH=src venv/bin/python scripts/discover_channels.py --query "Ханти"
+```
+
+Скрипт печатает `username` или числовой `id`, который можно добавить в
+`TARGET_CHANNELS`.
+
 При старте приложение восстанавливает дедупликацию из `data/state.jsonl` и
 загружает legacy-ссылки из старого первого листа. Ссылки и стабильные ID
 блокируют повторную обработку бессрочно, текстовые хэши — в течение настроенного
