@@ -136,7 +136,8 @@ PYTHONPATH=src venv/bin/python scripts/discover_channels.py --query "Ханти"
 ```
 
 Скрипт печатает `username` или числовой `id`, который можно добавить в
-`TARGET_CHANNELS`.
+`TARGET_CHANNELS`, и сохраняет найденные диалоги в
+`DATA_DIR/found_channels.json` (`data/found_channels.json` локально).
 
 При старте приложение восстанавливает дедупликацию из `data/state.jsonl` и
 загружает legacy-ссылки из старого первого листа. Ссылки и стабильные ID

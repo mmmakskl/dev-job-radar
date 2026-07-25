@@ -1,6 +1,8 @@
 import asyncio
 import argparse
 import json
+from pathlib import Path
+
 from telethon import TelegramClient
 
 from tg_vacancy_bot import config
@@ -37,6 +39,11 @@ def parse_args() -> argparse.Namespace:
         action='store_true',
         help='Показать все каналы и группы без фильтра по названию.',
     )
+    parser.add_argument(
+        '--output',
+        default=None,
+        help='Куда сохранить JSON. По умолчанию DATA_DIR/found_channels.json.',
+    )
     return parser.parse_args()
 
 
@@ -49,7 +56,15 @@ def matches_dialog_name(name: str, queries: list[str], show_all: bool) -> bool:
     return any(keyword in dialog_name_lower for keyword in search_terms)
 
 
-async def fetch_channels(queries: list[str], show_all: bool):
+def resolve_output_path(output: str | None) -> Path:
+    if output:
+        return Path(output)
+
+    data_dir = Path(config.DATA_DIR or 'data')
+    return data_dir / 'found_channels.json'
+
+
+async def fetch_channels(queries: list[str], show_all: bool, output: str | None):
     """Сканирует все диалоги пользователя и находит каналы/группы с вакансиями"""
     config.validate_required_settings(
         require_mistral=False,
@@ -93,8 +108,9 @@ async def fetch_channels(queries: list[str], show_all: bool):
         )
     
     # Сохраняем в файл
-    output_file = 'found_channels.json'
-    with open(output_file, 'w', encoding='utf-8') as f:
+    output_file = resolve_output_path(output)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with output_file.open('w', encoding='utf-8') as f:
         json.dump(found_channels, f, ensure_ascii=False, indent=2)
     
     print(f"\n{'='*60}")
@@ -106,4 +122,4 @@ async def fetch_channels(queries: list[str], show_all: bool):
 
 if __name__ == '__main__':
     args = parse_args()
-    asyncio.run(fetch_channels(args.query, args.all))
+    asyncio.run(fetch_channels(args.query, args.all, args.output))
