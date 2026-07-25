@@ -63,6 +63,20 @@ def test_missing_company_or_contact_uses_not_specified() -> None:
     assert result.contact == NOT_SPECIFIED
 
 
+def test_text_fields_accept_string_lists_from_llm() -> None:
+    result = validate_analysis_result(
+        valid_payload(
+            responsibilities=["Разрабатывать сервисы", "Поддерживать API"],
+            requirements=["Go", "PostgreSQL"],
+            additional_conditions=[],
+        )
+    )
+
+    assert result.responsibilities == "Разрабатывать сервисы; Поддерживать API"
+    assert result.requirements == "Go; PostgreSQL"
+    assert result.additional_conditions == NOT_SPECIFIED
+
+
 def test_missing_is_match_is_rejected() -> None:
     data = valid_payload()
     data.pop("is_match")

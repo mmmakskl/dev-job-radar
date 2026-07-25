@@ -67,8 +67,11 @@ def _text(data: dict[str, Any], name: str) -> str:
     value = data.get(name)
     if value is None or value == "":
         return NOT_SPECIFIED
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        text = "; ".join(item.strip() for item in value if item.strip())
+        return text or NOT_SPECIFIED
     if not isinstance(value, str):
-        _invalid(f"{name} должно быть строкой или null")
+        _invalid(f"{name} должно быть строкой, массивом строк или null")
     return value.strip() or NOT_SPECIFIED
 
 
