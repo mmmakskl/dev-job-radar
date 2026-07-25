@@ -23,6 +23,7 @@ from tg_vacancy_bot.telegram.links import (
     get_message_channel_name,
     get_message_link,
 )
+from tg_vacancy_bot.telegram.notifier import send_vacancy_notification
 
 # Настройка логирования
 configure_logging(
@@ -31,6 +32,23 @@ configure_logging(
 
 # Инициализация клиента
 client = TelegramClient(config.SESSION_NAME, config.API_ID, config.API_HASH)
+
+
+def build_history_notifier():
+    """Включает history-уведомления только отдельным явным флагом."""
+    if not (
+        config.TELEGRAM_NOTIFY_ENABLED and config.TELEGRAM_NOTIFY_HISTORY
+    ):
+        return None
+
+    async def notify_vacancy(**kwargs) -> bool:
+        return await send_vacancy_notification(
+            client=client,
+            target=config.TELEGRAM_NOTIFY_TARGET,
+            **kwargs,
+        )
+
+    return notify_vacancy
 
 
 async def parse_history():
@@ -51,6 +69,12 @@ async def parse_history():
         analyze_text=analyze_text,
         append_to_sheet=append_to_google_sheet,
         dedupe_state=dedupe_state,
+        notify_vacancy=build_history_notifier(),
+    )
+
+    logging.info(
+        "Telegram notifications for history: %s",
+        "enabled" if processor.notify_vacancy is not None else "disabled",
     )
 
     # Принудительно кэшируем диалоги для корректной работы с приватными каналами
