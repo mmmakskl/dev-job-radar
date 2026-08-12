@@ -72,6 +72,12 @@ jobs:
     environment: production
 
     steps:
+      - name: Check out deployment source
+        uses: actions/checkout@v4
+
+      - name: Build verified deploy image
+        run: docker build --tag dev-job-radar-bot:latest .
+
       - name: Configure SSH
         env:
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
