@@ -48,12 +48,15 @@ if ! docker compose build --pull; then
     fi
 
     echo "Docker Hub is unavailable; rebuilding from cached image ${image_name}..."
+    fallback_context="$(mktemp -d)"
+    trap 'rm -rf "${fallback_context}"' EXIT
+    cp -R src scripts Dockerfile.cached-base "${fallback_context}/"
     docker build \
         --pull=false \
         --build-arg "BASE_IMAGE=${image_name}" \
-        --file Dockerfile.cached-base \
+        --file "${fallback_context}/Dockerfile.cached-base" \
         --tag "${image_name}" \
-        .
+        "${fallback_context}"
 fi
 
 echo "Starting bot service..."
