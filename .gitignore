@@ -18,6 +18,11 @@ __pycache__/
 .ruff_cache/
 
 .DS_Store
+web/node_modules/
+web/.next/
+web/out/
+web/test-results/
+web/playwright-report/
 data/*.jsonl
 found_channels.json
 vacancies.xlsx

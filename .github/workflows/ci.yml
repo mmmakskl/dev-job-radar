@@ -39,3 +39,25 @@ jobs:
 
       - name: Run CI checks
         run: make ci
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Check frontend
+        run: |
+          npm --prefix web ci
+          npm --prefix web run typecheck
+          npm --prefix web test
+          npm --prefix web run build
+
+      - name: Run frontend E2E
+        run: |
+          npx --yes playwright install --with-deps chromium
+          npm --prefix web run test:e2e
+
+      - name: Build production image
+        run: docker build --tag dev-job-radar-bot:ci .

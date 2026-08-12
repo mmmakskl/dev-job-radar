@@ -68,6 +68,7 @@ async def parse_history():
         append_to_sheet=append_to_google_sheet,
         dedupe_state=dedupe_state,
         notify_vacancy=build_history_notifier(),
+        exclude_keywords=config.EXCLUDE_KEYWORDS,
     )
 
     logging.info(
@@ -82,7 +83,7 @@ async def parse_history():
     logging.info(f"✅ Подключен как: {me.first_name} (@{me.username})")
 
     # Вычисляем дату недели назад (с timezone для корректного сравнения)
-    one_week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+    one_week_ago = datetime.now(timezone.utc) - timedelta(days=config.HISTORY_DAYS)
     logging.info(f"📅 Парсим сообщения с {one_week_ago.strftime('%Y-%m-%d %H:%M:%S')}")
 
     total_messages = 0

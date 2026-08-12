@@ -11,7 +11,7 @@ DOCKER_COMPOSE ?= docker compose
 .PHONY: help init venv install env data auth auth-force run live history \
 	discover channels sync-channels smoke compile test check lint format-check coverage security ci \
 	doctor state-info clean-cache clean docker-build docker-build-check docker-up \
-	docker-down docker-logs docker-status docker-check
+	docker-down docker-logs docker-status docker-check web-install web-build web-test web-check
 
 help:
 	@echo "Telegram Go Vacancy Bot"
@@ -53,6 +53,7 @@ help:
 	@echo "  make docker-logs   следить за логами bot"
 	@echo "  make docker-status показать состояние Compose"
 	@echo "  make docker-check  проверить compose.yaml без запуска"
+	@echo "  make web-check     проверить типы, unit-тесты и production-сборку панели"
 
 venv:
 	@test -x "$(PY)" || $(PYTHON) -m venv "$(VENV)"
@@ -175,6 +176,20 @@ docker-down:
 
 docker-logs:
 	$(DOCKER_COMPOSE) logs --tail=200 -f bot
+
+web-install:
+	npm --prefix web ci
+
+web-build: web-install
+	npm --prefix web run build
+
+web-test: web-install
+	npm --prefix web test
+
+web-check: web-install
+	npm --prefix web run typecheck
+	npm --prefix web test
+	npm --prefix web run build
 
 docker-status:
 	$(DOCKER_COMPOSE) ps

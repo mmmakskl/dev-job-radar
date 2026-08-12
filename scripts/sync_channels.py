@@ -9,6 +9,7 @@ from telethon import TelegramClient, utils
 from telethon.tl import functions
 
 from tg_vacancy_bot import config
+from tg_vacancy_bot.admin.settings import SettingsStore
 from tg_vacancy_bot.channel_sync import (
     ChannelSyncResult,
     FolderChannel,
@@ -38,6 +39,11 @@ def parse_args() -> argparse.Namespace:
         '--report-only',
         action='store_true',
         help='Не менять .env; вывести итоговый TARGET_CHANNELS в stdout.',
+    )
+    parser.add_argument(
+        '--managed-settings',
+        action='store_true',
+        help='Сохранить состав папки в managed settings вместо изменения .env.',
     )
     return parser.parse_args()
 
@@ -170,6 +176,20 @@ async def main() -> None:
 
     if args.report_only:
         print(serialize_target_channels(result.target_channels))
+        return
+
+    if args.managed_settings:
+        store = SettingsStore(config.DATA_DIR)
+        settings = store.load()
+        telegram = settings.telegram.model_copy(
+            update={
+                'folder_channels': [
+                    str(channel.id) for channel in result.found_channels
+                ]
+            }
+        )
+        store.save(settings.model_copy(update={'telegram': telegram}))
+        print_result(result, True)
         return
 
     if not args.env_file.exists():

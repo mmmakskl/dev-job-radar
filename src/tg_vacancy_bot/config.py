@@ -5,6 +5,7 @@
 import os
 from dotenv import load_dotenv
 
+from tg_vacancy_bot.admin.settings import load_runtime_settings
 from tg_vacancy_bot.paths import resolve_session_path, resolve_state_path
 
 load_dotenv()
@@ -30,6 +31,7 @@ except ValueError:
     API_ID = 0
 API_HASH = os.getenv('API_HASH') or os.getenv('TG_API_HASH', '')
 DATA_DIR = os.getenv('DATA_DIR') or None
+_MANAGED = load_runtime_settings(DATA_DIR)
 SESSION_NAME = resolve_session_path(
     os.getenv('SESSION_NAME', 'my_account'),
     data_dir=DATA_DIR,
@@ -41,14 +43,20 @@ GOOGLE_CREDENTIALS_PATH = os.getenv(
     'GOOGLE_CREDENTIALS_PATH',
     'credentials.json',
 )
-OUTPUT_TIMEZONE = os.getenv('OUTPUT_TIMEZONE', 'Europe/Moscow')
-GOOGLE_SHEET_FULL_TITLE = os.getenv(
-    'GOOGLE_SHEET_FULL_TITLE',
-    'Вакансии — полные',
+OUTPUT_TIMEZONE = (
+    _MANAGED.sheets.output_timezone
+    if _MANAGED
+    else os.getenv('OUTPUT_TIMEZONE', 'Europe/Moscow')
 )
-GOOGLE_SHEET_SHORT_TITLE = os.getenv(
-    'GOOGLE_SHEET_SHORT_TITLE',
-    'Вакансии — кратко',
+GOOGLE_SHEET_FULL_TITLE = (
+    _MANAGED.sheets.full_title
+    if _MANAGED
+    else os.getenv('GOOGLE_SHEET_FULL_TITLE', 'Вакансии — полные')
+)
+GOOGLE_SHEET_SHORT_TITLE = (
+    _MANAGED.sheets.short_title
+    if _MANAGED
+    else os.getenv('GOOGLE_SHEET_SHORT_TITLE', 'Вакансии — кратко')
 )
 
 # Список каналов для мониторинга
@@ -61,28 +69,69 @@ for ch in _raw_channels:
             TARGET_CHANNELS.append(int(ch))
         else:
             TARGET_CHANNELS.append(ch)
+for channel in _MANAGED.telegram.additional_channels if _MANAGED else []:
+    if channel not in TARGET_CHANNELS:
+        TARGET_CHANNELS.append(channel)
+for channel in _MANAGED.telegram.folder_channels if _MANAGED else []:
+    parsed_channel = parse_telegram_target(channel)
+    if parsed_channel not in TARGET_CHANNELS:
+        TARGET_CHANNELS.append(parsed_channel)
+TARGET_CHANNELS = [
+    channel
+    for channel in TARGET_CHANNELS
+    if str(channel) not in (_MANAGED.telegram.disabled_channels if _MANAGED else [])
+]
 
 # Название папки Telegram, чьи чаты автоматически добавляются в TARGET_CHANNELS.
-TELEGRAM_CHANNELS_FOLDER = os.getenv('TELEGRAM_CHANNELS_FOLDER', 'Вакансии')
+TELEGRAM_CHANNELS_FOLDER = (
+    _MANAGED.telegram.folder_name
+    if _MANAGED
+    else os.getenv('TELEGRAM_CHANNELS_FOLDER', 'Вакансии')
+)
+MONITORING_ENABLED = _MANAGED.telegram.monitoring_enabled if _MANAGED else True
+HISTORY_DAYS = _MANAGED.telegram.history_days if _MANAGED else 7
 
 # Префильтр для экономии токенов
-KEYWORD_FILTER = ['go', 'golang']  # Регистронезависимый поиск
+KEYWORD_FILTER = _MANAGED.filters.keywords if _MANAGED else ['go', 'golang']
+EXCLUDE_KEYWORDS = _MANAGED.filters.exclude_keywords if _MANAGED else []
 
 # Долговременная дедупликация успешно экспортированных вакансий
 STATE_FILE_PATH = resolve_state_path(
     data_dir=DATA_DIR,
     state_path=os.getenv('STATE_FILE_PATH') or None,
 )
-TEXT_HASH_TTL_DAYS = int(os.getenv('TEXT_HASH_TTL_DAYS', '30'))
+TEXT_HASH_TTL_DAYS = (
+    _MANAGED.filters.text_hash_ttl_days
+    if _MANAGED
+    else int(os.getenv('TEXT_HASH_TTL_DAYS', '30'))
+)
 
 # Очередь live listener. Для последовательного rate limit рекомендуется 1 worker.
-LIVE_QUEUE_MAXSIZE = int(os.getenv('LIVE_QUEUE_MAXSIZE', '1000'))
-LIVE_WORKERS = int(os.getenv('LIVE_WORKERS', '1'))
+LIVE_QUEUE_MAXSIZE = (
+    _MANAGED.filters.queue_maxsize
+    if _MANAGED
+    else int(os.getenv('LIVE_QUEUE_MAXSIZE', '1000'))
+)
+LIVE_WORKERS = (
+    _MANAGED.filters.workers if _MANAGED else int(os.getenv('LIVE_WORKERS', '1'))
+)
 
 # Уведомления о сохранённых вакансиях в Telegram-канал.
-TELEGRAM_NOTIFY_ENABLED = parse_bool_env(os.getenv('TELEGRAM_NOTIFY_ENABLED'))
-TELEGRAM_NOTIFY_TARGET = parse_telegram_target(os.getenv('TELEGRAM_NOTIFY_TARGET'))
+TELEGRAM_NOTIFY_ENABLED = (
+    _MANAGED.telegram.notify_enabled
+    if _MANAGED
+    else parse_bool_env(os.getenv('TELEGRAM_NOTIFY_ENABLED'))
+)
+TELEGRAM_NOTIFY_TARGET = parse_telegram_target(
+    _MANAGED.telegram.notify_target if _MANAGED else os.getenv('TELEGRAM_NOTIFY_TARGET')
+)
 TELEGRAM_NOTIFY_HISTORY = parse_bool_env(os.getenv('TELEGRAM_NOTIFY_HISTORY'))
+
+# Mistral behaviour is non-secret and may be changed through the panel.
+MISTRAL_MODEL = _MANAGED.mistral.model if _MANAGED else 'mistral-small-latest'
+MISTRAL_TEMPERATURE = _MANAGED.mistral.temperature if _MANAGED else 0.1
+MISTRAL_MAX_ATTEMPTS = _MANAGED.mistral.max_attempts if _MANAGED else 2
+SETTINGS_REVISION = _MANAGED.revision if _MANAGED else 0
 
 
 def validate_required_settings(

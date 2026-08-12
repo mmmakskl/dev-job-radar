@@ -331,6 +331,113 @@ data/
   .gitkeep
 ```
 
+## Веб-панель управления
+
+Панель позволяет управлять не секретными настройками без ручного редактирования
+`.env`: источниками из Telegram-папки, включением мониторинга и уведомлений,
+окном history, ключевыми словами, дедупликацией, параметрами Mistral и
+названиями листов. Изменение сохраняется в `data/admin/settings.json` с
+версионностью и применяется только после явно подтверждённого graceful restart.
+Это необходимо, поскольку список Telethon event handlers формируется при старте
+процесса.
+
+В веб-интерфейс и API **никогда** не попадают `API_HASH`, `MISTRAL_API_KEY`,
+Google Service Account JSON, Telegram session, URL таблицы с credential query
+или числовые Telegram chat IDs. Для Mistral и Google показывается лишь статус
+настройки. Их ротация выполняется через production secrets и перезапуск.
+
+### Локальный запуск панели
+
+Добавьте в локальный `.env` отдельные значения (не коммитьте их):
+
+```dotenv
+ADMIN_PASSWORD=choose-a-long-unique-password
+ADMIN_SESSION_SECRET=generate-with-secrets-token-urlsafe-48
+ADMIN_COOKIE_SECURE=false
+```
+
+Затем соберите frontend и запустите FastAPI:
+
+```bash
+make web-check
+ADMIN_STATIC_DIR="$PWD/web/out" PYTHONPATH=src \
+  venv/bin/python -m uvicorn tg_vacancy_bot.admin.api:app --reload
+```
+
+Откройте `http://127.0.0.1:8000`. `ADMIN_COOKIE_SECURE=false` допустим только
+для localhost или SSH-туннеля. Для HTTPS он должен быть `true`.
+
+### Панель на текущем VPS
+
+Compose запускает `admin` только на `127.0.0.1:8080`: панель не открыта в
+интернет. Доступ с рабочего компьютера:
+
+```bash
+ssh -i ~/.ssh/dev-job-radar-vps -L 8080:127.0.0.1:8080 deploy@95.85.250.171
+```
+
+После этого откройте `http://127.0.0.1:8080`. SSH-туннель шифрует соединение.
+На сервере уже занят порт 443 VPN-службой, поэтому не устанавливайте Nginx или
+Caddy поверх него. Когда появятся выделенный DNS-домен и согласованный маршрут
+HTTPS, используйте [пример Nginx](deploy/nginx/go-radar-admin.conf.example) и
+задайте `ADMIN_COOKIE_SECURE=true`.
+
+### Действия панели
+
+- **Сохранить настройки** — валидирует и атомарно обновляет managed JSON;
+- **Синхронизировать** — bot освобождает session, читает Telegram-папку и
+  сохраняет её состав в persistent settings;
+- **История** — временно заменяет live-процесс history-задачей, после её
+  завершения Compose снова поднимает live-bot;
+- **Перезапуск** и pause/resume требуют видимого подтверждения.
+
+Каждое действие попадает в очищенную историю операций. API использует
+HttpOnly signed session и double-submit CSRF token; опасное действие без
+`confirmed=true` отвергается сервером.
+
+### Проверки панели
+
+```bash
+make compile
+make test                         # Python unit/API/auth tests без внешних API
+make web-check                    # TypeScript, Vitest, production Next build
+npm --prefix web run test:e2e     # Playwright; предварительно установить browser
+docker compose config --quiet
+docker build -t dev-job-radar-bot:local .
+```
+
+Playwright использует test-only credentials и не обращается к Telegram,
+Mistral или Google Sheets. Один раз для него нужен browser:
+`npm --prefix web exec playwright install chromium`.
+
+### Production deploy и rollback
+
+`master` проходит Python и frontend проверки в GitHub Actions. Workflow собирает
+образ на GitHub runner и передаёт его по SSH в `docker load`; это исключает
+зависимость VPS от Docker Hub. Перед загрузкой предыдущий image получает тег
+`dev-job-radar-bot:previous`. Скрипт деплоя сохраняет managed settings,
+проверяет bot и `/healthz` admin-сервиса, а при неуспехе возвращает предыдущий
+image и settings.
+
+Нужные GitHub Secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`,
+`VPS_KNOWN_HOSTS`. Production `.env` остаётся только на VPS и дополнительно
+должен содержать `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET` и
+`ADMIN_COOKIE_SECURE`. Пароль выбирает владелец; session secret можно создать
+на сервере через `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`.
+Не записывайте эти значения в GitHub Actions logs.
+
+Для ручного отката после неудачного релиза:
+
+```bash
+cd /home/deploy/apps/dev-job-radar
+docker tag dev-job-radar-bot:previous dev-job-radar-bot:latest
+docker compose up -d --remove-orphans
+docker compose ps
+```
+
+Откат исходного кода делайте отдельным `git revert` и push в `master`; не
+используйте `git reset --hard` на сервере.
+
 Файлы `.env`, `credentials.json`, Telegram-сессии и сгенерированные данные остаются локальными и игнорируются Git.
 
 ## CI/CD
@@ -547,11 +654,9 @@ cd /home/deploy/apps/dev-job-radar
 bash scripts/deploy.sh
 ```
 
-Deploy сначала пересобирает image с актуальным базовым образом из Docker Hub.
-Если Docker Hub временно недоступен на VPS, но там есть предыдущий image бота,
-скрипт автоматически пересобирает его с актуальными `src/` и `scripts/` без
-сетевой загрузки. При первом развёртывании fallback невозможен: VPS должен
-иметь доступ к Docker Hub хотя бы один раз.
+Обычный production deploy получает уже собранный image из GitHub Actions через
+SSH и поэтому не зависит от Docker Hub на VPS. Локальный ручной `deploy.sh`
+может собрать image сам, но для этого ему нужен доступ к registry.
 
 `docker compose down` не удаляет bind-mounted `data`. Никогда не
 используйте `down -v` и не удаляйте каталог `data`: там находятся
@@ -611,11 +716,10 @@ gh secret set VPS_KNOWN_HOSTS < /tmp/dev-job-radar-known-hosts
 - `VPS_KNOWN_HOSTS`.
 
 Workflow запускается после push в `master` и вручную через
-`workflow_dispatch`, если выбран `master`. Перед SSH deploy он обязан
-успешно выполнить полный `make ci`; ручные запуски из других веток пропускают
-все deploy jobs. После этого workflow делает только fast-forward pull,
-проверяет Compose, собирает image, запускает service, проверяет running status
-и удаляет только dangling images. `.env`, credentials, session и `data` не
+`workflow_dispatch`, если выбран `master`. Перед SSH deploy он выполняет
+`make ci`, TypeScript, Vitest, Next production build и Docker build. Затем
+передаёт image по SSH в `docker load`, делает fast-forward pull, проверяет
+Compose, bot и admin healthcheck. `.env`, credentials, session и `data` не
 передаются из GitHub Actions.
 
 После успешного первого ручного запуска сделайте следующий push в `master`

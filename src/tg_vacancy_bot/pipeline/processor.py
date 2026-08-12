@@ -46,12 +46,14 @@ class VacancyProcessor:
         append_to_sheet: AppendToSheet,
         dedupe_state: DedupeState | None = None,
         notify_vacancy: NotifyVacancy | None = None,
+        exclude_keywords: list[str] | None = None,
     ) -> None:
         self.keyword_filter = keyword_filter
         self.analyze_text = analyze_text
         self.append_to_sheet = append_to_sheet
         self.dedupe_state = dedupe_state
         self.notify_vacancy = notify_vacancy
+        self.exclude_keywords = [item.casefold() for item in (exclude_keywords or [])]
         self.keyword_matches = 0
         self.saved_matches = 0
 
@@ -76,6 +78,10 @@ class VacancyProcessor:
             return False
 
         if not self.keyword_filter(text):
+            return False
+
+        if any(keyword in text.casefold() for keyword in self.exclude_keywords):
+            logging.info("Пропуск: исключающее ключевое слово (%s)", post_link)
             return False
 
         self.keyword_matches += 1

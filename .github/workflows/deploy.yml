@@ -42,6 +42,28 @@ jobs:
       - name: Run CI checks
         run: make ci
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Check frontend
+        run: |
+          npm --prefix web ci
+          npm --prefix web run typecheck
+          npm --prefix web test
+          npm --prefix web run build
+
+      - name: Run frontend E2E
+        run: |
+          npx --yes playwright install --with-deps chromium
+          npm --prefix web run test:e2e
+
+      - name: Build deploy image
+        run: docker build --tag dev-job-radar-bot:latest .
+
   deploy:
     needs: checks
     if: github.ref == 'refs/heads/master'
@@ -75,4 +97,19 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
             "${VPS_USER}@${VPS_HOST}" \
-            'cd /home/deploy/apps/dev-job-radar && bash scripts/deploy.sh'
+            'docker image inspect dev-job-radar-bot:latest >/dev/null 2>&1 && docker tag dev-job-radar-bot:latest dev-job-radar-bot:previous || true'
+          docker save dev-job-radar-bot:latest | ssh \
+            -i "${HOME}/.ssh/deploy_key" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
+            "${VPS_USER}@${VPS_HOST}" 'docker load'
+          ssh \
+            -i "${HOME}/.ssh/deploy_key" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
+            "${VPS_USER}@${VPS_HOST}" \
+            'cd /home/deploy/apps/dev-job-radar && SKIP_IMAGE_BUILD=1 bash scripts/deploy.sh'

@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; --bg:#f7f8fb; --card:#fff; --ink:#182230; --muted:#667085; --line:#e4e7ec; --accent:#176b4d; --danger:#b42318; }
+.dark { color-scheme: dark; --bg:#101828; --card:#182230; --ink:#f2f4f7; --muted:#98a2b3; --line:#344054; --accent:#45b58a; --danger:#f97066; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font-family:Inter, ui-sans-serif, system-ui, sans-serif; }
+button, input, select { font:inherit; }
+button { cursor:pointer; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline:3px solid #84c7ae; outline-offset:2px; }
+.shell { max-width:1180px; margin:auto; padding:24px; }
+.top { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:24px; }
+.brand { font-size:20px; font-weight:750; }
+.grid { display:grid; grid-template-columns:repeat(12,1fr); gap:16px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; box-shadow:0 1px 2px rgb(16 24 40 / 4%); }
+.span-4 { grid-column:span 4; } .span-6 { grid-column:span 6; } .span-8 { grid-column:span 8; } .span-12 { grid-column:span 12; }
+.muted { color:var(--muted); } .ok { color:var(--accent); font-weight:650; } .error { color:var(--danger); }
+.actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+.button { border:0; border-radius:8px; padding:10px 14px; background:#176b4d; color:white; font-weight:650; }
+.button.secondary { background:transparent; color:var(--ink); border:1px solid var(--line); }.button.danger { background:#b42318; }
+.field { display:grid; gap:6px; margin:12px 0; font-weight:600; }.field input, .field select { padding:10px; border:1px solid var(--line); border-radius:8px; background:transparent; color:var(--ink); font-weight:400; }
+.chips { display:flex; flex-wrap:wrap; gap:8px; }.chip { border:1px solid var(--line); padding:6px 8px; border-radius:999px; font-size:13px; }.chip.off { opacity:.55; text-decoration:line-through; }
+.modal { position:fixed; inset:0; background:rgb(16 24 40 / .55); display:grid; place-items:center; padding:20px; }.modal > div { width:min(440px,100%); background:var(--card); border-radius:14px; padding:22px; }
+@media (max-width:760px) { .shell{padding:14px}.span-4,.span-6,.span-8{grid-column:span 12}.top{align-items:flex-start;flex-direction:column} }

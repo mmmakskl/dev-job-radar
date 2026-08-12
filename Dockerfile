@@ -1,3 +1,11 @@
+FROM node:22-alpine AS web-builder
+
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web ./
+RUN npm run build
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -16,6 +24,7 @@ RUN python -m pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=app:app src ./src
 COPY --chown=app:app scripts ./scripts
+COPY --from=web-builder --chown=app:app /web/out /app/web
 RUN mkdir -p /app/data && chown app:app /app/data
 
 USER app

@@ -5,12 +5,16 @@
 
 import asyncio
 import logging
+import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 
 from telethon import TelegramClient, events
 
 from tg_vacancy_bot import config
+from tg_vacancy_bot.admin.control import acknowledge_action, read_action
+from tg_vacancy_bot.admin.telemetry import TelemetryStore
 from tg_vacancy_bot.llm.mistral import analyze_text
 from tg_vacancy_bot.logging_config import configure_logging
 from tg_vacancy_bot.pipeline.dedupe_state import JsonlDedupeState
@@ -67,6 +71,7 @@ processor = VacancyProcessor(
     append_to_sheet=append_to_google_sheet,
     dedupe_state=dedupe_state,
     notify_vacancy=build_live_notifier(),
+    exclude_keywords=config.EXCLUDE_KEYWORDS,
 )
 
 message_queue: asyncio.Queue["LiveMessageJob"] = asyncio.Queue(
@@ -74,6 +79,7 @@ message_queue: asyncio.Queue["LiveMessageJob"] = asyncio.Queue(
 )
 QUEUE_WARNING_THRESHOLD = max(1, int(config.LIVE_QUEUE_MAXSIZE * 0.8))
 SHUTDOWN_TIMEOUT_SECONDS = 30
+received_messages = 0
 
 
 @dataclass(frozen=True)
@@ -90,6 +96,8 @@ class LiveMessageJob:
 @client.on(events.NewMessage(chats=config.TARGET_CHANNELS))
 async def handle_new_message(event):
     """Быстро ставит новое Telegram-сообщение в очередь."""
+    global received_messages
+    received_messages += 1
     message = event.message
     text = message.text or ''
     post_link = get_event_message_link(event)
@@ -181,10 +189,50 @@ async def stop_workers(worker_tasks: list[asyncio.Task]) -> None:
         logging.info("Live workers остановлены")
 
 
+async def monitor_admin_control(
+    shutdown_event: asyncio.Event,
+    telemetry: TelemetryStore,
+) -> str | None:
+    """Poll the durable local control file without a Docker socket."""
+    while not shutdown_event.is_set():
+        requested = read_action(config.DATA_DIR)
+        if requested:
+            action = requested['action']
+            acknowledge_action(requested['id'], config.DATA_DIR)
+            telemetry.record('action_acknowledged', action=action)
+            logging.info('Получена команда админ-панели: %s', action)
+            shutdown_event.set()
+            return action
+        await asyncio.sleep(2)
+    return None
+
+
+async def publish_heartbeat(
+    telemetry: TelemetryStore,
+    shutdown_event: asyncio.Event,
+) -> None:
+    """Publish aggregate counters only; Telegram text never reaches the panel."""
+    while not shutdown_event.is_set():
+        telemetry.heartbeat(
+            status='running',
+            settings_revision=config.SETTINGS_REVISION,
+            channel_count=len(config.TARGET_CHANNELS),
+            queue_size=message_queue.qsize(),
+            received_messages=received_messages,
+            keyword_matches=processor.keyword_matches,
+            saved_matches=processor.saved_matches,
+        )
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=15)
+        except asyncio.TimeoutError:
+            continue
+
+
 async def main():
     """Основная функция запуска бота"""
     config.validate_required_settings()
     shutdown_event = asyncio.Event()
+    telemetry = TelemetryStore(config.DATA_DIR)
     install_shutdown_signal_handlers(shutdown_event)
     if config.LIVE_QUEUE_MAXSIZE <= 0:
         raise RuntimeError("LIVE_QUEUE_MAXSIZE должен быть больше нуля")
@@ -215,7 +263,25 @@ async def main():
     logging.info("=" * 60)
 
     worker_tasks: list[asyncio.Task] = []
+    control_task: asyncio.Task[str | None] | None = None
+    heartbeat_task: asyncio.Task[None] | None = None
+    requested_action: str | None = None
     try:
+        control_task = asyncio.create_task(
+            monitor_admin_control(shutdown_event, telemetry),
+            name='admin-control-monitor',
+        )
+        heartbeat_task = asyncio.create_task(
+            publish_heartbeat(telemetry, shutdown_event),
+            name='admin-heartbeat',
+        )
+        if not config.MONITORING_ENABLED:
+            telemetry.heartbeat(
+                status='paused', settings_revision=config.SETTINGS_REVISION
+            )
+            logging.info('Live-мониторинг приостановлен через админ-панель.')
+            await shutdown_event.wait()
+            return
         # Google Таблица читается только один раз за время работы процесса.
         dedupe_state.exported_links.update(await get_existing_links())
         worker_tasks = [
@@ -235,11 +301,39 @@ async def main():
         logging.info(f"Авторизован как: {me.first_name} (@{me.username})")
         logging.info("Бот запущен. Ожидаю новые сообщения...")
 
+        telemetry.heartbeat(
+            status='running',
+            settings_revision=config.SETTINGS_REVISION,
+            channel_count=len(config.TARGET_CHANNELS),
+            queue_size=message_queue.qsize(),
+        )
+
         await wait_for_disconnect_or_shutdown(client, shutdown_event)
     finally:
         if client.is_connected():
             await client.disconnect()
         await stop_workers(worker_tasks)
+        if control_task:
+            if not control_task.done():
+                control_task.cancel()
+            result = await asyncio.gather(control_task, return_exceptions=True)
+            if result and isinstance(result[0], str):
+                requested_action = result[0]
+        if heartbeat_task:
+            heartbeat_task.cancel()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
+        telemetry.heartbeat(
+            status='stopped', settings_revision=config.SETTINGS_REVISION
+        )
+        if requested_action == 'history':
+            telemetry.record('history_started')
+            os.execv(sys.executable, [sys.executable, 'scripts/parse_history.py'])
+        if requested_action == 'sync_channels':
+            telemetry.record('sync_requested')
+            os.execv(
+                sys.executable,
+                [sys.executable, 'scripts/sync_channels.py', '--managed-settings'],
+            )
 
 
 if __name__ == '__main__':

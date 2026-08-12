@@ -1,5 +1,6 @@
 services:
   bot:
+    image: dev-job-radar-bot:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -16,6 +17,35 @@ services:
       - ./data:/app/data
       - ./secrets/google-credentials.json:/run/secrets/google-credentials.json:ro
     stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+  admin:
+    image: dev-job-radar-bot:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    restart: unless-stopped
+    command: ["python", "-m", "uvicorn", "tg_vacancy_bot.admin.api:app", "--host", "0.0.0.0", "--port", "8080"]
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data
+      ADMIN_STATIC_DIR: /app/web
+      ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-false}
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; assert urlopen('http://127.0.0.1:8080/healthz').status == 200"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     logging:
       driver: json-file
       options:

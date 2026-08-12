@@ -19,7 +19,6 @@ from tg_vacancy_bot.models import VacancyAnalysis
 load_dotenv()
 
 client: AsyncOpenAI | None = None
-MAX_ATTEMPTS = 2
 RETRY_DELAYS = (1, 3)
 
 
@@ -44,17 +43,18 @@ async def analyze_text(vacancy_text: str) -> VacancyAnalysis | None:
     Returns:
         Проверенная VacancyAnalysis или None в случае ошибки.
     """
-    for attempt in range(MAX_ATTEMPTS):
+    max_attempts = config.MISTRAL_MAX_ATTEMPTS
+    for attempt in range(max_attempts):
         response_text = None
         try:
             response = await _get_client().chat.completions.create(
-                model="mistral-small-latest",
+                model=config.MISTRAL_MODEL,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": vacancy_text},
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.1,
+                temperature=config.MISTRAL_TEMPERATURE,
             )
 
             response_text = response.choices[0].message.content
@@ -69,14 +69,14 @@ async def analyze_text(vacancy_text: str) -> VacancyAnalysis | None:
             logging.warning(
                 "[MISTRAL] Ошибка попытки %d/%d: %s",
                 attempt + 1,
-                MAX_ATTEMPTS,
+                max_attempts,
                 exc,
             )
-            if attempt + 1 >= MAX_ATTEMPTS:
+            if attempt + 1 >= max_attempts:
                 logging.error("[MISTRAL] Исчерпаны попытки анализа")
                 return None
 
-            delay = RETRY_DELAYS[attempt]
+            delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)]
             logging.info("[MISTRAL] Повтор через %d сек.", delay)
             await asyncio.sleep(delay)
         except Exception as exc:
