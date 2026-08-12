@@ -1,0 +1,7 @@
+# Emergency production fallback when the VPS cannot reach Docker Hub.
+# The deploy script supplies the currently running bot image as BASE_IMAGE.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+COPY --chown=app:app src ./src
+COPY --chown=app:app scripts ./scripts

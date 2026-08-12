@@ -547,6 +547,12 @@ cd /home/deploy/apps/dev-job-radar
 bash scripts/deploy.sh
 ```
 
+Deploy сначала пересобирает image с актуальным базовым образом из Docker Hub.
+Если Docker Hub временно недоступен на VPS, но там есть предыдущий image бота,
+скрипт автоматически пересобирает его с актуальными `src/` и `scripts/` без
+сетевой загрузки. При первом развёртывании fallback невозможен: VPS должен
+иметь доступ к Docker Hub хотя бы один раз.
+
 `docker compose down` не удаляет bind-mounted `data`. Никогда не
 используйте `down -v` и не удаляйте каталог `data`: там находятся
 Telegram session и дедупликация.

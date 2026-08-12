@@ -36,7 +36,25 @@ echo "Validating Docker Compose configuration..."
 docker compose config --quiet
 
 echo "Building production image..."
-docker compose build --pull
+if ! docker compose build --pull; then
+    image_name="$(docker compose config --images | sed -n '1p')"
+    if [[ -z "${image_name}" ]]; then
+        echo "ERROR: could not resolve the bot image name for cached build" >&2
+        exit 1
+    fi
+    if ! docker image inspect "${image_name}" >/dev/null 2>&1; then
+        echo "ERROR: Docker Hub build failed and no cached bot image exists" >&2
+        exit 1
+    fi
+
+    echo "Docker Hub is unavailable; rebuilding from cached image ${image_name}..."
+    docker build \
+        --pull=false \
+        --build-arg "BASE_IMAGE=${image_name}" \
+        --file Dockerfile.cached-base \
+        --tag "${image_name}" \
+        .
+fi
 
 echo "Starting bot service..."
 docker compose up -d --remove-orphans
