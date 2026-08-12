@@ -35,6 +35,29 @@ def normalize_username(value: str | None) -> str:
     return (value or '').strip().lstrip('@').casefold()
 
 
+def find_folder_id(dialog_filters: Iterable[object], folder_name: str) -> int:
+    """Return a custom Telegram folder ID by its visible title."""
+    expected_name = folder_name.strip().casefold()
+    matching_ids = []
+    for dialog_filter in dialog_filters:
+        title = getattr(getattr(dialog_filter, 'title', None), 'text', '')
+        folder_id = getattr(dialog_filter, 'id', None)
+        if folder_id is not None and title.strip().casefold() == expected_name:
+            matching_ids.append(folder_id)
+
+    if not matching_ids:
+        raise RuntimeError(
+            f'Папка Telegram «{folder_name}» не найдена. '
+            'Создайте её и добавьте в неё каналы или группы.'
+        )
+    if len(matching_ids) > 1:
+        raise RuntimeError(
+            f'Найдено несколько Telegram-папок с названием «{folder_name}». '
+            'Переименуйте одну из них.'
+        )
+    return matching_ids[0]
+
+
 def build_synced_target_channels(
     configured_channels: Iterable[str | int],
     folder_channels: Iterable[FolderChannel],

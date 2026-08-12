@@ -1,8 +1,12 @@
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from tg_vacancy_bot.channel_sync import (
     FolderChannel,
     build_synced_target_channels,
+    find_folder_id,
     replace_env_value,
     update_target_channels_env,
 )
@@ -21,6 +25,17 @@ def test_build_synced_target_channels_preserves_existing_sources() -> None:
 
     assert targets == ('@existing_source', -100222, -100333)
     assert added == (FolderChannel(-100333, 'New source', 'new_source'),)
+
+
+def test_find_folder_id_matches_visible_name_case_insensitively() -> None:
+    folder = SimpleNamespace(id=7, title=SimpleNamespace(text='Вакансии'))
+
+    assert find_folder_id([folder], 'вАкАнСиИ') == 7
+
+
+def test_find_folder_id_rejects_missing_folder() -> None:
+    with pytest.raises(RuntimeError, match='не найдена'):
+        find_folder_id([], 'Вакансии')
 
 
 def test_build_synced_target_channels_uses_resolved_username_ids() -> None:

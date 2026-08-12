@@ -13,6 +13,7 @@ from tg_vacancy_bot.channel_sync import (
     ChannelSyncResult,
     FolderChannel,
     build_synced_target_channels,
+    find_folder_id,
     serialize_target_channels,
     update_target_channels_env,
 )
@@ -43,26 +44,8 @@ def parse_args() -> argparse.Namespace:
 
 async def get_folder_id(client: TelegramClient, folder_name: str) -> int:
     """Return a custom Telegram folder ID by its visible title."""
-    expected_name = folder_name.strip().casefold()
-    matching_ids = []
-    filters = await client(functions.messages.GetDialogFiltersRequest())
-    for dialog_filter in filters:
-        title = getattr(getattr(dialog_filter, 'title', None), 'text', '')
-        folder_id = getattr(dialog_filter, 'id', None)
-        if folder_id is not None and title.strip().casefold() == expected_name:
-            matching_ids.append(folder_id)
-
-    if not matching_ids:
-        raise RuntimeError(
-            f'Папка Telegram «{folder_name}» не найдена. '
-            'Создайте её и добавьте в неё каналы или группы.'
-        )
-    if len(matching_ids) > 1:
-        raise RuntimeError(
-            f'Найдено несколько Telegram-папок с названием «{folder_name}». '
-            'Переименуйте одну из них.'
-        )
-    return matching_ids[0]
+    response = await client(functions.messages.GetDialogFiltersRequest())
+    return find_folder_id(response.filters, folder_name)
 
 
 async def get_folder_channels(
