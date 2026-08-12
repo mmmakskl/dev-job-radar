@@ -61,17 +61,32 @@ fi
 
 echo "Starting bot service..."
 docker compose up -d --remove-orphans
-sleep 5
 
-container_id="$(docker compose ps -q bot)"
+container_id=""
+for _ in {1..15}; do
+    container_id="$(docker compose ps -aq bot | sed -n '$p')"
+    if [[ -n "${container_id}" ]]; then
+        break
+    fi
+    sleep 1
+done
+
 if [[ -z "${container_id}" ]]; then
-    echo "ERROR: bot container was not created" >&2
+    echo "ERROR: bot container was not created within 15 seconds" >&2
     exit 1
 fi
 
+for _ in {1..30}; do
+    if [[ "$(docker inspect --format '{{.State.Running}}' "${container_id}")" == "true" ]]; then
+        break
+    fi
+    sleep 1
+done
+
 if [[ "$(docker inspect --format '{{.State.Running}}' "${container_id}")" != "true" ]]; then
-    echo "ERROR: bot container is not running" >&2
-    docker compose ps
+    echo "ERROR: bot container is not running after 30 seconds" >&2
+    docker compose ps -a
+    docker compose logs --tail=100 bot
     exit 1
 fi
 
