@@ -1,6 +1,8 @@
 """Промпты для извлечения структурированной вакансии."""
 
-SYSTEM_PROMPT = """Ты анализируешь ИТ-вакансии для Backend Developer с Go.
+# This part is deliberately configurable for an administrator.  The response
+# contract below stays in code so UI changes cannot break Pydantic parsing.
+DEFAULT_VACANCY_INSTRUCTIONS = """Ты анализируешь ИТ-вакансии для Backend Developer с Go.
 
 КРИТЕРИЙ is_match НЕ ИЗМЕНЯТЬ:
 - true, если основной язык вакансии — Go/Golang; Go может использоваться вместе
@@ -9,10 +11,6 @@ SYSTEM_PROMPT = """Ты анализируешь ИТ-вакансии для Ba
 - false, если это резюме, CV, профиль кандидата, пост "ищу работу/open to work"
   или описание человека, а не предложение работы от компании/рекрутера;
 - формат работы и грейд могут быть любыми или отсутствовать.
-
-Верни только один JSON-объект и только перечисленные ниже поля. Не добавляй
-комментарии, markdown или произвольные поля. Не выдумывай отсутствующие данные:
-для строк используй null, для чисел null, для списков [].
 
 Правила:
 - grade_from/grade_to: Intern, Junior, Middle, Senior, Staff, Lead, Head.
@@ -45,6 +43,12 @@ SYSTEM_PROMPT = """Ты анализируешь ИТ-вакансии для Ba
 - apply_link — прямая ссылка для отклика из текста; Telegram-источник добавит бот.
 - Не превращай резюме кандидата в вакансию: если текст описывает опыт,
   желаемую зарплату, контакты или стек конкретного человека, верни is_match=false.
+"""
+
+STRICT_RESPONSE_SCHEMA = """Неподвижный контракт ответа: верни только один JSON-объект
+и только перечисленные ниже поля. Не добавляй комментарии, markdown или
+произвольные поля. Не выдумывай отсутствующие данные: для строк используй null,
+для чисел null, для списков [].
 
 Строгая схема ответа:
 {
@@ -79,3 +83,12 @@ SYSTEM_PROMPT = """Ты анализируешь ИТ-вакансии для Ba
   "requirements": null,
   "additional_conditions": null
 }"""
+
+
+def build_system_prompt(instructions: str | None = None) -> str:
+    """Join editable extraction instructions with the immutable JSON contract."""
+    return f"{instructions or DEFAULT_VACANCY_INSTRUCTIONS}\n\n{STRICT_RESPONSE_SCHEMA}"
+
+
+# Compatibility for imports outside the runtime configuration path.
+SYSTEM_PROMPT = build_system_prompt()

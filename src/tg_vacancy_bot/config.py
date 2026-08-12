@@ -6,6 +6,7 @@ import os
 from dotenv import load_dotenv
 
 from tg_vacancy_bot.admin.settings import load_runtime_settings
+from tg_vacancy_bot.llm.prompts import build_system_prompt
 from tg_vacancy_bot.paths import resolve_session_path, resolve_state_path
 
 load_dotenv()
@@ -72,6 +73,9 @@ for ch in _raw_channels:
 for channel in _MANAGED.telegram.additional_channels if _MANAGED else []:
     if channel not in TARGET_CHANNELS:
         TARGET_CHANNELS.append(channel)
+for source in _MANAGED.telegram.managed_sources if _MANAGED else []:
+    if source.enabled and source.identifier not in TARGET_CHANNELS:
+        TARGET_CHANNELS.append(source.identifier)
 for channel in _MANAGED.telegram.folder_channels if _MANAGED else []:
     parsed_channel = parse_telegram_target(channel)
     if parsed_channel not in TARGET_CHANNELS:
@@ -131,6 +135,9 @@ TELEGRAM_NOTIFY_HISTORY = parse_bool_env(os.getenv('TELEGRAM_NOTIFY_HISTORY'))
 MISTRAL_MODEL = _MANAGED.mistral.model if _MANAGED else 'mistral-small-latest'
 MISTRAL_TEMPERATURE = _MANAGED.mistral.temperature if _MANAGED else 0.1
 MISTRAL_MAX_ATTEMPTS = _MANAGED.mistral.max_attempts if _MANAGED else 2
+MISTRAL_SYSTEM_PROMPT = build_system_prompt(
+    _MANAGED.mistral.vacancy_instructions if _MANAGED else None
+)
 SETTINGS_REVISION = _MANAGED.revision if _MANAGED else 0
 
 

@@ -39,6 +39,7 @@ from tg_vacancy_bot.telegram.notifier import send_vacancy_notification
 configure_logging(
     log_format='%(asctime)s [%(levelname)s] %(message)s',
     date_format='%Y-%m-%d %H:%M:%S',
+    data_dir=config.DATA_DIR,
 )
 
 # Инициализация клиента
@@ -72,6 +73,7 @@ processor = VacancyProcessor(
     dedupe_state=dedupe_state,
     notify_vacancy=build_live_notifier(),
     exclude_keywords=config.EXCLUDE_KEYWORDS,
+    event_recorder=TelemetryStore(config.DATA_DIR),
 )
 
 message_queue: asyncio.Queue["LiveMessageJob"] = asyncio.Queue(
@@ -154,6 +156,7 @@ async def live_worker(worker_id: int) -> None:
                 job.channel_name,
             )
         except Exception:
+            processor._metric('processing_error', 'telegram')
             logging.exception(
                 "Ошибка live worker %d при обработке %s",
                 worker_id,

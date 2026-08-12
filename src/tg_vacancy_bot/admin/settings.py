@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import tempfile
 from datetime import datetime, timezone
@@ -13,12 +14,61 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+
+def normalize_public_source(value: str) -> str:
+    """Normalize the public Telegram source formats accepted by the UI."""
+    candidate = value.strip()
+    for prefix in ('https://', 'http://'):
+        if candidate.casefold().startswith(prefix):
+            candidate = candidate[len(prefix) :]
+    if candidate.casefold().startswith('t.me/'):
+        candidate = candidate[5:]
+    elif candidate.casefold().startswith('telegram.me/'):
+        candidate = candidate[12:]
+    candidate = candidate.strip('/').lstrip('@')
+    if not candidate or not candidate.replace('_', '').isalnum():
+        raise ValueError('Источник должен быть публичным username или ссылкой t.me')
+    return candidate
+
+
+_PROMPT_SECRET_RE = re.compile(
+    r'(?i)(?:api[_ -]?key|token|password|secret|authorization|cookie|credential)'
+    r'\s*[:=]\s*\S+'
+)
+_PROMPT_TOKEN_RE = re.compile(r'(?i)(?:sk-[a-z0-9_-]{10,}|bearer\s+[a-z0-9._-]{12,})')
+
+
+def validate_editable_instructions(value: str) -> str:
+    """Reject accidental credentials in a user-editable LLM instruction."""
+    cleaned = value.strip()
+    if len(cleaned) < 20 or len(cleaned) > 12000:
+        raise ValueError('Инструкции должны содержать от 20 до 12000 символов')
+    if _PROMPT_SECRET_RE.search(cleaned) or _PROMPT_TOKEN_RE.search(cleaned):
+        raise ValueError('Инструкции не должны содержать секреты или токены')
+    return cleaned
+
+
+class ManagedSource(BaseModel):
+    """One public source created through the administration UI."""
+
+    identifier: str = Field(min_length=1, max_length=128)
+    enabled: bool = True
+    added_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+    @field_validator('identifier')
+    @classmethod
+    def valid_identifier(cls, value: str) -> str:
+        return normalize_public_source(value)
 
 
 class TelegramSettings(BaseModel):
     folder_name: str = Field(default='Вакансии', min_length=1, max_length=80)
     additional_channels: list[str] = Field(default_factory=list, max_length=100)
+    managed_sources: list[ManagedSource] = Field(default_factory=list, max_length=100)
     folder_channels: list[str] = Field(default_factory=list, max_length=300)
     disabled_channels: list[str] = Field(default_factory=list, max_length=200)
     monitoring_enabled: bool = True
@@ -31,12 +81,23 @@ class TelegramSettings(BaseModel):
     def public_channels_only(cls, values: list[str]) -> list[str]:
         normalised = []
         for value in values:
-            channel = value.strip().lstrip('@')
-            if not channel or not channel.replace('_', '').isalnum():
-                raise ValueError('Канал должен быть публичным username Telegram')
+            channel = normalize_public_source(value)
             if channel.casefold() not in {item.casefold() for item in normalised}:
                 normalised.append(channel)
         return normalised
+
+    @model_validator(mode='after')
+    def unique_managed_sources(self) -> 'TelegramSettings':
+        seen: set[str] = set()
+        unique: list[ManagedSource] = []
+        for source in self.managed_sources:
+            key = source.identifier.casefold()
+            if key in seen:
+                raise ValueError('Источник уже добавлен')
+            seen.add(key)
+            unique.append(source)
+        self.managed_sources = unique
+        return self
 
     @model_validator(mode='after')
     def require_notify_target(self) -> 'TelegramSettings':
@@ -69,6 +130,12 @@ class MistralSettings(BaseModel):
     model: str = Field(default='mistral-small-latest', min_length=3, max_length=100)
     temperature: float = Field(default=0.1, ge=0, le=1)
     max_attempts: int = Field(default=2, ge=1, le=5)
+    vacancy_instructions: str | None = None
+
+    @field_validator('vacancy_instructions')
+    @classmethod
+    def valid_instructions(cls, value: str | None) -> str | None:
+        return validate_editable_instructions(value) if value is not None else None
 
 
 class SheetsSettings(BaseModel):

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from telethon import TelegramClient
 
 from tg_vacancy_bot import config
+from tg_vacancy_bot.admin.telemetry import TelemetryStore
 from tg_vacancy_bot.llm.mistral import analyze_text
 from tg_vacancy_bot.logging_config import configure_logging
 from tg_vacancy_bot.pipeline.dedupe_state import JsonlDedupeState
@@ -28,6 +29,7 @@ from tg_vacancy_bot.telegram.notifier import send_vacancy_notification
 # Настройка логирования
 configure_logging(
     log_format='%(asctime)s - %(levelname)s - %(message)s',
+    data_dir=config.DATA_DIR,
 )
 
 # Инициализация клиента
@@ -69,6 +71,7 @@ async def parse_history():
         dedupe_state=dedupe_state,
         notify_vacancy=build_history_notifier(),
         exclude_keywords=config.EXCLUDE_KEYWORDS,
+        event_recorder=TelemetryStore(config.DATA_DIR),
     )
 
     logging.info(

@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 from openai import APIError, AsyncOpenAI
 
 from tg_vacancy_bot import config
-from tg_vacancy_bot.llm.prompts import SYSTEM_PROMPT
 from tg_vacancy_bot.llm.schemas import (
     InvalidAnalysisResultError,
     validate_analysis_result,
@@ -50,7 +49,7 @@ async def analyze_text(vacancy_text: str) -> VacancyAnalysis | None:
             response = await _get_client().chat.completions.create(
                 model=config.MISTRAL_MODEL,
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": config.MISTRAL_SYSTEM_PROMPT},
                     {"role": "user", "content": vacancy_text},
                 ],
                 response_format={"type": "json_object"},
