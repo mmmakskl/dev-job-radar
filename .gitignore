@@ -23,6 +23,7 @@ web/.next/
 web/out/
 web/test-results/
 web/playwright-report/
+web/tsconfig.tsbuildinfo
 data/*.jsonl
 found_channels.json
 vacancies.xlsx
