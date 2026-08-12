@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodically synchronise dev-job-radar Telegram folder sources
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+RandomizedDelaySec=2min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

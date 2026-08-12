@@ -62,6 +62,9 @@ for ch in _raw_channels:
         else:
             TARGET_CHANNELS.append(ch)
 
+# Название папки Telegram, чьи чаты автоматически добавляются в TARGET_CHANNELS.
+TELEGRAM_CHANNELS_FOLDER = os.getenv('TELEGRAM_CHANNELS_FOLDER', 'Вакансии')
+
 # Префильтр для экономии токенов
 KEYWORD_FILTER = ['go', 'golang']  # Регистронезависимый поиск
 

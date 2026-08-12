@@ -48,6 +48,7 @@ API_ID=12345678
 API_HASH=your_telegram_api_hash
 SESSION_NAME=my_account
 TARGET_CHANNELS=channel_username,-1001234567890
+TELEGRAM_CHANNELS_FOLDER=Вакансии
 MISTRAL_API_KEY=your_mistral_api_key
 GOOGLE_SHEET_URL=https://docs.google.com/spreadsheets/d/...
 OUTPUT_TIMEZONE=Europe/Moscow
@@ -107,6 +108,7 @@ make live      # alias для make run
 make history   # обработать сообщения за последнюю неделю
 make discover  # найти каналы среди текущих Telegram dialogs
 make channels  # alias для make discover
+make sync-channels # добавить чаты из Telegram-папки в TARGET_CHANNELS
 make compile   # проверить синтаксис без обращения к внешним API
 make test      # запустить изолированные pytest-тесты
 make check     # выполнить compile и test
@@ -127,6 +129,7 @@ PYTHONPATH=src venv/bin/python scripts/run_live.py
 PYTHONPATH=src venv/bin/python scripts/parse_history.py
 PYTHONPATH=src venv/bin/python scripts/auth.py
 PYTHONPATH=src venv/bin/python scripts/discover_channels.py
+PYTHONPATH=src venv/bin/python scripts/sync_channels.py
 ```
 
 Discovery по умолчанию ищет каналы и группы, в названии которых есть `job`,
@@ -141,6 +144,51 @@ PYTHONPATH=src venv/bin/python scripts/discover_channels.py --query "Ханти"
 Скрипт печатает `username` или числовой `id`, который можно добавить в
 `TARGET_CHANNELS`, и сохраняет найденные диалоги в
 `DATA_DIR/found_channels.json` (`data/found_channels.json` локально).
+
+### Автоматическое добавление источников из Telegram-папки
+
+Создайте в Telegram папку **«Вакансии»** и добавляйте в неё каналы и группы,
+которые нужно мониторить. `make sync-channels` читает эту папку и атомарно
+добавляет отсутствующие чаты в `TARGET_CHANNELS` в `.env`. Новые источники
+записываются как числовые Telegram ID: это не зависит от последующего
+переименования или смены `@username`. Уже настроенные источники не удаляются.
+
+Название папки задаёт `TELEGRAM_CHANNELS_FOLDER` (по умолчанию `Вакансии`):
+
+```bash
+TELEGRAM_CHANNELS_FOLDER="Go вакансии" make sync-channels
+```
+
+Скрипт должен быть единственным процессом, использующим этот `SESSION_NAME`:
+перед локальным запуском остановите `make run`. После изменения `.env`
+перезапустите live-бот, чтобы Telethon начал слушать добавленные чаты.
+
+На Docker-стенде используйте `scripts/sync_channels_on_stand.sh`, а не
+`docker compose run` вручную. Скрипт корректно останавливает bot, освобождает
+Telegram session, запускает синхронизацию в одноразовом контейнере, обновляет
+host `.env` и пересоздаёт bot с новой конфигурацией. При любой ошибке trap
+запускает bot обратно:
+
+```bash
+cd /home/deploy/apps/dev-job-radar
+bash scripts/sync_channels_on_stand.sh
+```
+
+Для запуска каждые 30 минут установите приложенные systemd unit и timer
+(путь и пользователь `deploy` в unit соответствуют инструкции развёртывания):
+
+```bash
+sudo install -m 0644 deploy/systemd/dev-job-radar-channel-sync.service /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/dev-job-radar-channel-sync.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now dev-job-radar-channel-sync.timer
+systemctl list-timers dev-job-radar-channel-sync.timer
+```
+
+Логи синхронизации доступны через
+`journalctl -u dev-job-radar-channel-sync.service`. Таймер добавляет небольшую
+случайную задержку до двух минут; это уменьшает одновременные обращения к
+Telegram после перезагрузки сервера.
 
 При старте приложение восстанавливает дедупликацию из `data/state.jsonl` и
 загружает legacy-ссылки из старого первого листа. Ссылки и стабильные ID
@@ -241,6 +289,7 @@ src/
   tg_vacancy_bot/
     __init__.py
     config.py                 # загрузка настроек
+    channel_sync.py           # сравнение папки Telegram и TARGET_CHANNELS
     logging_config.py         # настройка логирования
     models.py                 # модель и нормализация вакансии
     pipeline/
@@ -266,6 +315,10 @@ scripts/
   parse_history.py            # обработка истории за семь дней
   auth.py                     # Telegram-авторизация по QR-коду
   discover_channels.py        # поиск каналов по ключевым словам
+  sync_channels.py            # разовое обновление .env из Telegram-папки
+  sync_channels_on_stand.sh   # безопасная синхронизация на Docker-стенде
+deploy/
+  systemd/                    # timer для периодической синхронизации на VPS
 tests/                        # изолированные автоматические тесты
   test_pipeline.py            # префильтр и текстовые отпечатки
   test_dedupe_state.py        # долговременная дедупликация JSONL

@@ -9,7 +9,7 @@ DOCKER_COMPOSE ?= docker compose
 .DEFAULT_GOAL := help
 
 .PHONY: help init venv install env data auth auth-force run live history \
-	discover channels smoke compile test check lint format-check coverage security ci \
+	discover channels sync-channels smoke compile test check lint format-check coverage security ci \
 	doctor state-info clean-cache clean docker-build docker-build-check docker-up \
 	docker-down docker-logs docker-status docker-check
 
@@ -30,6 +30,7 @@ help:
 	@echo "  make history       обработать историю Telegram-каналов"
 	@echo "  make discover      найти каналы среди текущих Telegram dialogs"
 	@echo "  make channels      alias для make discover"
+	@echo "  make sync-channels добавить чаты из Telegram-папки в TARGET_CHANNELS"
 	@echo "  make smoke         live smoke test; требует Telegram session/API"
 	@echo ""
 	@echo "Validation and diagnostics (без API-запросов):"
@@ -92,6 +93,9 @@ discover: venv
 	PYTHONPATH=$(PYTHONPATH) $(PY) scripts/discover_channels.py
 
 channels: discover
+
+sync-channels: venv
+	PYTHONPATH=$(PYTHONPATH) $(PY) scripts/sync_channels.py
 
 smoke: venv
 	PYTHONPATH=$(PYTHONPATH) $(PY) scripts/test_userbot.py
