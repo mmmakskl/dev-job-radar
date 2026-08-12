@@ -18,7 +18,7 @@ __pycache__
 *.session-journal
 secrets
 venv
-data/*
+data
 logs
 tests
 README.md
