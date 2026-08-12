@@ -13,7 +13,7 @@ from tg_vacancy_bot.channel_sync import (
     ChannelSyncResult,
     FolderChannel,
     build_synced_target_channels,
-    find_folder_id,
+    find_folder_filter,
     serialize_target_channels,
     update_target_channels_env,
 )
@@ -42,19 +42,55 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-async def get_folder_id(client: TelegramClient, folder_name: str) -> int:
-    """Return a custom Telegram folder ID by its visible title."""
+async def get_folder_filter(client: TelegramClient, folder_name: str) -> object:
+    """Return the custom dialog filter selected by its visible title."""
     response = await client(functions.messages.GetDialogFiltersRequest())
-    return find_folder_id(response.filters, folder_name)
+    return find_folder_filter(response.filters, folder_name)
+
+
+def filter_peer_ids(dialog_filter: object, attribute: str) -> set[int]:
+    """Convert dialog-filter input peers to Telethon's stable marked IDs."""
+    return {utils.get_peer_id(peer) for peer in getattr(dialog_filter, attribute, [])}
+
+
+def dialog_is_in_folder(
+    dialog,
+    *,
+    included_ids: set[int],
+    excluded_ids: set[int],
+    include_groups: bool,
+    include_broadcasts: bool,
+) -> bool:
+    """Determine whether a monitorable dialog belongs to a custom filter."""
+    if dialog.id in excluded_ids:
+        return False
+    if dialog.id in included_ids:
+        return True
+    if include_groups and dialog.is_group:
+        return True
+    return include_broadcasts and dialog.is_channel and not dialog.is_group
 
 
 async def get_folder_channels(
-    client: TelegramClient, folder_id: int
+    client: TelegramClient, dialog_filter: object
 ) -> list[FolderChannel]:
-    """Get monitorable groups and channels from one custom dialog folder."""
+    """Get monitorable chats selected by a custom Telegram dialog filter."""
+    included_ids = filter_peer_ids(dialog_filter, 'pinned_peers')
+    included_ids.update(filter_peer_ids(dialog_filter, 'include_peers'))
+    excluded_ids = filter_peer_ids(dialog_filter, 'exclude_peers')
+    include_groups = bool(getattr(dialog_filter, 'groups', False))
+    include_broadcasts = bool(getattr(dialog_filter, 'broadcasts', False))
     channels = []
-    async for dialog in client.iter_dialogs(folder=folder_id):
+    async for dialog in client.iter_dialogs():
         if not (dialog.is_channel or dialog.is_group):
+            continue
+        if not dialog_is_in_folder(
+            dialog,
+            included_ids=included_ids,
+            excluded_ids=excluded_ids,
+            include_groups=include_groups,
+            include_broadcasts=include_broadcasts,
+        ):
             continue
         channels.append(
             FolderChannel(
@@ -98,8 +134,8 @@ async def synchronize_folder(folder_name: str) -> ChannelSyncResult:
         if not await client.is_user_authorized():
             raise RuntimeError('Сессия Telegram не авторизована. Выполните make auth.')
 
-        folder_id = await get_folder_id(client, folder_name)
-        found_channels = await get_folder_channels(client, folder_id)
+        dialog_filter = await get_folder_filter(client, folder_name)
+        found_channels = await get_folder_channels(client, dialog_filter)
         resolved_ids = await resolve_configured_ids(client)
         target_channels, added_channels = build_synced_target_channels(
             config.TARGET_CHANNELS,

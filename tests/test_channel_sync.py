@@ -6,6 +6,7 @@ import pytest
 from tg_vacancy_bot.channel_sync import (
     FolderChannel,
     build_synced_target_channels,
+    find_folder_filter,
     find_folder_id,
     replace_env_value,
     update_target_channels_env,
@@ -31,6 +32,7 @@ def test_find_folder_id_matches_visible_name_case_insensitively() -> None:
     folder = SimpleNamespace(id=7, title=SimpleNamespace(text='Вакансии'))
 
     assert find_folder_id([folder], 'вАкАнСиИ') == 7
+    assert find_folder_filter([folder], 'Вакансии') is folder
 
 
 def test_find_folder_id_rejects_missing_folder() -> None:
