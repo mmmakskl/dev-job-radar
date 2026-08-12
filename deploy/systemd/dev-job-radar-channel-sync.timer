@@ -2,8 +2,7 @@
 Description=Periodically synchronise dev-job-radar Telegram folder sources
 
 [Timer]
-OnBootSec=5min
-OnUnitActiveSec=30min
+OnCalendar=*-*-* *:00,30:00
 RandomizedDelaySec=2min
 Persistent=true
 
