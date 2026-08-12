@@ -163,7 +163,8 @@ def create_app(data_dir: str | None = None) -> FastAPI:
         response.headers['Referrer-Policy'] = 'no-referrer'
         response.headers['Content-Security-Policy'] = (
             "default-src 'self'; style-src 'self' 'unsafe-inline'; "
-            "script-src 'self'; connect-src 'self'"
+            "script-src 'self' 'unsafe-inline'; connect-src 'self'; "
+            "object-src 'none'; base-uri 'none'; form-action 'self'"
         )
         return response
 
