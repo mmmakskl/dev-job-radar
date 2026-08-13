@@ -1,42 +1,44 @@
 import { expect, test } from '@playwright/test';
 
-test('login, dashboard, logs, sources and LLM settings', async ({ page }) => {
+test('admin works through direct URLs and confirms consequential actions', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('Пароль администратора').fill('e2e-password');
   await page.getByRole('button', { name: 'Войти' }).click();
-  await expect(page.getByText('Безопасное управление сбором вакансий')).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('heading', { name: 'Состояние обработки' })).toBeVisible();
   await expect(page.getByText('Постов обработано сегодня')).toBeVisible();
   await expect(page.getByText('Тестовая безопасная ошибка LLM')).toBeVisible();
-  await page.getByRole('button', { name: 'Детали' }).click();
+  await page.getByRole('button', { name: 'Безопасные детали' }).click();
   await expect(page.getByText('Очищенные технические детали.')).toBeVisible();
-  await page.getByRole('button', { name: 'Обновить статус' }).click();
 
+  await page.goto('/settings');
+  await expect(page.getByRole('heading', { name: 'Настройки обработки' })).toBeVisible();
   await page.getByLabel('Ключевые слова через запятую').fill('');
-  await page.getByRole('button', { name: 'Сохранить настройки' }).click();
+  await page.getByRole('button', { name: 'Сохранить изменения' }).click();
   await expect(page.getByText('Укажите хотя бы одно ключевое слово')).toBeVisible();
+  await page.getByLabel('Ключевые слова через запятую').fill('go, golang, backend');
+  await expect(page.getByText('Есть несохранённые изменения')).toBeVisible();
+  await page.getByRole('button', { name: 'Сохранить изменения' }).click();
+  await expect(page.getByRole('dialog')).toContainText('live-процесс продолжит работать');
+  await page.getByRole('button', { name: 'Отмена' }).click();
 
-  await page.getByRole('button', { name: /Источники/ }).click();
-  await page.getByLabel('Новый источник').fill('@e2e_go_jobs');
-  await page.getByRole('button', { name: 'Добавить источник' }).click();
-  await expect(page.getByRole('heading', { name: '@e2e_go_jobs' })).toBeVisible();
-  await page.getByRole('button', { name: 'Выключить' }).click();
-  await expect(page.getByRole('button', { name: 'Включить' })).toBeVisible();
+  await page.goto('/sources');
+  await expect(page.getByRole('heading', { name: /Источники/ })).toBeVisible();
+  await page.getByLabel('Новый источник').fill('https://t.me/+private');
+  await page.getByRole('button', { name: 'Проверить и добавить' }).click();
+  await expect(page.getByText('Введите публичный @username или ссылку t.me/username. Invite-ссылки не поддерживаются.')).toBeVisible();
 
-  await page.getByRole('button', { name: '← Дашборд' }).click();
-  await page.getByRole('button', { name: 'Логи' }).click();
+  await page.goto('/logs?level=ERROR');
   await page.getByLabel('Уровень лога').selectOption('ERROR');
   await expect(page.getByRole('heading', { name: 'Логи' })).toBeVisible();
-  await page.getByRole('button', { name: '← Дашборд' }).click();
-  await page.getByRole('button', { name: 'LLM-инструкции' }).click();
-  await page.getByLabel('Инструкции для LLM').fill('Определи только вакансии Go и исключай резюме или профили кандидатов.');
-  await page.getByRole('button', { name: 'Сохранить инструкции' }).click();
-  await page.getByRole('button', { name: 'Восстановить значение по умолчанию' }).click();
-  await expect(page.getByRole('dialog')).toBeVisible();
-  await page.getByRole('button', { name: 'Отмена' }).click();
-  await page.getByRole('button', { name: '← Дашборд' }).click();
+  await expect(page).toHaveURL(/\/logs\?level=ERROR/);
 
-  await page.getByRole('button', { name: 'Перезапуск' }).click();
-  await expect(page.getByRole('dialog')).toBeVisible();
-  await page.getByRole('button', { name: 'Подтвердить' }).click();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.goto('/errors');
+  await expect(page.getByRole('heading', { name: 'Активные ошибки' })).toBeVisible();
+  await expect(page.getByText('Следующее действие:')).toBeVisible();
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Перезапустить бота' }).click();
+  await expect(page.getByRole('dialog')).toContainText('применит сохранённые настройки');
+  await page.getByRole('button', { name: 'Отмена' }).click();
 });
