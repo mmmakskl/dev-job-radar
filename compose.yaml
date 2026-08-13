@@ -51,3 +51,25 @@ services:
       options:
         max-size: 10m
         max-file: "3"
+  candidate-bot:
+    image: dev-job-radar-bot:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["candidate"]
+    init: true
+    restart: unless-stopped
+    command: ["python", "scripts/run_candidate_bot.py"]
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data
+      CANDIDATE_BOT_DB_PATH: /app/data/candidate_bot.sqlite3
+    volumes:
+      - ./data:/app/data
+    stop_grace_period: 35s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

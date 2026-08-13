@@ -34,6 +34,12 @@ from tg_vacancy_bot.telegram.links import (
     get_event_channel_name,
     get_event_message_link,
 )
+from tg_vacancy_bot.telegram.bot_api import TelegramBotApi
+from tg_vacancy_bot.telegram.candidate_notifier import (
+    CandidateVacancyNotifier,
+    combine_notifiers,
+)
+from tg_vacancy_bot.telegram.candidate_store import CandidateStore
 from tg_vacancy_bot.telegram.notifier import send_vacancy_notification
 
 
@@ -54,18 +60,26 @@ dedupe_state = JsonlDedupeState(
 
 
 def build_live_notifier():
-    """Создаёт callback уведомлений только при включённом feature flag."""
-    if not config.TELEGRAM_NOTIFY_ENABLED:
-        return None
+    """Combines legacy Telethon notices and optional Bot API action cards."""
+    legacy_notifier = None
+    candidate_notifier = None
+    if config.TELEGRAM_NOTIFY_ENABLED:
 
-    async def notify_vacancy(**kwargs) -> bool:
-        return await send_vacancy_notification(
-            client=client,
-            target=config.TELEGRAM_NOTIFY_TARGET,
-            **kwargs,
+        async def notify_vacancy(**kwargs) -> bool:
+            return await send_vacancy_notification(
+                client=client,
+                target=config.TELEGRAM_NOTIFY_TARGET,
+                **kwargs,
+            )
+
+        legacy_notifier = notify_vacancy
+    if config.CANDIDATE_BOT_ENABLED:
+        candidate_notifier = CandidateVacancyNotifier(
+            TelegramBotApi(config.CANDIDATE_BOT_TOKEN),
+            CandidateStore(config.CANDIDATE_BOT_DB_PATH),
+            config.CANDIDATE_BOT_CHANNEL,
         )
-
-    return notify_vacancy
+    return combine_notifiers(legacy_notifier, candidate_notifier)
 
 
 processor = VacancyProcessor(
@@ -319,6 +333,10 @@ async def main():
         )
     else:
         logging.info("Telegram notifications: disabled")
+    logging.info(
+        'Candidate Bot API cards: %s',
+        'enabled' if config.CANDIDATE_BOT_ENABLED else 'disabled',
+    )
     logging.info(
         "Live-очередь: maxsize=%d, workers=%d",
         config.LIVE_QUEUE_MAXSIZE,

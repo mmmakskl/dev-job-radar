@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
 import './styles.css';
-import './responsive.css';
 
 export const metadata: Metadata = {
   title: 'Go Radar — управление',

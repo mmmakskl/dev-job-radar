@@ -29,7 +29,7 @@ Mistral API, Google Sheets и администратор через CLI либо
 | LLM | Mistral API через OpenAI SDK | Определение релевантности и извлечение структуры |
 | Экспорт | Google Sheets API, gspread, google-auth | Создание и заполнение двух листов |
 | Конфигурация | `.env`, Pydantic-managed JSON | Секреты и не секретные управляемые настройки |
-| Локальное состояние | JSONL/JSON | Дедупликация, причины пропусков, метрики, логи, ошибки, alert state |
+| Локальное состояние | JSONL/JSON/SQLite | Дедупликация, причины пропусков, метрики, логи, ошибки, alert state и личные статусы кандидатов |
 | HTTP/API | FastAPI, Uvicorn | Admin API и раздача статического интерфейса |
 | Frontend | Next.js static export, React, TypeScript, Tailwind, RHF, Zod | Русскоязычная админ-панель |
 | Контейнеризация | Docker, Docker Compose | Сервисы `bot` и `admin` |
@@ -38,7 +38,7 @@ Mistral API, Google Sheets и администратор через CLI либо
 - Локально хранятся session Telegram, JSONL дедупликации, managed-настройки,
   агрегированные метрики, очищенные логи и ошибки в `DATA_DIR`/`data`.
 - Внешние сервисы: Telegram, Mistral, Google Sheets.
-- Реляционной или документной БД нет.
+- Для пользовательского Telegram workflow есть локальная SQLite БД; внешней БД нет.
 - HTTP API существует: `/api/v1/*` и `/healthz`.
 - Frontend существует в `web/`.
 - CLI-сценарии: авторизация, live-мониторинг, history, discovery источников,
@@ -53,7 +53,8 @@ Mistral API, Google Sheets и администратор через CLI либо
 - `scripts/run_live.py` принимает live-события; `scripts/parse_history.py`
   обрабатывает историю; `telegram/links.py` строит ссылки и стабильные ID.
 - `pipeline/processor.py` соединяет фильтрацию, LLM, экспорт, дедупликацию,
-  метрики и уведомления.
+  метрики и уведомления. При включённом beta-режиме Bot API публикует отдельную
+  интерактивную карточку после экспорта.
 - `llm/mistral.py` выполняет запросы; `llm/prompts.py` отделяет изменяемые
   инструкции от фиксированного JSON-контракта; `llm/schemas.py` валидирует
   ответ.
@@ -74,7 +75,9 @@ flowchart LR
   LLM --> S[Валидация и нормализация VacancyAnalysis]
   S --> GS[Google Sheets: полный + краткий лист]
   GS --> D[JSONL state: exported]
-  GS --> N[Опциональное Telegram-уведомление]
+  GS --> N[Опциональное Telethon-уведомление]
+  GS --> B[Опциональная Bot API карточка]
+  B --> DB[(SQLite: личные действия)]
   Q --> A[Admin telemetry]
   A --> UI[FastAPI + Next.js панель]
 ```
@@ -134,8 +137,11 @@ live-процесса.
 только недостающую строку.
 
 Событие `exported` пишется в state только после успеха в обоих листах. Ошибка
-Telegram-уведомления не отменяет экспорт и дедупликацию. Реализация:
-`storage/sheets.py`, `pipeline/dedupe_state.py`, `telegram/notifier.py`.
+Telegram-уведомления или Bot API-карточки не отменяет экспорт и дедупликацию.
+Карточка доступна только при явной beta-конфигурации и хранит действия каждого
+кандидата отдельно. Реализация: `storage/sheets.py`,
+`pipeline/dedupe_state.py`, `telegram/notifier.py`,
+`telegram/candidate_notifier.py`, `telegram/candidate_store.py`.
 
 ## 5. Контракты и модели данных
 
@@ -173,6 +179,7 @@ Telegram-уведомления не отменяет экспорт и деду
 | `STATE_FILE_PATH`, `TEXT_HASH_TTL_DAYS` | Нет | `data/state.jsonl`, 30 дней |
 | `LIVE_QUEUE_MAXSIZE`, `LIVE_WORKERS` | Нет | 1000 и 1 |
 | `TELEGRAM_NOTIFY_*` | Target обязателен при включении | Уведомления и режим истории |
+| `CANDIDATE_BOT_*` | Все обязательны при включении | Bot API token, общий beta-канал, allowlist numeric user ID и SQLite path |
 | `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET` | Да для UI | Вход и HMAC сессии |
 | `ADMIN_COOKIE_SECURE`, `ADMIN_STATIC_DIR` | Нет | Cookie и каталог статической панели |
 
@@ -230,7 +237,8 @@ Google Sheets остаются пользовательским представ
 |---|---|---|---|
 | `make auth` | QR-авторизация | Telegram API | Создаёт/использует session |
 | `make auth-force` | Повторная авторизация | Telegram API | Удаляет session |
-| `make run` / `make live` | Live-мониторинг | Telegram, Mistral, Sheets | Пишет Sheets/state/telemetry |
+| `make run` / `make live` | Live-мониторинг | Telegram, Mistral, Sheets | Пишет Sheets/state/telemetry; при beta-режиме — карточки Bot API |
+| `make candidate-bot` | Личный Bot API long polling | `CANDIDATE_BOT_*` | Пишет личные статусы и нейтральные жалобы в SQLite |
 | `make history` | Исторический проход | Те же | Обрабатывает старые посты |
 | `make discover` | Поиск диалогов | Telegram session | Создаёт `found_channels.json` |
 | `make sync-channels` | Обновление `.env` из папки | Telegram session, `.env` | Меняет `TARGET_CHANNELS` |
@@ -239,6 +247,7 @@ Google Sheets остаются пользовательским представ
 | `make test`, `make check`, `make ci` | Проверки | Python env | Без внешних API |
 | `make web-check` | TypeScript, Vitest, Next build | Node/npm | Build-артефакты |
 | `docker compose up -d` | `bot` + `admin` | `.env`, credentials, data | Контейнеры |
+| `docker compose --profile candidate up -d candidate-bot` | Личный Bot API worker | `CANDIDATE_BOT_*`, data | Long polling без webhook/домена |
 
 Ограничения: один session нельзя использовать параллельно; handler создаётся при
 старте, поэтому источники требуют restart; при переполнении очереди сообщение

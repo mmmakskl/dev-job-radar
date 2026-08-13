@@ -42,3 +42,51 @@ test('admin works through direct URLs and confirms consequential actions', async
   await expect(page.getByRole('dialog')).toContainText('применит сохранённые настройки');
   await page.getByRole('button', { name: 'Отмена' }).click();
 });
+
+test('private screens use the full content width at every supported viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/');
+  await page.getByLabel('Пароль администратора').fill('e2e-password');
+  await page.getByRole('button', { name: 'Войти' }).click();
+
+  for (const viewport of [
+    { width: 1440, height: 1000 },
+    { width: 1024, height: 900 },
+    { width: 768, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+
+    for (const route of ['/sources', '/settings', '/prompt']) {
+      await page.goto(route);
+      await expect(page.locator('.page-content > .screen')).toBeVisible();
+      const dimensions = await page.locator('.page-content').evaluate((content) => {
+        const screen = content.querySelector<HTMLElement>(':scope > .screen');
+        if (!screen) throw new Error('Private screen is missing');
+        return {
+          content: content.getBoundingClientRect().width,
+          screen: screen.getBoundingClientRect().width,
+        };
+      });
+      expect(dimensions.screen).toBeGreaterThanOrEqual(dimensions.content - 1);
+    }
+
+    await page.goto('/sources');
+    await expect(page.getByRole('heading', { name: '@layout_regression_source_with_long_name_123456789' })).toBeVisible();
+    const dimensions = await page.locator('.source-grid').evaluate((grid) => {
+      const card = grid.querySelector<HTMLElement>('.source-card');
+      if (!card) throw new Error('Regression source card is missing');
+      return {
+        grid: grid.getBoundingClientRect().width,
+        card: card.getBoundingClientRect().width,
+      };
+    });
+    expect(dimensions.card).toBeGreaterThanOrEqual(Math.min(280, dimensions.grid - 1));
+    if (dimensions.grid >= 600) {
+      // A twelve-column parent used to compress every card to about 1/12 width.
+      expect(dimensions.card).toBeGreaterThan(dimensions.grid / 4);
+    } else {
+      expect(dimensions.card).toBeGreaterThanOrEqual(dimensions.grid - 1);
+    }
+  }
+});

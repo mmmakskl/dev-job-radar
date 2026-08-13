@@ -14,4 +14,20 @@ export default async function globalSetup(): Promise<void> {
       status: 'new', count: 1, first_seen_at: now, last_seen_at: now,
     }]),
   );
+  await writeFile(
+    `${dataDir}/settings.json`,
+    JSON.stringify({
+      schema_version: 3,
+      revision: 1,
+      updated_at: now,
+      telegram: {
+        managed_sources: [{
+          identifier: 'layout_regression_source_with_long_name_123456789',
+          enabled: true,
+          added_at: now,
+          verification_status: 'verified',
+        }],
+      },
+    }),
+  );
 }

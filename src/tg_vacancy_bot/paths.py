@@ -28,3 +28,16 @@ def resolve_state_path(
     if data_dir:
         return str(Path(data_dir) / "state.jsonl")
     return "data/state.jsonl"
+
+
+def resolve_candidate_bot_db_path(
+    *,
+    data_dir: str | None = None,
+    db_path: str | None = None,
+) -> str:
+    """Returns the persistent SQLite path used by the candidate Bot API UI."""
+    if db_path:
+        return db_path
+    if data_dir:
+        return str(Path(data_dir) / "candidate_bot.sqlite3")
+    return "data/candidate_bot.sqlite3"

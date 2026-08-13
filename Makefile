@@ -8,7 +8,7 @@ DOCKER_COMPOSE ?= docker compose
 
 .DEFAULT_GOAL := help
 
-.PHONY: help init venv install env data auth auth-force run live history \
+.PHONY: help init venv install env data auth auth-force run live candidate-bot history \
 	discover channels sync-channels smoke compile test check lint format-check coverage security ci \
 	doctor state-info clean-cache clean docker-build docker-build-check docker-up \
 	docker-down docker-logs docker-status docker-check web-install web-build web-test web-check
@@ -27,6 +27,7 @@ help:
 	@echo "  make auth-force    удалить session через --force-relogin и авторизоваться заново"
 	@echo "  make run           запустить live monitoring"
 	@echo "  make live          alias для make run"
+	@echo "  make candidate-bot запустить личный Bot API интерфейс кандидата (long polling)"
 	@echo "  make history       обработать историю Telegram-каналов"
 	@echo "  make discover      найти каналы среди текущих Telegram dialogs"
 	@echo "  make channels      alias для make discover"
@@ -86,6 +87,9 @@ run: venv
 	PYTHONPATH=$(PYTHONPATH) $(PY) scripts/run_live.py
 
 live: run
+
+candidate-bot: venv
+	PYTHONPATH=$(PYTHONPATH) $(PY) scripts/run_candidate_bot.py
 
 history: venv
 	PYTHONPATH=$(PYTHONPATH) $(PY) scripts/parse_history.py

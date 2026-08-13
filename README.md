@@ -61,6 +61,10 @@ LIVE_WORKERS=1
 TELEGRAM_NOTIFY_ENABLED=false
 TELEGRAM_NOTIFY_TARGET=@my_channel
 TELEGRAM_NOTIFY_HISTORY=false
+CANDIDATE_BOT_ENABLED=false
+CANDIDATE_BOT_TOKEN=
+CANDIDATE_BOT_CHANNEL=@my_beta_vacancies_channel
+CANDIDATE_BOT_ALLOWED_USER_IDS=123456789
 ```
 
 Сохраните ключ Service Account как `credentials.json` в корне проекта. Файлы `.env`, `credentials.json` и `*.session` содержат секреты и не должны попадать в Git.
@@ -105,6 +109,7 @@ Live handler только извлекает text, raw_text и ссылку по
 ```bash
 make init      # подготовить venv, зависимости, .env и data/
 make live      # alias для make run
+make candidate-bot # личный Bot API интерфейс кандидата (long polling)
 make history   # обработать сообщения за последнюю неделю
 make discover  # найти каналы среди текущих Telegram dialogs
 make channels  # alias для make discover
@@ -126,6 +131,7 @@ Telethon хранит авторизацию в SQLite session-файле и н�
 
 ```bash
 PYTHONPATH=src venv/bin/python scripts/run_live.py
+PYTHONPATH=src venv/bin/python scripts/run_candidate_bot.py
 PYTHONPATH=src venv/bin/python scripts/parse_history.py
 PYTHONPATH=src venv/bin/python scripts/auth.py
 PYTHONPATH=src venv/bin/python scripts/discover_channels.py
@@ -282,6 +288,55 @@ make run
 Если запуск сообщает об `TELEGRAM_NOTIFY_TARGET`, заполните target или выключите
 фичу. Если history заспамил канал, выключите `TELEGRAM_NOTIFY_HISTORY`.
 
+## Личный Telegram-интерфейс кандидата (private beta)
+
+Для действий кандидатов используется отдельный Telegram Bot API-бот. Он не
+заменяет Telethon userbot: тот по-прежнему читает источники и экспортирует
+вакансии. Bot API-бот публикует интерактивную карточку в общий beta-канал и
+ведёт личные статусы пользователей в локальном SQLite. Он работает через long
+polling, поэтому публичный домен и HTTPS не нужны.
+
+Создайте бота через BotFather, добавьте его администратором в отдельный общий
+канал вакансий и включите только перечисленных тестировщиков:
+
+```dotenv
+CANDIDATE_BOT_ENABLED=true
+CANDIDATE_BOT_TOKEN=token_from_botfather
+CANDIDATE_BOT_CHANNEL=@my_beta_vacancies_channel
+CANDIDATE_BOT_ALLOWED_USER_IDS=123456789,987654321
+# Необязательно: по умолчанию data/candidate_bot.sqlite3
+CANDIDATE_BOT_DB_PATH=data/candidate_bot.sqlite3
+```
+
+Токен — секрет: храните его только в `.env`, не передавайте в команды и не
+добавляйте в Git. `CANDIDATE_BOT_ALLOWED_USER_IDS` содержит именно числовые
+Telegram ID; при пустом списке beta-доступ не выдаётся. При включённом режиме
+live-процесс отправляет в `CANDIDATE_BOT_CHANNEL` карточки с кнопками
+«Открыть», «Сохранить», «Откликнулся», «Не подходит» и «Пожаловаться».
+Существующее Telethon-уведомление остаётся отдельным и продолжает работать.
+
+Запустите long polling вторым процессом:
+
+```bash
+make candidate-bot
+```
+
+В Docker сервис находится в отдельном profile и не запускается по умолчанию:
+
+```bash
+docker compose --profile candidate up -d candidate-bot
+```
+
+После `/start` beta-кандидат видит «Новые», «Мои отклики», «Сохранённые» и
+«Скрытые». Кнопки в личном чате позволяют менять этап на отклик, ответ,
+интервью, оффер или отказ. Нажатия на сообщение общего канала меняют только
+строку этого пользователя и не редактируют карточку для остальных.
+
+«Пожаловаться» предлагает нейтральные причины: подозрительная вакансия,
+дубликат, неактуальна или другое. Сигнал сохраняется локально для
+администратора и никогда не публикуется другим кандидатам как отзыв о
+компании.
+
 ## Структура проекта
 
 ```text
@@ -302,6 +357,10 @@ src/
       __init__.py
       links.py                # формирование ссылок Telegram
       notifier.py             # HTML-уведомления в Telegram-канал
+      bot_api.py              # минимальный async Telegram Bot API клиент
+      candidate_notifier.py   # интерактивные карточки beta-канала
+      candidate_bot.py        # long polling и личный workflow кандидата
+      candidate_store.py      # идемпотентная SQLite-схема действий/жалоб
     llm/
       __init__.py
       mistral.py              # интеграция с Mistral
@@ -312,6 +371,7 @@ src/
       sheets.py               # чтение и запись Google Sheets
 scripts/
   run_live.py                 # мониторинг новых сообщений
+  run_candidate_bot.py        # личный Bot API интерфейс кандидата
   parse_history.py            # обработка истории за семь дней
   auth.py                     # Telegram-авторизация по QR-коду
   discover_channels.py        # поиск каналов по ключевым словам

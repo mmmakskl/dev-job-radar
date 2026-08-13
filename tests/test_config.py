@@ -18,6 +18,12 @@ def test_parse_telegram_target_preserves_username_and_converts_numeric_id() -> N
     assert config.parse_telegram_target("-1001234567890") == -1001234567890
 
 
+def test_parse_telegram_user_ids_accepts_only_numeric_allowlist() -> None:
+    assert config.parse_telegram_user_ids('42, 100,42') == {42, 100}
+    with pytest.raises(ValueError, match='CANDIDATE_BOT_ALLOWED_USER_IDS'):
+        config.parse_telegram_user_ids('42,@candidate')
+
+
 def test_validation_requires_notification_target_only_when_enabled(monkeypatch) -> None:
     monkeypatch.setattr(config, "API_ID", 1)
     monkeypatch.setattr(config, "API_HASH", "hash")

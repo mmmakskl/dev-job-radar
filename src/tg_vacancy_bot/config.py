@@ -7,7 +7,11 @@ from dotenv import load_dotenv
 
 from tg_vacancy_bot.admin.settings import load_runtime_settings
 from tg_vacancy_bot.llm.prompts import build_system_prompt
-from tg_vacancy_bot.paths import resolve_session_path, resolve_state_path
+from tg_vacancy_bot.paths import (
+    resolve_candidate_bot_db_path,
+    resolve_session_path,
+    resolve_state_path,
+)
 
 load_dotenv()
 
@@ -23,6 +27,19 @@ def parse_telegram_target(value: str | None) -> str | int:
     if target.isdigit() or (target.startswith('-') and target[1:].isdigit()):
         return int(target)
     return target
+
+
+def parse_telegram_user_ids(value: str | None) -> set[int]:
+    """Parses a comma-separated beta allowlist without accepting usernames."""
+    result: set[int] = set()
+    for item in (value or '').split(','):
+        item = item.strip()
+        if not item:
+            continue
+        if not item.isdigit():
+            raise ValueError('CANDIDATE_BOT_ALLOWED_USER_IDS must contain numeric IDs')
+        result.add(int(item))
+    return result
 
 
 # Telegram API credentials
@@ -131,6 +148,20 @@ TELEGRAM_NOTIFY_TARGET = parse_telegram_target(
 )
 TELEGRAM_NOTIFY_HISTORY = parse_bool_env(os.getenv('TELEGRAM_NOTIFY_HISTORY'))
 
+# The Bot API integration is intentionally independent from the Telethon
+# userbot. It is disabled by default and only stores actions for explicit beta
+# testers; its token is read solely from .env/environment.
+CANDIDATE_BOT_ENABLED = parse_bool_env(os.getenv('CANDIDATE_BOT_ENABLED'))
+CANDIDATE_BOT_TOKEN = os.getenv('CANDIDATE_BOT_TOKEN', '')
+CANDIDATE_BOT_CHANNEL = parse_telegram_target(os.getenv('CANDIDATE_BOT_CHANNEL'))
+CANDIDATE_BOT_ALLOWED_USER_IDS = parse_telegram_user_ids(
+    os.getenv('CANDIDATE_BOT_ALLOWED_USER_IDS')
+)
+CANDIDATE_BOT_DB_PATH = resolve_candidate_bot_db_path(
+    data_dir=DATA_DIR,
+    db_path=os.getenv('CANDIDATE_BOT_DB_PATH') or None,
+)
+
 # Mistral behaviour is non-secret and may be changed through the panel.
 MISTRAL_MODEL = _MANAGED.mistral.model if _MANAGED else 'mistral-small-latest'
 MISTRAL_TEMPERATURE = _MANAGED.mistral.temperature if _MANAGED else 0.1
@@ -171,10 +202,34 @@ def validate_required_settings(
         missing.append('GOOGLE_SHEET_URL')
     if TELEGRAM_NOTIFY_ENABLED and not TELEGRAM_NOTIFY_TARGET:
         missing.append('TELEGRAM_NOTIFY_TARGET')
+    if CANDIDATE_BOT_ENABLED:
+        if not CANDIDATE_BOT_TOKEN:
+            missing.append('CANDIDATE_BOT_TOKEN')
+        if not CANDIDATE_BOT_CHANNEL:
+            missing.append('CANDIDATE_BOT_CHANNEL')
+        if not CANDIDATE_BOT_ALLOWED_USER_IDS:
+            missing.append('CANDIDATE_BOT_ALLOWED_USER_IDS')
 
     if missing:
         names = ', '.join(missing)
         raise RuntimeError(
             f"Не настроены обязательные переменные: {names}. "
             "Добавьте их в .env и повторите запуск."
+        )
+
+
+def validate_candidate_bot_settings() -> None:
+    """Validates only the isolated Bot API worker configuration."""
+    missing = []
+    if not CANDIDATE_BOT_ENABLED:
+        missing.append('CANDIDATE_BOT_ENABLED=true')
+    if not CANDIDATE_BOT_TOKEN:
+        missing.append('CANDIDATE_BOT_TOKEN')
+    if not CANDIDATE_BOT_CHANNEL:
+        missing.append('CANDIDATE_BOT_CHANNEL')
+    if not CANDIDATE_BOT_ALLOWED_USER_IDS:
+        missing.append('CANDIDATE_BOT_ALLOWED_USER_IDS')
+    if missing:
+        raise RuntimeError(
+            'Не настроен пользовательский Bot API: ' + ', '.join(missing)
         )
