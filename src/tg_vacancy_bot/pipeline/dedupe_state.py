@@ -97,6 +97,26 @@ class JsonlDedupeState:
                 return False
             return True
 
+    def duplicate_reason(
+        self,
+        post_link: str,
+        text_hash: str,
+        vacancy_id: str | None = None,
+    ) -> str | None:
+        """Return the safe aggregate reason for a duplicate without post data."""
+        with self._lock:
+            if post_link in self.exported_links or (
+                vacancy_id is not None and vacancy_id in self.exported_ids
+            ):
+                return 'duplicate_link_or_id'
+            created_at = self._text_hash_created_at.get(text_hash)
+            if (
+                created_at is not None
+                and created_at >= datetime.now(timezone.utc) - self.ttl
+            ):
+                return 'duplicate_fingerprint'
+        return None
+
     def mark_exported(
         self,
         post_link: str,

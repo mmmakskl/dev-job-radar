@@ -99,3 +99,18 @@ def test_duplicate_by_stable_vacancy_id(tmp_path) -> None:
         "different-hash",
         "remotegeekjob_40909",
     )
+    assert (
+        state.duplicate_reason(
+            'https://t.me/other/1', 'different-hash', 'remotegeekjob_40909'
+        )
+        == 'duplicate_link_or_id'
+    )
+
+
+def test_duplicate_reason_for_recent_fingerprint(tmp_path) -> None:
+    state = JsonlDedupeState(tmp_path / 'state.jsonl', ttl_days=30)
+    state.mark_exported('https://t.me/jobs/1', 'same-text')
+
+    assert state.duplicate_reason('https://t.me/other/2', 'same-text') == (
+        'duplicate_fingerprint'
+    )

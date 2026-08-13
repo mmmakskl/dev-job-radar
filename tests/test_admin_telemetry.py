@@ -1,3 +1,6 @@
+import json
+from datetime import datetime, timedelta, timezone
+
 from tg_vacancy_bot.admin.telemetry import TelemetryStore, sanitize_text
 
 
@@ -20,6 +23,19 @@ def test_today_metrics_are_persistent_and_aggregate_only(tmp_path) -> None:
         'errors': 1,
     }
     assert 'тексты сообщений' in metrics['description']
+
+
+def test_metrics_preserve_safe_skip_and_error_reasons(tmp_path) -> None:
+    store = TelemetryStore(str(tmp_path))
+    store.record_metric('skipped_invalid', reason='empty_text')
+    store.record_metric('skipped_duplicate', reason='duplicate_link_or_id')
+    store.record_metric('processing_error', 'llm', 'llm_error')
+
+    assert store.today_metrics()['reasons'] == {
+        'empty_text': 1,
+        'duplicate_link_or_id': 1,
+        'llm_error': 1,
+    }
 
 
 def test_errors_merge_and_explicit_resolution(tmp_path) -> None:
@@ -45,3 +61,39 @@ def test_logs_are_sanitized_filtered_and_limited(tmp_path) -> None:
     assert page['items'][0]['component'] == 'llm'
     assert 'top-secret-token' not in page['items'][0]['message']
     assert sanitize_text('password=hunter2') == 'password=[redacted]'
+
+
+def test_cleanup_prunes_only_expired_observability_data(tmp_path) -> None:
+    store = TelemetryStore(str(tmp_path))
+    old = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+    recent = datetime.now(timezone.utc).isoformat()
+    store.directory.mkdir(parents=True)
+    for path in (store.logs_path, store.operations_path, store.metrics_path):
+        path.write_text(
+            '\n'.join(json.dumps({'at': old, 'event': 'old'}) for _ in range(1))
+            + '\n'
+            + json.dumps({'at': recent, 'event': 'recent'})
+            + '\n',
+            encoding='utf-8',
+        )
+    store.errors_path.write_text(
+        json.dumps(
+            [
+                {'last_seen_at': old},
+                {'last_seen_at': recent},
+            ]
+        ),
+        encoding='utf-8',
+    )
+    protected_state = tmp_path / 'state.jsonl'
+    protected_state.write_text('must stay\n', encoding='utf-8')
+    protected_settings = tmp_path / 'admin' / 'settings.json'
+    protected_settings.write_text('{}', encoding='utf-8')
+
+    removed = store.cleanup(
+        logs_days=1, errors_days=1, operations_days=1, metrics_days=1
+    )
+
+    assert removed == {'logs': 1, 'operations': 1, 'metrics': 1, 'errors': 1}
+    assert protected_state.read_text(encoding='utf-8') == 'must stay\n'
+    assert protected_settings.read_text(encoding='utf-8') == '{}'

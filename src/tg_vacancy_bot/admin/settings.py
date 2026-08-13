@@ -14,7 +14,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def normalize_public_source(value: str) -> str:
@@ -58,6 +58,8 @@ class ManagedSource(BaseModel):
     added_at: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
+    verification_status: str = Field(default='verified', pattern='^(verified|invalid)$')
+    verified_at: str | None = None
 
     @field_validator('identifier')
     @classmethod
@@ -144,6 +146,27 @@ class SheetsSettings(BaseModel):
     short_title: str = Field(default='Вакансии — кратко', min_length=1, max_length=100)
 
 
+class RetentionSettings(BaseModel):
+    """Retention policy for local observability data only."""
+
+    logs_days: int = Field(default=30, ge=1, le=3650)
+    errors_days: int = Field(default=90, ge=1, le=3650)
+    operations_days: int = Field(default=90, ge=1, le=3650)
+    metrics_days: int = Field(default=90, ge=1, le=3650)
+
+
+class AlertSettings(BaseModel):
+    """Non-secret notification policy for the existing Telegram target."""
+
+    enabled: bool = False
+    heartbeat_stale_seconds: int = Field(default=120, ge=30, le=86400)
+    queue_warning_percent: int = Field(default=80, ge=50, le=100)
+    error_streak_threshold: int = Field(default=3, ge=2, le=100)
+    error_window_seconds: int = Field(default=900, ge=60, le=86400)
+    no_export_seconds: int = Field(default=21600, ge=300, le=604800)
+    cooldown_seconds: int = Field(default=3600, ge=60, le=86400)
+
+
 class AdminSettings(BaseModel):
     schema_version: int = SCHEMA_VERSION
     revision: int = 0
@@ -152,6 +175,8 @@ class AdminSettings(BaseModel):
     filters: FilterSettings = Field(default_factory=FilterSettings)
     mistral: MistralSettings = Field(default_factory=MistralSettings)
     sheets: SheetsSettings = Field(default_factory=SheetsSettings)
+    retention: RetentionSettings = Field(default_factory=RetentionSettings)
+    alerts: AlertSettings = Field(default_factory=AlertSettings)
 
 
 def admin_directory(data_dir: str | None) -> Path:

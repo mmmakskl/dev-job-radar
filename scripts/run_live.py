@@ -13,7 +13,9 @@ from datetime import datetime
 from telethon import TelegramClient, events
 
 from tg_vacancy_bot import config
+from tg_vacancy_bot.admin.alerts import AlertDispatcher
 from tg_vacancy_bot.admin.control import acknowledge_action, read_action
+from tg_vacancy_bot.admin.settings import SettingsStore
 from tg_vacancy_bot.admin.telemetry import TelemetryStore
 from tg_vacancy_bot.llm.mistral import analyze_text
 from tg_vacancy_bot.logging_config import configure_logging
@@ -83,6 +85,7 @@ QUEUE_WARNING_THRESHOLD = max(1, int(config.LIVE_QUEUE_MAXSIZE * 0.8))
 SHUTDOWN_TIMEOUT_SECONDS = 30
 received_messages = 0
 accepting_messages = True
+alert_dispatcher: AlertDispatcher | None = None
 
 
 @dataclass(frozen=True)
@@ -125,6 +128,18 @@ async def handle_new_message(event):
             message_queue.maxsize,
             post_link,
         )
+        processor._metric('skipped_invalid', 'telegram', 'live_queue_full')
+        if alert_dispatcher is not None:
+            await alert_dispatcher.check(
+                monitoring_enabled=config.MONITORING_ENABLED,
+                queue_size=message_queue.qsize(),
+                queue_maxsize=message_queue.maxsize,
+                queue_warning_percent=config.ALERT_QUEUE_WARNING_PERCENT,
+                error_streak_threshold=config.ALERT_ERROR_STREAK_THRESHOLD,
+                error_window_seconds=config.ALERT_ERROR_WINDOW_SECONDS,
+                no_export_seconds=config.ALERT_NO_EXPORT_SECONDS,
+                heartbeat_stale_seconds=config.ALERT_HEARTBEAT_STALE_SECONDS,
+            )
         return
 
     queue_size = message_queue.qsize()
@@ -229,6 +244,17 @@ async def publish_heartbeat(
             keyword_matches=processor.keyword_matches,
             saved_matches=processor.saved_matches,
         )
+        if alert_dispatcher is not None:
+            await alert_dispatcher.check(
+                monitoring_enabled=config.MONITORING_ENABLED,
+                queue_size=message_queue.qsize(),
+                queue_maxsize=message_queue.maxsize,
+                queue_warning_percent=config.ALERT_QUEUE_WARNING_PERCENT,
+                error_streak_threshold=config.ALERT_ERROR_STREAK_THRESHOLD,
+                error_window_seconds=config.ALERT_ERROR_WINDOW_SECONDS,
+                no_export_seconds=config.ALERT_NO_EXPORT_SECONDS,
+                heartbeat_stale_seconds=config.ALERT_HEARTBEAT_STALE_SECONDS,
+            )
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=15)
         except asyncio.TimeoutError:
@@ -237,11 +263,42 @@ async def publish_heartbeat(
 
 async def main():
     """Основная функция запуска бота"""
-    global accepting_messages
+    global accepting_messages, alert_dispatcher
     config.validate_required_settings()
     accepting_messages = True
     shutdown_event = asyncio.Event()
     telemetry = TelemetryStore(config.DATA_DIR)
+    settings = SettingsStore(config.DATA_DIR).load()
+    removed = telemetry.cleanup(
+        logs_days=settings.retention.logs_days,
+        errors_days=settings.retention.errors_days,
+        operations_days=settings.retention.operations_days,
+        metrics_days=settings.retention.metrics_days,
+    )
+    if any(removed.values()):
+        telemetry.record('retention_cleanup', **removed)
+
+    async def send_alert(message: str) -> bool:
+        if not config.TELEGRAM_NOTIFY_ENABLED:
+            return False
+        try:
+            await client.send_message(
+                config.TELEGRAM_NOTIFY_TARGET,
+                f'⚠️ Go Radar: {message}',
+                link_preview=False,
+            )
+        except Exception:
+            logging.exception('Не удалось отправить эксплуатационный Telegram-алерт')
+            return False
+        return True
+
+    alert_dispatcher = AlertDispatcher(
+        telemetry=telemetry,
+        send=send_alert,
+        enabled=(config.ALERTS_ENABLED and config.TELEGRAM_NOTIFY_ENABLED),
+        cooldown_seconds=config.ALERT_COOLDOWN_SECONDS,
+        data_dir=config.DATA_DIR,
+    )
     install_shutdown_signal_handlers(shutdown_event)
     if config.LIVE_QUEUE_MAXSIZE <= 0:
         raise RuntimeError("LIVE_QUEUE_MAXSIZE должен быть больше нуля")
@@ -280,10 +337,6 @@ async def main():
             monitor_admin_control(shutdown_event, telemetry),
             name='admin-control-monitor',
         )
-        heartbeat_task = asyncio.create_task(
-            publish_heartbeat(telemetry, shutdown_event),
-            name='admin-heartbeat',
-        )
         if not config.MONITORING_ENABLED:
             telemetry.heartbeat(
                 status='paused', settings_revision=config.SETTINGS_REVISION
@@ -310,11 +363,26 @@ async def main():
         logging.info(f"Авторизован как: {me.first_name} (@{me.username})")
         logging.info("Бот запущен. Ожидаю новые сообщения...")
 
+        await alert_dispatcher.check(
+            monitoring_enabled=config.MONITORING_ENABLED,
+            queue_size=message_queue.qsize(),
+            queue_maxsize=message_queue.maxsize,
+            queue_warning_percent=config.ALERT_QUEUE_WARNING_PERCENT,
+            error_streak_threshold=config.ALERT_ERROR_STREAK_THRESHOLD,
+            error_window_seconds=config.ALERT_ERROR_WINDOW_SECONDS,
+            no_export_seconds=config.ALERT_NO_EXPORT_SECONDS,
+            heartbeat_stale_seconds=config.ALERT_HEARTBEAT_STALE_SECONDS,
+        )
+
         telemetry.heartbeat(
             status='running',
             settings_revision=config.SETTINGS_REVISION,
             channel_count=len(config.TARGET_CHANNELS),
             queue_size=message_queue.qsize(),
+        )
+        heartbeat_task = asyncio.create_task(
+            publish_heartbeat(telemetry, shutdown_event),
+            name='admin-heartbeat',
         )
 
         shutdown_requested = await wait_for_disconnect_or_shutdown(

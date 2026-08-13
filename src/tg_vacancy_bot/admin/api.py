@@ -35,6 +35,7 @@ from tg_vacancy_bot.admin.settings import (
 )
 from tg_vacancy_bot.admin.telemetry import TelemetryStore
 from tg_vacancy_bot.llm.prompts import DEFAULT_VACANCY_INSTRUCTIONS
+from tg_vacancy_bot.telegram.sources import verify_public_source
 
 
 SESSION_COOKIE = 'admin_session'
@@ -145,7 +146,7 @@ def _source_token(origin: str, value: str, secret: str) -> str:
 
 def _source_values(
     settings: AdminSettings, base_channels: list[str]
-) -> list[tuple[str, str, str | None, bool]]:
+) -> list[tuple[str, str, str | None, bool, str]]:
     return [
         *[
             (
@@ -153,6 +154,7 @@ def _source_values(
                 value,
                 None,
                 value not in set(settings.telegram.disabled_channels),
+                'unverified',
             )
             for value in base_channels
         ],
@@ -162,6 +164,7 @@ def _source_values(
                 value,
                 None,
                 value not in set(settings.telegram.disabled_channels),
+                'unverified',
             )
             for value in settings.telegram.folder_channels
         ],
@@ -171,11 +174,18 @@ def _source_values(
                 value,
                 None,
                 value not in set(settings.telegram.disabled_channels),
+                'unverified',
             )
             for value in settings.telegram.additional_channels
         ],
         *[
-            ('managed', item.identifier, item.added_at, item.enabled)
+            (
+                'managed',
+                item.identifier,
+                item.added_at,
+                item.enabled,
+                item.verification_status,
+            )
             for item in settings.telegram.managed_sources
         ],
     ]
@@ -187,7 +197,7 @@ def _source_entries(
     secret = os.getenv('ADMIN_SESSION_SECRET', 'unconfigured')
     entries: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for index, (origin, value, added_at, enabled) in enumerate(
+    for index, (origin, value, added_at, enabled, verification_status) in enumerate(
         _source_values(settings, base_channels), start=1
     ):
         identity = value.casefold()
@@ -209,6 +219,7 @@ def _source_entries(
                 'origin': origin,
                 'added_at': added_at,
                 'removable': origin == 'managed',
+                'verification_status': 'hidden' if numeric else verification_status,
             }
         )
     return entries
@@ -312,6 +323,11 @@ def create_app(data_dir: str | None = None) -> FastAPI:
         return {
             'settings_revision': settings.revision,
             'heartbeat': telemetry.read_heartbeat(),
+            'latest_export_at': (
+                telemetry.latest_metric_at('vacancy_saved').isoformat()
+                if telemetry.latest_metric_at('vacancy_saved')
+                else None
+            ),
             'operations': telemetry.recent_operations(10),
             'secret_status': {
                 'telegram': bool(os.getenv('API_ID') and os.getenv('API_HASH')),
@@ -356,7 +372,7 @@ def create_app(data_dir: str | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         current = store.load()
         merged = current.model_dump()
-        for key in ('telegram', 'filters', 'mistral', 'sheets'):
+        for key in ('telegram', 'filters', 'mistral', 'sheets', 'retention', 'alerts'):
             if key in payload and isinstance(payload[key], dict):
                 update = dict(payload[key])
                 if key == 'telegram':
@@ -470,7 +486,7 @@ def create_app(data_dir: str | None = None) -> FastAPI:
         return {'items': entries, 'total': len(entries), 'restart_required': True}
 
     @app.post('/api/v1/sources')
-    def add_source(
+    async def add_source(
         body: SourceRequest, _: str = Depends(_require_csrf)
     ) -> dict[str, Any]:
         try:
@@ -484,7 +500,24 @@ def create_app(data_dir: str | None = None) -> FastAPI:
         }
         if identifier.casefold() in existing:
             raise HTTPException(status_code=409, detail='Этот источник уже добавлен')
-        current.telegram.managed_sources.append(ManagedSource(identifier=identifier))
+        try:
+            await verify_public_source(identifier)
+        except Exception as error:
+            telemetry.record('source_verification_failed')
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    'Не удалось проверить доступность публичного Telegram-источника. '
+                    'Убедитесь, что username существует, сессия свободна и повторите.'
+                ),
+            ) from error
+        current.telegram.managed_sources.append(
+            ManagedSource(
+                identifier=identifier,
+                verification_status='verified',
+                verified_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            )
+        )
         saved = store.save(current)
         telemetry.record('source_added', source=identifier, revision=saved.revision)
         entries = _source_entries(saved, _base_channels())
@@ -518,7 +551,9 @@ def create_app(data_dir: str | None = None) -> FastAPI:
             raw = next(
                 (
                     value
-                    for origin, value, _, _ in _source_values(current, _base_channels())
+                    for origin, value, _, _, _ in _source_values(
+                        current, _base_channels()
+                    )
                     if _source_token(origin, value, secret) == token
                 ),
                 None,
@@ -541,6 +576,48 @@ def create_app(data_dir: str | None = None) -> FastAPI:
             if entry['origin'] == item['origin']
             and entry['identifier'] == item['identifier']
         )
+        return {'item': refreshed, 'restart_required': True}
+
+    @app.post('/api/v1/sources/{token}/verify')
+    async def verify_source(
+        token: str, _: str = Depends(_require_csrf)
+    ) -> dict[str, Any]:
+        current, item = find_source(token)
+        identifier = (item['identifier'] or '').strip().lstrip('@')
+        if not identifier:
+            raise HTTPException(
+                status_code=422,
+                detail='Приватный источник нельзя проверить из браузера',
+            )
+        try:
+            await verify_public_source(identifier)
+        except Exception as error:
+            if item['origin'] == 'managed':
+                for source in current.telegram.managed_sources:
+                    if source.identifier.casefold() == identifier.casefold():
+                        source.verification_status = 'invalid'
+                        break
+                store.save(current)
+            raise HTTPException(
+                status_code=422,
+                detail='Проверка источника не прошла: username недоступен или Telegram-сессия занята.',
+            ) from error
+        if item['origin'] == 'managed':
+            for source in current.telegram.managed_sources:
+                if source.identifier.casefold() == identifier.casefold():
+                    source.verification_status = 'verified'
+                    source.verified_at = time.strftime(
+                        '%Y-%m-%dT%H:%M:%SZ', time.gmtime()
+                    )
+                    current = store.save(current)
+                    break
+        refreshed = next(
+            entry
+            for entry in _source_entries(current, _base_channels())
+            if entry['origin'] == item['origin']
+            and entry['identifier'] == item['identifier']
+        )
+        telemetry.record('source_verified')
         return {'item': refreshed, 'restart_required': True}
 
     @app.delete('/api/v1/sources/{token}')
@@ -584,8 +661,15 @@ def create_app(data_dir: str | None = None) -> FastAPI:
     if static_dir.exists():
         app.mount('/_next', StaticFiles(directory=static_dir / '_next'), name='next')
 
-        @app.get('/')
-        def frontend() -> FileResponse:
+        @app.get('/', include_in_schema=False)
+        @app.get('/{frontend_path:path}', include_in_schema=False)
+        def frontend(frontend_path: str = '') -> FileResponse:
+            # Next is exported as a static SPA. These private UI routes need the
+            # same entry document for direct links and browser back/forward;
+            # `/api` endpoints have already been matched above.
+            if frontend_path == 'api' or frontend_path.startswith('api/'):
+                raise HTTPException(status_code=404, detail='Маршрут API не найден')
+            del frontend_path
             return FileResponse(static_dir / 'index.html')
 
     return app

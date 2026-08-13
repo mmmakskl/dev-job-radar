@@ -9,6 +9,11 @@ def _client(tmp_path, monkeypatch) -> TestClient:
     monkeypatch.setenv('ADMIN_SESSION_SECRET', 'session-secret-for-tests')
     monkeypatch.setenv('ADMIN_COOKIE_SECURE', 'false')
     monkeypatch.setenv('TARGET_CHANNELS', '-100111,@public_jobs')
+
+    async def verified(_identifier: str) -> None:
+        return None
+
+    monkeypatch.setattr('tg_vacancy_bot.admin.api.verify_public_source', verified)
     return TestClient(create_app(str(tmp_path)))
 
 
@@ -68,10 +73,12 @@ def test_metrics_errors_logs_prompt_and_sources_api(tmp_path, monkeypatch) -> No
     csrf = _login(client)
     telemetry = TelemetryStore(str(tmp_path))
     telemetry.record_metric('post_processed')
+    telemetry.record_metric('vacancy_saved')
     telemetry.record_log('ERROR', 'llm', 'token=must-not-leak')
     error = telemetry.record_error('llm', 'LLM временно недоступен')
 
     assert client.get('/api/v1/metrics/today').json()['counts']['posts_processed'] == 1
+    assert client.get('/api/v1/dashboard').json()['latest_export_at'] is not None
     logs = client.get('/api/v1/logs?level=ERROR&period=all').json()
     assert 'must-not-leak' not in str(logs)
     errors = client.get('/api/v1/errors').json()
@@ -84,7 +91,6 @@ def test_metrics_errors_logs_prompt_and_sources_api(tmp_path, monkeypatch) -> No
         ).status_code
         == 200
     )
-
     prompt = client.get('/api/v1/prompt').json()
     assert prompt['is_custom'] is False
     assert (
@@ -121,6 +127,14 @@ def test_metrics_errors_logs_prompt_and_sources_api(tmp_path, monkeypatch) -> No
     ).json()
     token = added['item']['token']
     assert added['item']['identifier'] == '@go_jobs'
+    assert added['item']['verification_status'] == 'verified'
+    assert (
+        client.post(
+            f'/api/v1/sources/{token}/verify',
+            headers={'X-CSRF-Token': csrf},
+        ).status_code
+        == 200
+    )
     assert (
         client.post(
             '/api/v1/sources',
@@ -146,3 +160,49 @@ def test_metrics_errors_logs_prompt_and_sources_api(tmp_path, monkeypatch) -> No
         ).status_code
         == 200
     )
+
+
+def test_source_is_not_saved_when_telegram_validation_fails(
+    tmp_path, monkeypatch
+) -> None:
+    client = _client(tmp_path, monkeypatch)
+    csrf = _login(client)
+
+    async def unavailable(_identifier: str) -> None:
+        raise RuntimeError('network unavailable')
+
+    monkeypatch.setattr('tg_vacancy_bot.admin.api.verify_public_source', unavailable)
+    response = client.post(
+        '/api/v1/sources',
+        headers={'X-CSRF-Token': csrf},
+        json={'identifier': '@missing_source'},
+    )
+
+    assert response.status_code == 422
+    assert client.get('/api/v1/sources').json()['total'] == 2
+
+
+def test_source_verification_marks_managed_source_invalid(
+    tmp_path, monkeypatch
+) -> None:
+    client = _client(tmp_path, monkeypatch)
+    csrf = _login(client)
+    added = client.post(
+        '/api/v1/sources',
+        headers={'X-CSRF-Token': csrf},
+        json={'identifier': '@go_jobs'},
+    ).json()
+
+    async def unavailable(_identifier: str) -> None:
+        raise RuntimeError('network unavailable')
+
+    monkeypatch.setattr('tg_vacancy_bot.admin.api.verify_public_source', unavailable)
+    response = client.post(
+        f"/api/v1/sources/{added['item']['token']}/verify",
+        headers={'X-CSRF-Token': csrf},
+    )
+
+    assert response.status_code == 422
+    items = client.get('/api/v1/sources').json()['items']
+    source = next(item for item in items if item['token'] == added['item']['token'])
+    assert source['verification_status'] == 'invalid'

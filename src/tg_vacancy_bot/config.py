@@ -140,6 +140,19 @@ MISTRAL_SYSTEM_PROMPT = build_system_prompt(
 )
 SETTINGS_REVISION = _MANAGED.revision if _MANAGED else 0
 
+# Alert delivery uses the existing Telegram notification target and has no
+# independent credentials. It is disabled until explicitly enabled in managed
+# settings.
+ALERTS_ENABLED = _MANAGED.alerts.enabled if _MANAGED else False
+ALERT_HEARTBEAT_STALE_SECONDS = (
+    _MANAGED.alerts.heartbeat_stale_seconds if _MANAGED else 120
+)
+ALERT_QUEUE_WARNING_PERCENT = _MANAGED.alerts.queue_warning_percent if _MANAGED else 80
+ALERT_ERROR_STREAK_THRESHOLD = _MANAGED.alerts.error_streak_threshold if _MANAGED else 3
+ALERT_ERROR_WINDOW_SECONDS = _MANAGED.alerts.error_window_seconds if _MANAGED else 900
+ALERT_NO_EXPORT_SECONDS = _MANAGED.alerts.no_export_seconds if _MANAGED else 21600
+ALERT_COOLDOWN_SECONDS = _MANAGED.alerts.cooldown_seconds if _MANAGED else 3600
+
 
 def validate_required_settings(
     *,

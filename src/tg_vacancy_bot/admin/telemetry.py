@@ -41,6 +41,17 @@ _METRIC_EVENTS = {
     'skipped_invalid',
     'processing_error',
 }
+_SKIP_REASONS = {
+    'empty_text',
+    'duplicate_link_or_id',
+    'duplicate_fingerprint',
+    'include_prefilter',
+    'exclude_keywords',
+    'candidate_resume',
+    'live_queue_full',
+    'llm_not_match',
+}
+_ERROR_REASONS = {'llm_error', 'export_error'}
 
 
 def _now() -> str:
@@ -152,16 +163,33 @@ class TelemetryStore:
             handle.write(json.dumps(payload, ensure_ascii=False, separators=(',', ':')))
             handle.write('\n')
 
-    def record_metric(self, event: str, component: str = 'pipeline') -> None:
+    def record_metric(
+        self,
+        event: str,
+        component: str = 'pipeline',
+        reason: str | None = None,
+    ) -> None:
         """Persist an aggregate-only processing event, never source post content."""
         if event not in _METRIC_EVENTS:
             raise ValueError(f'Unsupported metric event: {event}')
+        if reason and reason not in _SKIP_REASONS | _ERROR_REASONS:
+            raise ValueError(f'Unsupported metric reason: {reason}')
+        if reason in _SKIP_REASONS and event not in {
+            'skipped_duplicate',
+            'skipped_not_relevant',
+            'skipped_invalid',
+        }:
+            raise ValueError('Skip reason requires a skipped metric event')
+        if reason in _ERROR_REASONS and event != 'processing_error':
+            raise ValueError('Error reason requires processing_error')
         self.directory.mkdir(parents=True, exist_ok=True)
         payload = {
             'at': _now(),
             'event': event,
             'component': self._component(component),
         }
+        if reason:
+            payload['reason'] = reason
         with self.metrics_path.open('a', encoding='utf-8') as handle:
             handle.write(json.dumps(payload, ensure_ascii=False, separators=(',', ':')))
             handle.write('\n')
@@ -179,6 +207,7 @@ class TelemetryStore:
             'skipped': 0,
             'errors': 0,
         }
+        reasons: dict[str, int] = {}
         mapping = {
             'post_processed': 'posts_processed',
             'vacancy_saved': 'vacancies_added',
@@ -197,10 +226,14 @@ class TelemetryStore:
             key = mapping.get(item.get('event'))
             if key and occurred.astimezone(project_timezone).date() == today:
                 counts[key] += 1
+                reason = item.get('reason')
+                if isinstance(reason, str):
+                    reasons[reason] = reasons.get(reason, 0) + 1
         return {
             'date': today.isoformat(),
             'timezone': str(project_timezone),
             'counts': counts,
+            'reasons': reasons,
             'description': (
                 'Счётчики формируются из служебных событий pipeline за текущий '
                 'календарный день; тексты сообщений в них не сохраняются.'
@@ -335,6 +368,56 @@ class TelemetryStore:
             'limit': bounded,
         }
 
+    def latest_metric_at(self, event: str) -> datetime | None:
+        """Return the latest valid timestamp for an aggregate metric event."""
+        latest: datetime | None = None
+        for item in self._read_jsonl(self.metrics_path):
+            if item.get('event') != event:
+                continue
+            try:
+                occurred = datetime.fromisoformat(
+                    str(item['at']).replace('Z', '+00:00')
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            if latest is None or occurred > latest:
+                latest = occurred
+        return latest
+
+    def recent_metric_count(self, event: str, component: str, seconds: int) -> int:
+        """Count one safe aggregate event in a bounded recent window."""
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=seconds)
+        safe_component = self._component(component)
+        count = 0
+        for item in self._read_jsonl(self.metrics_path):
+            if item.get('event') != event or item.get('component') != safe_component:
+                continue
+            try:
+                occurred = datetime.fromisoformat(
+                    str(item['at']).replace('Z', '+00:00')
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            if occurred >= cutoff:
+                count += 1
+        return count
+
+    def cleanup(
+        self,
+        *,
+        logs_days: int,
+        errors_days: int,
+        operations_days: int,
+        metrics_days: int,
+    ) -> dict[str, int]:
+        """Safely remove expired observability records, never state or settings."""
+        return {
+            'logs': self._prune_jsonl(self.logs_path, logs_days),
+            'operations': self._prune_jsonl(self.operations_path, operations_days),
+            'metrics': self._prune_jsonl(self.metrics_path, metrics_days),
+            'errors': self._prune_errors(errors_days),
+        }
+
     def read_heartbeat(self) -> dict[str, Any] | None:
         if not self.heartbeat_path.exists():
             return None
@@ -379,6 +462,63 @@ class TelemetryStore:
         except (OSError, json.JSONDecodeError):
             return []
         return payload if isinstance(payload, list) else []
+
+    def _prune_jsonl(self, path: Path, days: int) -> int:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        entries = self._read_jsonl(path)
+        kept: list[dict[str, Any]] = []
+        for entry in entries:
+            try:
+                occurred = datetime.fromisoformat(
+                    str(entry['at']).replace('Z', '+00:00')
+                )
+            except (KeyError, TypeError, ValueError):
+                # Corrupt observability data must not be preserved indefinitely.
+                continue
+            if occurred >= cutoff:
+                kept.append(entry)
+        removed = len(entries) - len(kept)
+        if removed:
+            self._save_jsonl(path, kept)
+        return removed
+
+    def _prune_errors(self, days: int) -> int:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        entries = self._read_errors()
+        kept: list[dict[str, Any]] = []
+        for entry in entries:
+            try:
+                occurred = datetime.fromisoformat(
+                    str(entry['last_seen_at']).replace('Z', '+00:00')
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            if occurred >= cutoff:
+                kept.append(entry)
+        removed = len(entries) - len(kept)
+        if removed:
+            self._save_errors(kept)
+        return removed
+
+    def _save_jsonl(self, path: Path, entries: list[dict[str, Any]]) -> None:
+        self.directory.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            dir=self.directory, prefix=f'.{path.name}.', text=True
+        )
+        temporary_path = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+                for entry in entries:
+                    handle.write(
+                        json.dumps(
+                            _redact(entry), ensure_ascii=False, separators=(',', ':')
+                        )
+                    )
+                    handle.write('\n')
+            os.replace(temporary_path, path)
+        except Exception:
+            temporary_path.unlink(missing_ok=True)
+            raise
 
     def _save_errors(self, entries: list[dict[str, Any]]) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)

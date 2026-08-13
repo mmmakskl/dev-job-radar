@@ -18,7 +18,7 @@ Copy `.env.example` to `.env` and configure Telegram, Mistral, and Google Sheets
 
 ## Coding Style & Naming Conventions
 
-Follow PEP 8 with four-space indentation. Use `snake_case` for functions and variables, `UPPER_SNAKE_CASE` for configuration constants, and descriptive module names. Keep network workflows asynchronous and move blocking SDK calls into `asyncio.to_thread`, as in `spreadsheet.py`. Add type hints to public helpers and concise docstrings where behavior is not obvious. No formatter or linter is configured, so keep imports grouped and changes consistent with neighboring code.
+Follow PEP 8 with four-space indentation. Use `snake_case` for functions and variables, `UPPER_SNAKE_CASE` for configuration constants, and descriptive module names. Keep network workflows asynchronous and move blocking SDK calls into `asyncio.to_thread`, as in `spreadsheet.py`. Add type hints to public helpers and concise docstrings where behavior is not obvious. Ruff and Black are configured through `make lint` and `make format-check`; keep imports grouped and changes compatible with those checks.
 
 ## Testing Guidelines
 

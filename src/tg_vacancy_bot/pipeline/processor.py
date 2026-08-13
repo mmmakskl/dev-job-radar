@@ -21,7 +21,12 @@ NotifyVacancy = Callable[..., Awaitable[bool]]
 class EventRecorder(Protocol):
     """Minimal observability interface; it never receives post text."""
 
-    def record_metric(self, event: str, component: str = 'pipeline') -> None: ...
+    def record_metric(
+        self,
+        event: str,
+        component: str = 'pipeline',
+        reason: str | None = None,
+    ) -> None: ...
 
 
 class DedupeState(Protocol):
@@ -76,7 +81,7 @@ class VacancyProcessor:
         """Обрабатывает сообщение и возвращает True после успешной записи."""
         self._metric('post_processed')
         if not text:
-            self._metric('skipped_invalid')
+            self._metric('skipped_invalid', reason='empty_text')
             return False
 
         text_hash = build_text_hash(raw_text)
@@ -85,16 +90,22 @@ class VacancyProcessor:
             post_link, text_hash, vacancy_id
         ):
             logging.info("Пропуск: дубликат вакансии (%s)", post_link)
-            self._metric('skipped_duplicate')
+            reason_getter = getattr(self.dedupe_state, 'duplicate_reason', None)
+            duplicate_reason = (
+                reason_getter(post_link, text_hash, vacancy_id)
+                if callable(reason_getter)
+                else None
+            ) or 'duplicate_fingerprint'
+            self._metric('skipped_duplicate', reason=duplicate_reason)
             return False
 
         if not self.keyword_filter(text):
-            self._metric('skipped_not_relevant')
+            self._metric('skipped_not_relevant', reason='include_prefilter')
             return False
 
         if any(keyword in text.casefold() for keyword in self.exclude_keywords):
             logging.info("Пропуск: исключающее ключевое слово (%s)", post_link)
-            self._metric('skipped_not_relevant')
+            self._metric('skipped_not_relevant', reason='exclude_keywords')
             return False
 
         self.keyword_matches += 1
@@ -108,7 +119,7 @@ class VacancyProcessor:
                 post_link,
                 ", ".join(profile_reasons),
             )
-            self._metric('skipped_not_relevant')
+            self._metric('skipped_not_relevant', reason='candidate_resume')
             return False
 
         logging.info("Отправляем на анализ в Mistral...")
@@ -117,12 +128,12 @@ class VacancyProcessor:
         analysis_result = await self.analyze_text(text)
         if analysis_result is None:
             logging.error("[LLM] Не удалось проанализировать вакансию")
-            self._metric('processing_error', 'llm')
+            self._metric('processing_error', 'llm', 'llm_error')
             return False
 
         if analysis_result.is_match is not True:
             logging.info("Вакансия не подходит по критериям")
-            self._metric('skipped_not_relevant')
+            self._metric('skipped_not_relevant', reason='llm_not_match')
             return False
 
         logging.info(
@@ -142,7 +153,7 @@ class VacancyProcessor:
         )
         if not saved:
             logging.error("[Google Sheets] Не удалось сохранить вакансию")
-            self._metric('processing_error', 'google_sheets')
+            self._metric('processing_error', 'google_sheets', 'export_error')
             return False
 
         if self.dedupe_state is not None:
@@ -168,6 +179,14 @@ class VacancyProcessor:
                 )
         return True
 
-    def _metric(self, event: str, component: str = 'pipeline') -> None:
+    def _metric(
+        self,
+        event: str,
+        component: str = 'pipeline',
+        reason: str | None = None,
+    ) -> None:
         if self.event_recorder is not None:
-            self.event_recorder.record_metric(event, component)
+            if reason is None:
+                self.event_recorder.record_metric(event, component)
+            else:
+                self.event_recorder.record_metric(event, component, reason)
