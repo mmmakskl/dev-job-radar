@@ -82,6 +82,7 @@ message_queue: asyncio.Queue["LiveMessageJob"] = asyncio.Queue(
 QUEUE_WARNING_THRESHOLD = max(1, int(config.LIVE_QUEUE_MAXSIZE * 0.8))
 SHUTDOWN_TIMEOUT_SECONDS = 30
 received_messages = 0
+accepting_messages = True
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,9 @@ class LiveMessageJob:
 async def handle_new_message(event):
     """Быстро ставит новое Telegram-сообщение в очередь."""
     global received_messages
+    if not accepting_messages:
+        logging.info("Не принимаем новое Telegram-сообщение: выполняется остановка")
+        return
     received_messages += 1
     message = event.message
     text = message.text or ''
@@ -233,7 +237,9 @@ async def publish_heartbeat(
 
 async def main():
     """Основная функция запуска бота"""
+    global accepting_messages
     config.validate_required_settings()
+    accepting_messages = True
     shutdown_event = asyncio.Event()
     telemetry = TelemetryStore(config.DATA_DIR)
     install_shutdown_signal_handlers(shutdown_event)
@@ -311,11 +317,16 @@ async def main():
             queue_size=message_queue.qsize(),
         )
 
-        await wait_for_disconnect_or_shutdown(client, shutdown_event)
+        shutdown_requested = await wait_for_disconnect_or_shutdown(
+            client, shutdown_event
+        )
+        if shutdown_requested:
+            accepting_messages = False
     finally:
-        if client.is_connected():
-            await client.disconnect()
         await stop_workers(worker_tasks)
+        if client.is_connected():
+            logging.info("Очередь завершена, отключаем Telegram...")
+            await client.disconnect()
         if control_task:
             if not control_task.done():
                 control_task.cancel()

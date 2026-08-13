@@ -3,7 +3,7 @@ import asyncio
 from tg_vacancy_bot.runtime import wait_for_disconnect_or_shutdown
 
 
-def test_shutdown_event_disconnects_client() -> None:
+def test_shutdown_event_leaves_client_connected_for_queue_drain() -> None:
     class FakeClient:
         def __init__(self) -> None:
             self.connected = True
@@ -12,10 +12,6 @@ def test_shutdown_event_disconnects_client() -> None:
         def is_connected(self) -> bool:
             return self.connected
 
-        async def disconnect(self) -> None:
-            self.connected = False
-            self.disconnected.set()
-
         async def run_until_disconnected(self) -> None:
             await self.disconnected.wait()
 
@@ -23,8 +19,8 @@ def test_shutdown_event_disconnects_client() -> None:
         client = FakeClient()
         shutdown_event = asyncio.Event()
         shutdown_event.set()
-        await wait_for_disconnect_or_shutdown(client, shutdown_event)
-        return client
+        return client, await wait_for_disconnect_or_shutdown(client, shutdown_event)
 
-    client = asyncio.run(scenario())
-    assert not client.connected
+    client, shutdown_requested = asyncio.run(scenario())
+    assert shutdown_requested
+    assert client.connected

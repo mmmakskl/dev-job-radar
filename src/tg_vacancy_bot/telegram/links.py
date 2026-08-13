@@ -7,14 +7,21 @@ from telethon.tl.types import Channel, Message
 
 
 def get_event_message_link(event) -> str:
-    """Сформировать ссылку на сообщение из события Telethon."""
+    """Сформировать ссылку на сообщение из события Telethon.
+
+    During catch-up Telethon can deliver an update before its chat entity is
+    cached.  ``event.chat_id`` remains available in that case.
+    """
     chat = event.chat
     msg_id = event.message.id
 
     if isinstance(chat, Channel) and chat.username:
         return f"https://t.me/{chat.username}/{msg_id}"
 
-    chat_id = str(chat.id).replace('-100', '')
+    chat_id = getattr(chat, "id", None) or getattr(event, "chat_id", None)
+    if chat_id is None:
+        raise ValueError("Невозможно определить Telegram-чат для ссылки на сообщение")
+    chat_id = str(chat_id).replace('-100', '')
     return f"https://t.me/c/{chat_id}/{msg_id}"
 
 
