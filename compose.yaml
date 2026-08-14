@@ -12,6 +12,7 @@ services:
       DATA_DIR: /app/data
       SESSION_PATH: ""
       STATE_FILE_PATH: /app/data/state.jsonl
+      VACANCY_GROUPS_DB_PATH: /app/data/vacancy_groups.sqlite3
       GOOGLE_CREDENTIALS_PATH: /run/secrets/google-credentials.json
     volumes:
       - ./data:/app/data

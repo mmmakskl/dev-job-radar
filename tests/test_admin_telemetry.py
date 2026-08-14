@@ -21,6 +21,10 @@ def test_today_metrics_are_persistent_and_aggregate_only(tmp_path) -> None:
         'vacancies_added': 1,
         'skipped': 1,
         'errors': 1,
+        'exact_duplicates': 0,
+        'grouped_reposts': 0,
+        'group_candidates_separate': 0,
+        'manual_ungroups': 0,
     }
     assert 'тексты сообщений' in metrics['description']
 
@@ -35,6 +39,28 @@ def test_metrics_preserve_safe_skip_and_error_reasons(tmp_path) -> None:
         'empty_text': 1,
         'duplicate_link_or_id': 1,
         'llm_error': 1,
+    }
+
+
+def test_group_metrics_are_counted_without_post_content(tmp_path) -> None:
+    store = TelemetryStore(str(tmp_path))
+    for event in (
+        'exact_duplicate',
+        'grouped_repost',
+        'group_candidate_separate',
+        'manual_ungroup',
+    ):
+        store.record_metric(event)
+
+    assert store.today_metrics()['counts'] == {
+        'posts_processed': 0,
+        'vacancies_added': 0,
+        'skipped': 0,
+        'errors': 0,
+        'exact_duplicates': 1,
+        'grouped_reposts': 1,
+        'group_candidates_separate': 1,
+        'manual_ungroups': 1,
     }
 
 

@@ -9,6 +9,7 @@ from typing import Protocol
 from tg_vacancy_bot.models import VacancyAnalysis
 from tg_vacancy_bot.pipeline.fingerprints import build_text_hash
 from tg_vacancy_bot.pipeline.prefilter import candidate_profile_reasons
+from tg_vacancy_bot.storage.vacancy_groups import VacancyGroupStore
 from tg_vacancy_bot.telegram.links import build_vacancy_id
 
 
@@ -59,6 +60,7 @@ class VacancyProcessor:
         notify_vacancy: NotifyVacancy | None = None,
         exclude_keywords: list[str] | None = None,
         event_recorder: EventRecorder | None = None,
+        group_store: VacancyGroupStore | None = None,
     ) -> None:
         self.keyword_filter = keyword_filter
         self.analyze_text = analyze_text
@@ -67,6 +69,7 @@ class VacancyProcessor:
         self.notify_vacancy = notify_vacancy
         self.exclude_keywords = [item.casefold() for item in (exclude_keywords or [])]
         self.event_recorder = event_recorder
+        self.group_store = group_store
         self.keyword_matches = 0
         self.saved_matches = 0
 
@@ -97,6 +100,15 @@ class VacancyProcessor:
                 else None
             ) or 'duplicate_fingerprint'
             self._metric('skipped_duplicate', reason=duplicate_reason)
+            self._metric('exact_duplicate')
+            if self.group_store is not None:
+                self.group_store.record_exact_repost(
+                    vacancy_id=vacancy_id,
+                    post_link=post_link,
+                    channel_name=channel_name,
+                    published_at=published_at,
+                    text_hash=text_hash,
+                )
             return False
 
         if not self.keyword_filter(text):
@@ -136,6 +148,34 @@ class VacancyProcessor:
             self._metric('skipped_not_relevant', reason='llm_not_match')
             return False
 
+        group_decision = None
+        if self.group_store is not None:
+            group_decision = self.group_store.preview_publication(
+                vacancy_id=vacancy_id,
+                data=analysis_result,
+                published_at=published_at,
+            )
+            if group_decision.left_separate_candidate:
+                self._metric('group_candidate_separate')
+            if not group_decision.is_canonical:
+                self.group_store.register_publication(
+                    vacancy_id=vacancy_id,
+                    post_link=post_link,
+                    channel_name=channel_name,
+                    data=analysis_result,
+                    published_at=published_at,
+                    text_hash=text_hash,
+                )
+                if self.dedupe_state is not None:
+                    self.dedupe_state.mark_exported(post_link, text_hash, vacancy_id)
+                self._metric('grouped_repost')
+                logging.info(
+                    'Репост объединён с группой %s: %s',
+                    group_decision.group_id,
+                    group_decision.merge_reason,
+                )
+                return True
+
         logging.info(
             "Релевантная вакансия: %s | %s",
             analysis_result.company,
@@ -156,6 +196,15 @@ class VacancyProcessor:
             self._metric('processing_error', 'google_sheets', 'export_error')
             return False
 
+        if self.group_store is not None:
+            self.group_store.register_publication(
+                vacancy_id=vacancy_id,
+                post_link=post_link,
+                channel_name=channel_name,
+                data=analysis_result,
+                published_at=published_at,
+                text_hash=text_hash,
+            )
         if self.dedupe_state is not None:
             self.dedupe_state.mark_exported(post_link, text_hash, vacancy_id)
         self.saved_matches += 1

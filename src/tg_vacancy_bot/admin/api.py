@@ -35,6 +35,8 @@ from tg_vacancy_bot.admin.settings import (
 )
 from tg_vacancy_bot.admin.telemetry import TelemetryStore
 from tg_vacancy_bot.llm.prompts import DEFAULT_VACANCY_INSTRUCTIONS
+from tg_vacancy_bot.paths import resolve_vacancy_groups_db_path
+from tg_vacancy_bot.storage.vacancy_groups import VacancyGroupStore
 from tg_vacancy_bot.telegram.sources import verify_public_source
 
 
@@ -251,6 +253,17 @@ def _base_channels() -> list[str]:
 def create_app(data_dir: str | None = None) -> FastAPI:
     store = SettingsStore(data_dir or os.getenv('DATA_DIR'))
     telemetry = TelemetryStore(data_dir or os.getenv('DATA_DIR'))
+
+    def group_store() -> VacancyGroupStore:
+        """Open group state only when its private admin route is requested."""
+        return VacancyGroupStore(
+            resolve_vacancy_groups_db_path(
+                data_dir=data_dir or os.getenv('DATA_DIR'),
+                db_path=os.getenv('VACANCY_GROUPS_DB_PATH') or None,
+            ),
+            int(os.getenv('VACANCY_GROUP_WINDOW_DAYS', '14')),
+        )
+
     app = FastAPI(title='Go Radar Admin API', docs_url=None, redoc_url=None)
 
     @app.middleware('http')
@@ -343,6 +356,42 @@ def create_app(data_dir: str | None = None) -> FastAPI:
     @app.get('/api/v1/metrics/today')
     def metrics(_: str = Depends(_require_session)) -> dict[str, Any]:
         return telemetry.today_metrics(store.load().sheets.output_timezone)
+
+    @app.get('/api/v1/vacancy-groups')
+    def vacancy_groups(
+        limit: int = Query(default=50, ge=1, le=100),
+        _: str = Depends(_require_session),
+    ) -> dict[str, Any]:
+        """Returns metadata only: no raw Telegram post text or private actions."""
+        items = group_store().list_groups(limit)
+        return {'items': items, 'total': len(items)}
+
+    @app.get('/api/v1/vacancy-groups/{group_id}')
+    def vacancy_group(
+        group_id: str, _: str = Depends(_require_session)
+    ) -> dict[str, Any]:
+        group = group_store().get_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail='Группа вакансий не найдена')
+        return group
+
+    @app.post('/api/v1/vacancy-groups/{group_id}/publications/{vacancy_id}/unlink')
+    def unlink_group_publication(
+        group_id: str,
+        vacancy_id: str,
+        body: ConfirmRequest,
+        _: str = Depends(_require_csrf),
+    ) -> dict[str, bool]:
+        if not body.confirmed:
+            raise HTTPException(status_code=400, detail='Подтвердите разъединение')
+        if not group_store().unlink_publication(group_id, vacancy_id):
+            raise HTTPException(
+                status_code=409,
+                detail='Нельзя разъединить каноническую или отсутствующую публикацию',
+            )
+        telemetry.record_metric('manual_ungroup')
+        telemetry.record('vacancy_group_unlinked')
+        return {'ok': True}
 
     @app.get('/api/v1/errors')
     def errors(_: str = Depends(_require_session)) -> list[dict[str, Any]]:

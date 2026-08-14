@@ -41,3 +41,16 @@ def resolve_candidate_bot_db_path(
     if data_dir:
         return str(Path(data_dir) / "candidate_bot.sqlite3")
     return "data/candidate_bot.sqlite3"
+
+
+def resolve_vacancy_groups_db_path(
+    *,
+    data_dir: str | None = None,
+    db_path: str | None = None,
+) -> str:
+    """Returns the durable SQLite path for conservative vacancy groups."""
+    if db_path:
+        return db_path
+    if data_dir:
+        return str(Path(data_dir) / "vacancy_groups.sqlite3")
+    return "data/vacancy_groups.sqlite3"

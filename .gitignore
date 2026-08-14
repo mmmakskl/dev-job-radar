@@ -25,6 +25,9 @@ web/test-results/
 web/playwright-report/
 web/tsconfig.tsbuildinfo
 data/*.jsonl
+data/*.sqlite3
+data/*.sqlite3-shm
+data/*.sqlite3-wal
 found_channels.json
 vacancies.xlsx
 logs/

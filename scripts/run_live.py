@@ -30,6 +30,7 @@ from tg_vacancy_bot.storage.sheets import (
     append_to_google_sheet,
     get_existing_links,
 )
+from tg_vacancy_bot.storage.vacancy_groups import VacancyGroupStore
 from tg_vacancy_bot.telegram.links import (
     get_event_channel_name,
     get_event_message_link,
@@ -90,6 +91,10 @@ processor = VacancyProcessor(
     notify_vacancy=build_live_notifier(),
     exclude_keywords=config.EXCLUDE_KEYWORDS,
     event_recorder=TelemetryStore(config.DATA_DIR),
+    group_store=VacancyGroupStore(
+        config.VACANCY_GROUPS_DB_PATH,
+        config.VACANCY_GROUP_WINDOW_DAYS,
+    ),
 )
 
 message_queue: asyncio.Queue["LiveMessageJob"] = asyncio.Queue(

@@ -40,6 +40,10 @@ _METRIC_EVENTS = {
     'skipped_not_relevant',
     'skipped_invalid',
     'processing_error',
+    'exact_duplicate',
+    'grouped_repost',
+    'group_candidate_separate',
+    'manual_ungroup',
 }
 _SKIP_REASONS = {
     'empty_text',
@@ -206,6 +210,10 @@ class TelemetryStore:
             'vacancies_added': 0,
             'skipped': 0,
             'errors': 0,
+            'exact_duplicates': 0,
+            'grouped_reposts': 0,
+            'group_candidates_separate': 0,
+            'manual_ungroups': 0,
         }
         reasons: dict[str, int] = {}
         mapping = {
@@ -215,6 +223,10 @@ class TelemetryStore:
             'skipped_not_relevant': 'skipped',
             'skipped_invalid': 'skipped',
             'processing_error': 'errors',
+            'exact_duplicate': 'exact_duplicates',
+            'grouped_repost': 'grouped_reposts',
+            'group_candidate_separate': 'group_candidates_separate',
+            'manual_ungroup': 'manual_ungroups',
         }
         for item in self._read_jsonl(self.metrics_path):
             try:

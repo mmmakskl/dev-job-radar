@@ -6,6 +6,10 @@ const cards: Array<[keyof Metrics['counts'], string, string]> = [
   ['vacancies_added', 'Вакансий добавлено сегодня', 'Успешно записаны в целевое хранилище.'],
   ['skipped', 'Пропущено', 'Дубликаты, нерелевантные и невалидные записи.'],
   ['errors', 'Ошибок сегодня', 'Ошибки обработки, зафиксированные pipeline.'],
+  ['exact_duplicates', 'Точных дублей', 'Ссылка, стабильный ID или текстовый отпечаток.'],
+  ['grouped_reposts', 'Объединено репостов', 'Карточки не повторены: источник сохранён в группе.'],
+  ['group_candidates_separate', 'Оставлено раздельно', 'Недостаточно строгих признаков для объединения.'],
+  ['manual_ungroups', 'Разъединено вручную', 'Администратор отменил автоматическую связь.'],
 ];
 const reasonLabels:Record<string,string> = {empty_text:'пустой текст',duplicate_link_or_id:'дубль ссылки/ID',duplicate_fingerprint:'дубль текста',include_prefilter:'без include-ключевого слова',exclude_keywords:'исключающее слово',candidate_resume:'резюме кандидата',live_queue_full:'переполненная очередь',llm_not_match:'LLM не подтвердил вакансию',llm_error:'ошибка LLM',export_error:'ошибка экспорта'};
 

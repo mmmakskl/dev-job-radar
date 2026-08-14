@@ -11,6 +11,7 @@ from tg_vacancy_bot.paths import (
     resolve_candidate_bot_db_path,
     resolve_session_path,
     resolve_state_path,
+    resolve_vacancy_groups_db_path,
 )
 
 load_dotenv()
@@ -162,6 +163,15 @@ CANDIDATE_BOT_DB_PATH = resolve_candidate_bot_db_path(
     db_path=os.getenv('CANDIDATE_BOT_DB_PATH') or None,
 )
 
+# Conservative cross-post grouping runs after the existing exact dedupe and
+# never invokes the LLM. It starts with new exports only; historic JSONL and
+# Sheets rows are deliberately not backfilled automatically.
+VACANCY_GROUP_WINDOW_DAYS = int(os.getenv('VACANCY_GROUP_WINDOW_DAYS', '14'))
+VACANCY_GROUPS_DB_PATH = resolve_vacancy_groups_db_path(
+    data_dir=DATA_DIR,
+    db_path=os.getenv('VACANCY_GROUPS_DB_PATH') or None,
+)
+
 # Mistral behaviour is non-secret and may be changed through the panel.
 MISTRAL_MODEL = _MANAGED.mistral.model if _MANAGED else 'mistral-small-latest'
 MISTRAL_TEMPERATURE = _MANAGED.mistral.temperature if _MANAGED else 0.1
@@ -209,6 +219,8 @@ def validate_required_settings(
             missing.append('CANDIDATE_BOT_CHANNEL')
         if not CANDIDATE_BOT_ALLOWED_USER_IDS:
             missing.append('CANDIDATE_BOT_ALLOWED_USER_IDS')
+    if VACANCY_GROUP_WINDOW_DAYS <= 0:
+        missing.append('VACANCY_GROUP_WINDOW_DAYS (> 0)')
 
     if missing:
         names = ', '.join(missing)

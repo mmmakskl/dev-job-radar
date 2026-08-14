@@ -206,3 +206,42 @@ def test_source_verification_marks_managed_source_invalid(
     items = client.get('/api/v1/sources').json()['items']
     source = next(item for item in items if item['token'] == added['item']['token'])
     assert source['verification_status'] == 'invalid'
+
+
+def test_groups_api_lists_safe_metadata_and_unlinks(tmp_path, monkeypatch) -> None:
+    from datetime import datetime, timezone
+
+    from tg_vacancy_bot.llm.schemas import validate_analysis_result
+    from tg_vacancy_bot.storage.vacancy_groups import VacancyGroupStore
+    from tests.test_llm_schemas import valid_payload
+
+    group_store = VacancyGroupStore(str(tmp_path / 'vacancy_groups.sqlite3'), 14)
+    first = group_store.register_publication(
+        vacancy_id='jobs_1',
+        post_link='https://t.me/jobs/1',
+        channel_name='jobs',
+        data=validate_analysis_result(valid_payload()),
+        published_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        text_hash='one',
+    )
+    group_store.register_publication(
+        vacancy_id='jobs_2',
+        post_link='https://t.me/other/2',
+        channel_name='other',
+        data=validate_analysis_result(valid_payload()),
+        published_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        text_hash='two',
+    )
+    client = _client(tmp_path, monkeypatch)
+    csrf = _login(client)
+
+    listing = client.get('/api/v1/vacancy-groups').json()
+    assert listing['items'][0]['publication_count'] == 2
+    detail = client.get(f'/api/v1/vacancy-groups/{first.group_id}').json()
+    assert 'raw_text' not in str(detail)
+    response = client.post(
+        f'/api/v1/vacancy-groups/{first.group_id}/publications/jobs_2/unlink',
+        headers={'X-CSRF-Token': csrf},
+        json={'confirmed': True},
+    )
+    assert response.json() == {'ok': True}

@@ -9,6 +9,7 @@ import { MetricCards } from '../components/metric-cards';
 import { PromptEditor } from '../components/prompt-editor';
 import { SettingsForm } from '../components/settings-form';
 import { SourcesPanel } from '../components/sources-panel';
+import { VacancyGroupsPanel } from '../components/vacancy-groups-panel';
 import { api, type AttentionError, type Metrics, type Settings } from '../lib/api';
 
 type Dashboard = {
@@ -19,8 +20,8 @@ type Dashboard = {
   operations:{at:string;event:string;action?:string}[];
   secret_status:{telegram:boolean;mistral:boolean;google_sheets:boolean};
 };
-type Route = '/'|'/sources'|'/settings'|'/prompt'|'/logs'|'/errors';
-const routeLabels:Record<Route,string> = {'/':'Дашборд','/sources':'Источники','/settings':'Настройки','/prompt':'LLM-инструкции','/logs':'Логи','/errors':'Ошибки'};
+type Route = '/'|'/sources'|'/groups'|'/settings'|'/prompt'|'/logs'|'/errors';
+const routeLabels:Record<Route,string> = {'/':'Дашборд','/sources':'Источники','/groups':'Группы','/settings':'Настройки','/prompt':'LLM-инструкции','/logs':'Логи','/errors':'Ошибки'};
 const actionText: Record<string,[string,string]> = {
   restart:['Перезапустить бота','Очередь будет корректно завершена, затем бот применит сохранённые настройки.'],
   history:['Запустить историю','Live-мониторинг временно остановится: один Telegram session нельзя использовать одновременно.'],
@@ -69,6 +70,7 @@ export default function Page() {
   const header=<Header route={route} theme={theme} onToggleTheme={()=>setTheme(theme==='light'?'dark':'light')} onNavigate={go} onLogout={async()=>{await api.logout();setSettings(undefined);go('/');}}/>;
   let content:React.ReactNode;
   if(route==='/sources') content=<SourcesPanel onBack={()=>go('/')} onChanged={refresh} restartRequired={restartRequired}/>;
+  else if(route==='/groups') content=<VacancyGroupsPanel onBack={()=>go('/')} />;
   else if(route==='/settings') content=<SettingsForm settings={settings} onSave={save}/>;
   else if(route==='/prompt') content=<PromptEditor onBack={()=>go('/settings')}/>;
   else if(route==='/logs') content=<LogsPanel onBack={()=>go('/')} />;

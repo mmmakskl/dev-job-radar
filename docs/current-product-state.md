@@ -29,7 +29,7 @@ Mistral API, Google Sheets и администратор через CLI либо
 | LLM | Mistral API через OpenAI SDK | Определение релевантности и извлечение структуры |
 | Экспорт | Google Sheets API, gspread, google-auth | Создание и заполнение двух листов |
 | Конфигурация | `.env`, Pydantic-managed JSON | Секреты и не секретные управляемые настройки |
-| Локальное состояние | JSONL/JSON/SQLite | Дедупликация, причины пропусков, метрики, логи, ошибки, alert state и личные статусы кандидатов |
+| Локальное состояние | JSONL/JSON/SQLite | Exact-дедупликация, группы репостов, причины пропусков, метрики, логи, ошибки, alert state и личные статусы кандидатов |
 | HTTP/API | FastAPI, Uvicorn | Admin API и раздача статического интерфейса |
 | Frontend | Next.js static export, React, TypeScript, Tailwind, RHF, Zod | Русскоязычная админ-панель |
 | Контейнеризация | Docker, Docker Compose | Сервисы `bot` и `admin` |
@@ -52,9 +52,12 @@ Mistral API, Google Sheets и администратор через CLI либо
   панели settings JSON имеет приоритет для поддерживаемых не секретных полей.
 - `scripts/run_live.py` принимает live-события; `scripts/parse_history.py`
   обрабатывает историю; `telegram/links.py` строит ссылки и стабильные ID.
-- `pipeline/processor.py` соединяет фильтрацию, LLM, экспорт, дедупликацию,
+- `pipeline/processor.py` соединяет фильтрацию, LLM, экспорт, exact-дедупликацию,
   метрики и уведомления. При включённом beta-режиме Bot API публикует отдельную
   интерактивную карточку после экспорта.
+- `storage/vacancy_groups.py` создаёт SQLite-группы только для новых обработанных
+  публикаций. Группировка не вызывает LLM и требует точного совпадения контакта
+  или application URL, либо пары «компания + должность», внутри окна времени.
 - `llm/mistral.py` выполняет запросы; `llm/prompts.py` отделяет изменяемые
   инструкции от фиксированного JSON-контракта; `llm/schemas.py` валидирует
   ответ.
@@ -78,6 +81,8 @@ flowchart LR
   GS --> N[Опциональное Telethon-уведомление]
   GS --> B[Опциональная Bot API карточка]
   B --> DB[(SQLite: личные действия)]
+  S --> G[(SQLite: группы репостов)]
+  G -->|каноническая публикация| GS
   Q --> A[Admin telemetry]
   A --> UI[FastAPI + Next.js панель]
 ```
@@ -129,7 +134,7 @@ live-процесса.
 Панель редактирует только инструкции. Фиксированная JSON-схема ответа остаётся
 в коде: `llm/prompts.py`, `llm/mistral.py`, `llm/schemas.py`.
 
-### Дедупликация, запись и уведомление
+### Дедупликация, группы, запись и уведомление
 
 Стабильный ID строится из Telegram-ссылки. Полный лист содержит 37 колонок и
 исходный текст, краткий — 13 пользовательских колонок; ID краткой записи
@@ -143,6 +148,14 @@ Telegram-уведомления или Bot API-карточки не отмен�
 `pipeline/dedupe_state.py`, `telegram/notifier.py`,
 `telegram/candidate_notifier.py`, `telegram/candidate_store.py`.
 
+После exact-проверки новая LLM-совместимая публикация сравнивается с группами
+только в пределах `VACANCY_GROUP_WINDOW_DAYS`. Сходство текста или стека не
+используется. Повторный репост не добавляет строку Sheets и не публикует новую
+Telegram-карточку, но его источник сохраняется в SQLite-группе. В admin API/UI
+можно безопасно посмотреть источники и вручную разъединить связанную
+публикацию; для этой пары создаётся запрет на повторное автообъединение.
+Исторические данные не мигрируются автоматически.
+
 ## 5. Контракты и модели данных
 
 ### Внутренние Python-контракты
@@ -153,6 +166,7 @@ Telegram-уведомления или Bot API-карточки не отмен�
 | `VacancyProcessor.process_message(...) -> bool` | Общий async pipeline; `True` после успешного экспорта |
 | `JsonlDedupeState.is_duplicate(...)` | Проверка ссылки, ID и хэша текста |
 | `JsonlDedupeState.mark_exported(...)` | Фиксация успешного экспорта |
+| `VacancyGroupStore` | Каноническая вакансия, связанные публикации, источники, причина и даты группы |
 | `ManagedSource`, `AdminSettings` и вложенные модели | Версионируемые managed-настройки |
 | `FolderChannel`, `ChannelSyncResult` | Контракты синхронизации папки Telegram |
 | `TelemetryStore` | Heartbeat, операции, метрики с причинами, ошибки, очищенные логи |
@@ -177,6 +191,7 @@ Telegram-уведомления или Bot API-карточки не отмен�
 | `OUTPUT_TIMEZONE` | Нет | `Europe/Moscow` до managed-конфигурации |
 | `GOOGLE_SHEET_FULL_TITLE`, `GOOGLE_SHEET_SHORT_TITLE` | Нет | Имена листов до managed-конфигурации |
 | `STATE_FILE_PATH`, `TEXT_HASH_TTL_DAYS` | Нет | `data/state.jsonl`, 30 дней |
+| `VACANCY_GROUP_WINDOW_DAYS`, `VACANCY_GROUPS_DB_PATH` | Нет | Окно строгой группировки новых репостов и `data/vacancy_groups.sqlite3` |
 | `LIVE_QUEUE_MAXSIZE`, `LIVE_WORKERS` | Нет | 1000 и 1 |
 | `TELEGRAM_NOTIFY_*` | Target обязателен при включении | Уведомления и режим истории |
 | `CANDIDATE_BOT_*` | Все обязательны при включении | Bot API token, общий beta-канал, allowlist numeric user ID и SQLite path |
@@ -204,6 +219,8 @@ HTTP API существует. За исключением healthcheck, стат
 | `GET` | `/api/v1/dashboard`, `/settings`, `/operations` | Статус, настройки, аудит |
 | `PUT` | `/api/v1/settings` | Изменение не секретных настроек |
 | `GET` | `/api/v1/metrics/today`, `/errors`, `/logs` | Метрики, ошибки, очищенные логи |
+| `GET` | `/api/v1/vacancy-groups`, `/vacancy-groups/{group_id}` | Безопасный просмотр канонической записи и источников группы |
+| `POST` | `/api/v1/vacancy-groups/{group_id}/publications/{vacancy_id}/unlink` | Подтверждённо разъединить связанную публикацию |
 | `POST` | `/api/v1/errors/{id}/resolve` | Явно закрыть ошибку |
 | `GET/PUT/POST` | `/api/v1/prompt`, `/api/v1/prompt/reset` | Изменение инструкций LLM |
 | `GET/POST/PATCH/DELETE` | `/api/v1/sources` | Управление managed-источниками |
@@ -215,8 +232,9 @@ HTTP API существует. За исключением healthcheck, стат
 ## 6. Frontend
 
 Frontend есть в `web/`: Next.js App Router со статическим export. FastAPI
-отдаёт private SPA entry для прямых ссылок `/`, `/sources`, `/settings`,
-`/prompt`, `/logs` и `/errors`; для логов фильтры сохраняются в query string.
+отдаёт private SPA entry для прямых ссылок `/`, `/sources`, `/groups`,
+`/settings`, `/prompt`, `/logs` и `/errors`; для логов фильтры сохраняются в
+query string.
 
 Реализованы: вход по паролю, dashboard с состоянием active/paused/no heartbeat,
 последним успешным экспортом, очередью, пропусками, активными ошибками и
@@ -226,7 +244,8 @@ dirty-state, экран логов с фильтрами и пагинацией
 действий. В UI есть светлая/тёмная тема и адаптивная раскладка.
 
 Основные файлы: `web/app/page.tsx`, `web/components/sources-panel.tsx`,
-`web/components/logs-panel.tsx`, `web/components/prompt-editor.tsx`.
+`web/components/vacancy-groups-panel.tsx`, `web/components/logs-panel.tsx`,
+`web/components/prompt-editor.tsx`.
 
 Google Sheets остаются пользовательским представлением вакансий: краткий лист
 предназначен для просмотра, полный — для детальной работы и исходного текста.
