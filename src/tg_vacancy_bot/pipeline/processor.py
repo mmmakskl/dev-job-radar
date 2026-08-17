@@ -221,11 +221,14 @@ class VacancyProcessor:
                 )
                 if notified:
                     logging.info("Telegram-уведомление отправлено: %s", vacancy_id)
+                else:
+                    self._metric('processing_error', 'telegram', 'notification_error')
             except Exception:
                 logging.exception(
                     "Не удалось отправить Telegram-уведомление: %s",
                     vacancy_id,
                 )
+                self._metric('processing_error', 'telegram', 'notification_error')
         return True
 
     def _metric(

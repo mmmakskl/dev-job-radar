@@ -59,6 +59,29 @@ class TelegramBotApi:
             20,
         )
 
+    async def edit_message_text(
+        self,
+        chat_id: int | str,
+        message_id: int,
+        text: str,
+        *,
+        parse_mode: str | None = None,
+        reply_markup: dict | None = None,
+    ) -> dict:
+        """Edits one private browser card instead of sending a new message."""
+        payload: dict[str, Any] = {
+            'chat_id': chat_id,
+            'message_id': message_id,
+            'text': text,
+            'disable_web_page_preview': True,
+        }
+        if parse_mode:
+            payload['parse_mode'] = parse_mode
+        if reply_markup:
+            payload['reply_markup'] = reply_markup
+        result = await self._call('editMessageText', payload, 20)
+        return result if isinstance(result, dict) else {}
+
     async def _call(self, method: str, payload: dict[str, Any], timeout: int) -> Any:
         return await asyncio.to_thread(self._call_sync, method, payload, timeout)
 

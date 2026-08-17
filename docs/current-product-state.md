@@ -1,6 +1,6 @@
 # Текущее состояние продукта
 
-Документ фиксирует фактическое состояние репозитория на 13 августа 2026 года.
+Документ фиксирует фактическое состояние репозитория на 17 августа 2026 года.
 Источник истины — исходный код и тесты. Секретные и пользовательские файлы
 (`.env`, credentials, Telegram session, state и экспортированные данные) не
 анализировались.
@@ -10,8 +10,8 @@
 Проект собирает Go/Golang-вакансии из Telegram. Он слушает заданные каналы и
 группы, отсеивает нерелевантные сообщения и резюме кандидатов, передаёт
 подходящие тексты в Mistral и сохраняет структурированный результат в Google
-Sheets. При включённой настройке после экспорта публикуется краткое Telegram-
-уведомление.
+Sheets. В включённой private beta после live-экспорта Bot API публикует одну
+интерактивную карточку вакансии в общий канал.
 
 С системой взаимодействуют Telegram-аккаунт пользователя через Telethon,
 Mistral API, Google Sheets и администратор через CLI либо защищённую веб-
@@ -78,8 +78,7 @@ flowchart LR
   LLM --> S[Валидация и нормализация VacancyAnalysis]
   S --> GS[Google Sheets: полный + краткий лист]
   GS --> D[JSONL state: exported]
-  GS --> N[Опциональное Telethon-уведомление]
-  GS --> B[Опциональная Bot API карточка]
+  GS --> B[Одна optional Bot API карточка]
   B --> DB[(SQLite: личные действия)]
   S --> G[(SQLite: группы репостов)]
   G -->|каноническая публикация| GS
@@ -103,8 +102,9 @@ Worker вызывает `VacancyProcessor.process_message`. При остано�
 
 `scripts/parse_history.py` последовательно проходит `TARGET_CHANNELS` через
 `client.iter_messages` и прекращает проход на сообщениях старше
-`HISTORY_DAYS`. Для каждого сообщения применяется общий processor. Уведомления
-истории выключены, пока явно не включен `TELEGRAM_NOTIFY_HISTORY`.
+`HISTORY_DAYS`. Для каждого сообщения применяется общий processor. Исторический
+проход не публикует вакансии: он не создаёт legacy-сообщений и не наполняет
+пользовательский beta-канал старыми карточками.
 
 Один Telegram session нельзя безопасно одновременно использовать для history и
 live-процесса.
@@ -121,7 +121,8 @@ live-процесса.
 
 Для пропущенных сообщений Mistral не вызывается. Telemetry сохраняет только
 агрегированную причину: пустой текст, вид дубликата, include/exclude-prefilter,
-резюме, полная очередь, отказ LLM, ошибка LLM или ошибка экспорта. Реализация:
+резюме, полная очередь, отказ LLM, ошибка LLM, ошибка экспорта или ошибка
+публикации карточки. Реализация:
 `pipeline/prefilter.py`, `pipeline/fingerprints.py`.
 
 ### LLM-анализ
@@ -142,11 +143,14 @@ live-процесса.
 только недостающую строку.
 
 Событие `exported` пишется в state только после успеха в обоих листах. Ошибка
-Telegram-уведомления или Bot API-карточки не отменяет экспорт и дедупликацию.
-Карточка доступна только при явной beta-конфигурации и хранит действия каждого
-кандидата отдельно. Реализация: `storage/sheets.py`,
-`pipeline/dedupe_state.py`, `telegram/notifier.py`,
-`telegram/candidate_notifier.py`, `telegram/candidate_store.py`.
+Bot API-карточки не отменяет экспорт и дедупликацию, а записывается как
+`notification_error`. Legacy Telethon-публикация вакансии отключена. Карточка
+доступна только при явной beta-конфигурации, до отправки получает durable claim
+по стабильному ID и поэтому не повторяется после retry/restart; при неясном
+результате отправки новый fallback-пост не создаётся. Она хранит действия
+каждого кандидата отдельно. Реализация: `storage/sheets.py`,
+`pipeline/dedupe_state.py`, `telegram/candidate_notifier.py`,
+`telegram/candidate_store.py`.
 
 После exact-проверки новая LLM-совместимая публикация сравнивается с группами
 только в пределах `VACANCY_GROUP_WINDOW_DAYS`. Сходство текста или стека не
@@ -167,6 +171,7 @@ Telegram-карточку, но его источник сохраняется �
 | `JsonlDedupeState.is_duplicate(...)` | Проверка ссылки, ID и хэша текста |
 | `JsonlDedupeState.mark_exported(...)` | Фиксация успешного экспорта |
 | `VacancyGroupStore` | Каноническая вакансия, связанные публикации, источники, причина и даты группы |
+| `CandidateStore`, `CandidateVacancyBrowser` | Личные статусы, idempotent delivery карточек и private single-card browser |
 | `ManagedSource`, `AdminSettings` и вложенные модели | Версионируемые managed-настройки |
 | `FolderChannel`, `ChannelSyncResult` | Контракты синхронизации папки Telegram |
 | `TelemetryStore` | Heartbeat, операции, метрики с причинами, ошибки, очищенные логи |
@@ -193,7 +198,7 @@ Telegram-карточку, но его источник сохраняется �
 | `STATE_FILE_PATH`, `TEXT_HASH_TTL_DAYS` | Нет | `data/state.jsonl`, 30 дней |
 | `VACANCY_GROUP_WINDOW_DAYS`, `VACANCY_GROUPS_DB_PATH` | Нет | Окно строгой группировки новых репостов и `data/vacancy_groups.sqlite3` |
 | `LIVE_QUEUE_MAXSIZE`, `LIVE_WORKERS` | Нет | 1000 и 1 |
-| `TELEGRAM_NOTIFY_*` | Target обязателен при включении | Уведомления и режим истории |
+| `TELEGRAM_NOTIFY_*` | Target обязателен при включении | Эксплуатационные алерты Telethon; не публикация вакансий |
 | `CANDIDATE_BOT_*` | Все обязательны при включении | Bot API token, общий beta-канал, allowlist numeric user ID и SQLite path |
 | `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET` | Да для UI | Вход и HMAC сессии |
 | `ADMIN_COOKIE_SECURE`, `ADMIN_STATIC_DIR` | Нет | Cookie и каталог статической панели |
@@ -257,7 +262,7 @@ Google Sheets остаются пользовательским представ
 | `make auth` | QR-авторизация | Telegram API | Создаёт/использует session |
 | `make auth-force` | Повторная авторизация | Telegram API | Удаляет session |
 | `make run` / `make live` | Live-мониторинг | Telegram, Mistral, Sheets | Пишет Sheets/state/telemetry; при beta-режиме — карточки Bot API |
-| `make candidate-bot` | Личный Bot API long polling | `CANDIDATE_BOT_*` | Пишет личные статусы и нейтральные жалобы в SQLite |
+| `make candidate-bot` | Личный Bot API long polling | `CANDIDATE_BOT_*` | Пишет личные статусы/жалобы и редактирует одну карточку списка в SQLite |
 | `make history` | Исторический проход | Те же | Обрабатывает старые посты |
 | `make discover` | Поиск диалогов | Telegram session | Создаёт `found_channels.json` |
 | `make sync-channels` | Обновление `.env` из папки | Telegram session, `.env` | Меняет `TARGET_CHANNELS` |
@@ -336,9 +341,10 @@ Telethon до сохранения; если проверка недоступн
 ## Итог в 5 пунктах
 
 1. Это Telegram userbot для поиска и структурирования Go-вакансий.
-2. Текущие интерфейсы — CLI, Google Sheets и защищённая веб-панель.
+2. Текущие интерфейсы — CLI, Google Sheets, защищённая веб-панель и закрытый Telegram Bot API workflow кандидата.
 3. Основной поток: Telegram → фильтры/дедупликация → Mistral → два листа
-   Google Sheets → state и опциональное уведомление.
-4. Данные хранятся в Google Sheets и локальных JSON/JSONL; отдельной БД нет.
+   Google Sheets → state и одна optional интерактивная Bot API-карточка.
+4. Данные хранятся в Google Sheets, JSON/JSONL и локальных SQLite-хранилищах
+   групп и личных действий кандидатов.
 5. Уже есть API, frontend, Docker и CI/CD; нет multi-user access, внешнего
    публичного API и retry ошибок из UI.

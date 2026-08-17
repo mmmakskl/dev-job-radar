@@ -222,14 +222,23 @@ def test_processor_marks_export_when_notifier_fails(monkeypatch) -> None:
     async def failing_notifier(**_kwargs) -> bool:
         raise RuntimeError("notification failed")
 
+    class Recorder:
+        def __init__(self) -> None:
+            self.events = []
+
+        def record_metric(self, event, component='pipeline', reason=None) -> None:
+            self.events.append((event, component, reason))
+
     monkeypatch.setattr("tg_vacancy_bot.pipeline.processor.asyncio.sleep", no_delay)
     state = DedupeStateSpy()
+    recorder = Recorder()
     processor = VacancyProcessor(
         keyword_filter=lambda _text: True,
         analyze_text=analyze_text,
         append_to_sheet=successful_export,
         dedupe_state=state,
         notify_vacancy=failing_notifier,
+        event_recorder=recorder,
     )
 
     assert asyncio.run(
@@ -242,6 +251,7 @@ def test_processor_marks_export_when_notifier_fails(monkeypatch) -> None:
         )
     )
     assert len(state.marked) == 1
+    assert ('processing_error', 'telegram', 'notification_error') in recorder.events
 
 
 def test_processor_succeeds_when_notifier_returns_false(monkeypatch) -> None:
@@ -257,12 +267,21 @@ def test_processor_succeeds_when_notifier_returns_false(monkeypatch) -> None:
     async def unsuccessful_notifier(**_kwargs) -> bool:
         return False
 
+    class Recorder:
+        def __init__(self) -> None:
+            self.events = []
+
+        def record_metric(self, event, component='pipeline', reason=None) -> None:
+            self.events.append((event, component, reason))
+
     monkeypatch.setattr("tg_vacancy_bot.pipeline.processor.asyncio.sleep", no_delay)
+    recorder = Recorder()
     processor = VacancyProcessor(
         keyword_filter=lambda _text: True,
         analyze_text=analyze_text,
         append_to_sheet=successful_export,
         notify_vacancy=unsuccessful_notifier,
+        event_recorder=recorder,
     )
 
     assert asyncio.run(
@@ -274,6 +293,7 @@ def test_processor_succeeds_when_notifier_returns_false(monkeypatch) -> None:
             "jobs",
         )
     )
+    assert ('processing_error', 'telegram', 'notification_error') in recorder.events
 
 
 def test_grouped_repost_skips_second_sheet_row_and_notification(

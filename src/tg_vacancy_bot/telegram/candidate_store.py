@@ -1,6 +1,8 @@
 """SQLite persistence for personal candidate actions and neutral reports."""
 
 import hashlib
+import json
+import secrets
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -34,6 +36,19 @@ class CandidateVacancy:
     apply_link: str | None
     published_at: str | None
     status: str = 'new'
+
+
+@dataclass(frozen=True)
+class BrowserSession:
+    """Private, server-side state for one user's single-message vacancy browser."""
+
+    token: str
+    telegram_user_id: int
+    bucket: str
+    position: int
+    chat_id: int | None
+    message_id: int | None
+    vacancy_ids: tuple[str, ...]
 
 
 def callback_key_for(vacancy_id: str) -> str:
@@ -73,6 +88,8 @@ class CandidateStore:
                     post_link TEXT NOT NULL,
                     apply_link TEXT,
                     published_at TEXT,
+                    delivery_state TEXT NOT NULL DEFAULT 'pending',
+                    channel_message_id INTEGER,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -98,8 +115,49 @@ class CandidateStore:
                     ON user_vacancy_actions (telegram_user_id, status, updated_at);
                 CREATE INDEX IF NOT EXISTS idx_reports_vacancy
                     ON vacancy_reports (vacancy_id, created_at);
+                CREATE TABLE IF NOT EXISTS candidate_browser_sessions (
+                    token TEXT PRIMARY KEY,
+                    telegram_user_id INTEGER NOT NULL,
+                    bucket TEXT NOT NULL,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    chat_id INTEGER,
+                    message_id INTEGER,
+                    vacancy_ids_json TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_browser_sessions_user
+                    ON candidate_browser_sessions (telegram_user_id, updated_at);
                 '''
             )
+            self._add_column_if_missing(
+                connection,
+                'vacancies',
+                'delivery_state',
+                "TEXT NOT NULL DEFAULT 'pending'",
+            )
+            self._add_column_if_missing(
+                connection, 'vacancies', 'channel_message_id', 'INTEGER'
+            )
+            self._add_column_if_missing(
+                connection,
+                'candidate_browser_sessions',
+                'vacancy_ids_json',
+                "TEXT NOT NULL DEFAULT '[]'",
+            )
+
+    @staticmethod
+    def _add_column_if_missing(
+        connection: sqlite3.Connection,
+        table: str,
+        column: str,
+        definition: str,
+    ) -> None:
+        columns = {
+            row['name'] for row in connection.execute(f'PRAGMA table_info({table})')
+        }
+        if column not in columns:
+            connection.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
 
     def register_vacancy(
         self,
@@ -152,6 +210,30 @@ class CandidateStore:
             published_at=published_at,
         )
 
+    def claim_channel_delivery(self, vacancy_id: str) -> bool:
+        """Claims a card once; an interrupted send stays claimed to prevent duplicates."""
+        with self._connect() as connection:
+            result = connection.execute(
+                '''
+                UPDATE vacancies SET delivery_state = 'sending', updated_at = ?
+                WHERE vacancy_id = ? AND delivery_state = 'pending'
+                ''',
+                (utc_now(), vacancy_id),
+            )
+        return result.rowcount == 1
+
+    def mark_channel_published(self, vacancy_id: str, message_id: int | None) -> None:
+        """Records the Bot API message after its first successful delivery."""
+        with self._connect() as connection:
+            connection.execute(
+                '''
+                UPDATE vacancies
+                SET delivery_state = 'published', channel_message_id = ?, updated_at = ?
+                WHERE vacancy_id = ?
+                ''',
+                (message_id, utc_now(), vacancy_id),
+            )
+
     def set_status(
         self, telegram_user_id: int, callback_key: str, status: str
     ) -> CandidateVacancy | None:
@@ -201,7 +283,7 @@ class CandidateStore:
         return self._vacancy_from_row(row) if row else None
 
     def list_for_user(
-        self, telegram_user_id: int, bucket: str, limit: int = 10
+        self, telegram_user_id: int, bucket: str, limit: int | None = None
     ) -> list[CandidateVacancy]:
         """Lists a beta user's private view, including unclaimed shared vacancies."""
         filters = {
@@ -212,6 +294,15 @@ class CandidateStore:
         }
         if bucket not in filters:
             raise ValueError(f'Unsupported vacancy bucket: {bucket}')
+        order_by = (
+            'COALESCE(v.published_at, v.created_at) DESC'
+            if bucket == 'new'
+            else 'a.updated_at DESC'
+        )
+        limit_clause = 'LIMIT ?' if limit is not None else ''
+        parameters: tuple[int, ...] = (
+            (telegram_user_id, limit) if limit is not None else (telegram_user_id,)
+        )
         with self._connect() as connection:
             rows = connection.execute(
                 f'''
@@ -220,12 +311,102 @@ class CandidateStore:
                 LEFT JOIN user_vacancy_actions a
                     ON a.vacancy_id = v.vacancy_id AND a.telegram_user_id = ?
                 WHERE {filters[bucket]}
-                ORDER BY COALESCE(v.published_at, v.created_at) DESC
-                LIMIT ?
+                ORDER BY {order_by}
+                {limit_clause}
                 ''',
-                (telegram_user_id, limit),
+                parameters,
             ).fetchall()
         return [self._vacancy_from_row(row) for row in rows]
+
+    def create_browser_session(
+        self,
+        telegram_user_id: int,
+        bucket: str,
+        vacancies: list[CandidateVacancy],
+    ) -> BrowserSession:
+        """Creates opaque state; callback payloads never expose vacancy/user IDs."""
+        if bucket not in {'new', 'saved', 'applications', 'hidden'}:
+            raise ValueError(f'Unsupported vacancy bucket: {bucket}')
+        token = secrets.token_hex(8)
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                '''
+                INSERT INTO candidate_browser_sessions (
+                    token, telegram_user_id, bucket, position, created_at, updated_at
+                    , vacancy_ids_json
+                ) VALUES (?, ?, ?, 0, ?, ?, ?)
+                ''',
+                (
+                    token,
+                    telegram_user_id,
+                    bucket,
+                    now,
+                    now,
+                    json.dumps([item.vacancy_id for item in vacancies]),
+                ),
+            )
+        return BrowserSession(
+            token,
+            telegram_user_id,
+            bucket,
+            0,
+            None,
+            None,
+            tuple(item.vacancy_id for item in vacancies),
+        )
+
+    def attach_browser_message(
+        self, token: str, telegram_user_id: int, chat_id: int, message_id: int
+    ) -> bool:
+        with self._connect() as connection:
+            result = connection.execute(
+                '''
+                UPDATE candidate_browser_sessions
+                SET chat_id = ?, message_id = ?, updated_at = ?
+                WHERE token = ? AND telegram_user_id = ?
+                ''',
+                (chat_id, message_id, utc_now(), token, telegram_user_id),
+            )
+        return result.rowcount == 1
+
+    def get_browser_session(
+        self, token: str, telegram_user_id: int
+    ) -> BrowserSession | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                '''
+                SELECT token, telegram_user_id, bucket, position, chat_id, message_id,
+                       vacancy_ids_json
+                FROM candidate_browser_sessions
+                WHERE token = ? AND telegram_user_id = ?
+                ''',
+                (token, telegram_user_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return BrowserSession(
+            row['token'],
+            row['telegram_user_id'],
+            row['bucket'],
+            row['position'],
+            row['chat_id'],
+            row['message_id'],
+            tuple(json.loads(row['vacancy_ids_json'])),
+        )
+
+    def set_browser_position(
+        self, token: str, telegram_user_id: int, position: int
+    ) -> bool:
+        with self._connect() as connection:
+            result = connection.execute(
+                '''
+                UPDATE candidate_browser_sessions SET position = ?, updated_at = ?
+                WHERE token = ? AND telegram_user_id = ?
+                ''',
+                (max(0, position), utc_now(), token, telegram_user_id),
+            )
+        return result.rowcount == 1
 
     @staticmethod
     def _vacancy_from_row(row: sqlite3.Row) -> CandidateVacancy:

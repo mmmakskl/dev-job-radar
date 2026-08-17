@@ -38,10 +38,8 @@ from tg_vacancy_bot.telegram.links import (
 from tg_vacancy_bot.telegram.bot_api import TelegramBotApi
 from tg_vacancy_bot.telegram.candidate_notifier import (
     CandidateVacancyNotifier,
-    combine_notifiers,
 )
 from tg_vacancy_bot.telegram.candidate_store import CandidateStore
-from tg_vacancy_bot.telegram.notifier import send_vacancy_notification
 
 
 # Настройка логирования
@@ -61,26 +59,14 @@ dedupe_state = JsonlDedupeState(
 
 
 def build_live_notifier():
-    """Combines legacy Telethon notices and optional Bot API action cards."""
-    legacy_notifier = None
-    candidate_notifier = None
-    if config.TELEGRAM_NOTIFY_ENABLED:
-
-        async def notify_vacancy(**kwargs) -> bool:
-            return await send_vacancy_notification(
-                client=client,
-                target=config.TELEGRAM_NOTIFY_TARGET,
-                **kwargs,
-            )
-
-        legacy_notifier = notify_vacancy
+    """Creates the sole vacancy publication path: an interactive Bot API card."""
     if config.CANDIDATE_BOT_ENABLED:
-        candidate_notifier = CandidateVacancyNotifier(
+        return CandidateVacancyNotifier(
             TelegramBotApi(config.CANDIDATE_BOT_TOKEN),
             CandidateStore(config.CANDIDATE_BOT_DB_PATH),
             config.CANDIDATE_BOT_CHANNEL,
         )
-    return combine_notifiers(legacy_notifier, candidate_notifier)
+    return None
 
 
 processor = VacancyProcessor(

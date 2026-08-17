@@ -25,7 +25,6 @@ from tg_vacancy_bot.telegram.links import (
     get_message_channel_name,
     get_message_link,
 )
-from tg_vacancy_bot.telegram.notifier import send_vacancy_notification
 
 # Настройка логирования
 configure_logging(
@@ -38,18 +37,8 @@ client = TelegramClient(config.SESSION_NAME, config.API_ID, config.API_HASH)
 
 
 def build_history_notifier():
-    """Включает history-уведомления только отдельным явным флагом."""
-    if not (config.TELEGRAM_NOTIFY_ENABLED and config.TELEGRAM_NOTIFY_HISTORY):
-        return None
-
-    async def notify_vacancy(**kwargs) -> bool:
-        return await send_vacancy_notification(
-            client=client,
-            target=config.TELEGRAM_NOTIFY_TARGET,
-            **kwargs,
-        )
-
-    return notify_vacancy
+    """History never publishes legacy vacancy messages or new channel cards."""
+    return None
 
 
 async def parse_history():

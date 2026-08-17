@@ -23,17 +23,19 @@ def test_candidate_notifier_sends_compact_buttons_and_registers_vacancy(
     api = FakeBotApi()
     notifier = CandidateVacancyNotifier(api, store, '@beta_vacancies')
 
-    sent = asyncio.run(
-        notifier(
-            vacancy_id='jobs_42',
-            post_link='https://t.me/jobs/42',
-            channel_name='jobs',
-            data=validate_analysis_result(valid_payload()),
-            published_at=datetime(2026, 8, 13, tzinfo=timezone.utc),
-        )
-    )
+    kwargs = {
+        'vacancy_id': 'jobs_42',
+        'post_link': 'https://t.me/jobs/42',
+        'channel_name': 'jobs',
+        'data': validate_analysis_result(valid_payload()),
+        'published_at': datetime(2026, 8, 13, tzinfo=timezone.utc),
+    }
+    sent = asyncio.run(notifier(**kwargs))
+    repeated = asyncio.run(notifier(**kwargs))
 
     assert sent is True
+    assert repeated is True
+    assert len(api.calls) == 1
     args, kwargs = api.calls[0]
     assert args[0] == '@beta_vacancies'
     buttons = kwargs['reply_markup']['inline_keyboard']

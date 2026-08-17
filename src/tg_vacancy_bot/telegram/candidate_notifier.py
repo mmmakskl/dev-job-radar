@@ -2,7 +2,6 @@
 
 import logging
 from datetime import datetime
-from typing import Any
 
 from tg_vacancy_bot.models import NOT_SPECIFIED, VacancyAnalysis
 from tg_vacancy_bot.telegram.bot_api import TelegramBotApi
@@ -60,6 +59,9 @@ class CandidateVacancyNotifier:
             apply_link=data.apply_link if _known(data.apply_link) else None,
             published_at=published_at.isoformat(),
         )
+        if not self.store.claim_channel_delivery(vacancy_id):
+            logging.info('Карточка вакансии уже была заявлена: %s', vacancy_id)
+            return True
         message = format_vacancy_notification(
             vacancy_id=vacancy_id,
             post_link=post_link,
@@ -68,7 +70,7 @@ class CandidateVacancyNotifier:
             published_at=published_at,
         )
         try:
-            await self.api.send_message(
+            sent = await self.api.send_message(
                 self.target,
                 message,
                 parse_mode='HTML',
@@ -77,22 +79,8 @@ class CandidateVacancyNotifier:
         except Exception:
             logging.exception('Не удалось отправить пользовательскую Telegram-карточку')
             return False
+        message_id = sent.get('message_id') if isinstance(sent, dict) else None
+        self.store.mark_channel_published(
+            vacancy_id, message_id if isinstance(message_id, int) else None
+        )
         return True
-
-
-def combine_notifiers(*notifiers: Any) -> Any:
-    """Combines optional notifications without making one delivery block another."""
-    enabled = [notifier for notifier in notifiers if notifier is not None]
-    if not enabled:
-        return None
-
-    async def notify_vacancy(**kwargs: Any) -> bool:
-        delivered = False
-        for notifier in enabled:
-            try:
-                delivered = await notifier(**kwargs) or delivered
-            except Exception:
-                logging.exception('Не удалось доставить Telegram-уведомление')
-        return delivered
-
-    return notify_vacancy
