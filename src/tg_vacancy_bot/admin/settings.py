@@ -129,7 +129,7 @@ class FilterSettings(BaseModel):
 
 
 class MistralSettings(BaseModel):
-    model: str = Field(default='mistral-small-latest', min_length=3, max_length=100)
+    model: str = Field(default='ministral-3b-2512', min_length=3, max_length=100)
     temperature: float = Field(default=0.1, ge=0, le=1)
     max_attempts: int = Field(default=2, ge=1, le=5)
     vacancy_instructions: str | None = None

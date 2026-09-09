@@ -173,7 +173,7 @@ VACANCY_GROUPS_DB_PATH = resolve_vacancy_groups_db_path(
 )
 
 # Mistral behaviour is non-secret and may be changed through the panel.
-MISTRAL_MODEL = _MANAGED.mistral.model if _MANAGED else 'mistral-small-latest'
+MISTRAL_MODEL = _MANAGED.mistral.model if _MANAGED else 'ministral-3b-2512'
 MISTRAL_TEMPERATURE = _MANAGED.mistral.temperature if _MANAGED else 0.1
 MISTRAL_MAX_ATTEMPTS = _MANAGED.mistral.max_attempts if _MANAGED else 2
 MISTRAL_SYSTEM_PROMPT = build_system_prompt(
