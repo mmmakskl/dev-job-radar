@@ -58,7 +58,7 @@ jobs:
 
       - name: Run frontend E2E
         run: |
-          npx --yes playwright install --with-deps chromium
+          npm --prefix web exec -- playwright install --with-deps chromium
           npm --prefix web run test:e2e
 
       - name: Build deploy image

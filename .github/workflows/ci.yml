@@ -57,7 +57,7 @@ jobs:
       - name: Run frontend E2E
         working-directory: web
         run: |
-          npx playwright install --with-deps chromium
+          npm exec -- playwright install --with-deps chromium
           npm run test:e2e
 
       - name: Build production image
