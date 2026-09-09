@@ -55,9 +55,10 @@ jobs:
           npm --prefix web run build
 
       - name: Run frontend E2E
+        working-directory: web
         run: |
-          npx --yes playwright install --with-deps chromium
-          npm --prefix web run test:e2e
+          npx playwright install --with-deps chromium
+          npm run test:e2e
 
       - name: Build production image
         run: docker build --tag dev-job-radar-bot:ci .
