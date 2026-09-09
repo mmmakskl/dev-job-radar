@@ -13,6 +13,7 @@ fi
 
 cd "${APP_DIR}"
 settings_backup=""
+build_context=""
 if [[ -f data/admin/settings.json ]]; then
     settings_backup="$(mktemp)"
     cp data/admin/settings.json "${settings_backup}"
@@ -24,6 +25,9 @@ rollback() {
         return
     fi
     echo "ERROR: deploy failed; restoring the previous image and managed settings." >&2
+    if [[ -n "${build_context}" ]]; then
+        rm -rf "${build_context}"
+    fi
     if [[ -n "${settings_backup}" && -f "${settings_backup}" ]]; then
         mkdir -p data/admin
         cp "${settings_backup}" data/admin/settings.json
@@ -73,7 +77,17 @@ docker compose config --quiet
 
 if [[ "${SKIP_IMAGE_BUILD}" != "1" ]]; then
     echo "Building production image..."
-    docker build --pull --tag "${IMAGE_NAME}" .
+    build_context="$(mktemp -d)"
+    mkdir -p "${build_context}/web"
+    cp Dockerfile requirements.txt "${build_context}/"
+    cp -R src scripts "${build_context}/"
+    cp -R web/app web/components web/lib "${build_context}/web/"
+    cp web/package.json web/package-lock.json web/next-env.d.ts \
+        web/next.config.ts web/postcss.config.mjs web/tailwind.config.ts \
+        web/tsconfig.json "${build_context}/web/"
+    docker build --pull --tag "${IMAGE_NAME}" "${build_context}"
+    rm -rf "${build_context}"
+    build_context=""
 else
     echo "Using production image loaded by CI."
     docker image inspect "${IMAGE_NAME}" >/dev/null

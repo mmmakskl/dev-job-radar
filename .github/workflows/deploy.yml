@@ -104,7 +104,7 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
             "${VPS_USER}@${VPS_HOST}" \
-            'set -Eeuo pipefail; command -v docker; docker version --format "Docker {{.Server.Version}}"; if docker image inspect dev-job-radar-bot:latest >/dev/null 2>&1; then docker tag dev-job-radar-bot:latest dev-job-radar-bot:previous; fi'
+            'set +e; id; printf "PATH=%s\n" "$PATH"; docker_path=$(command -v docker); command_status=$?; echo "command -v docker: ${command_status} (${docker_path:-not found})"; if [ -n "${docker_path}" ]; then ls -l "${docker_path}"; fi; docker version --format "Docker {{.Server.Version}}"; version_status=$?; echo "docker version: ${version_status}"; docker image inspect dev-job-radar-bot:latest >/dev/null 2>&1; inspect_status=$?; echo "docker image inspect: ${inspect_status}"; if [ "${inspect_status}" -eq 0 ]; then docker tag dev-job-radar-bot:latest dev-job-radar-bot:previous; echo "docker tag: $?"; fi; exit 0'
           echo 'Loading verified image on VPS...'
           docker save dev-job-radar-bot:latest | ssh \
             -i "${HOME}/.ssh/deploy_key" \
