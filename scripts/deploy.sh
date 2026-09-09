@@ -30,7 +30,11 @@ rollback() {
     fi
     if docker image inspect "${PREVIOUS_IMAGE}" >/dev/null 2>&1; then
         docker tag "${PREVIOUS_IMAGE}" "${IMAGE_NAME}"
-        docker compose up -d --remove-orphans || true
+        if ! docker compose up -d --no-build --remove-orphans; then
+            echo "ERROR: rollback could not restart the previous image." >&2
+            docker compose ps -a || true
+            docker compose logs --tail=100 bot admin || true
+        fi
     fi
     exit "${exit_code}"
 }
@@ -63,14 +67,19 @@ docker compose config --quiet
 
 if [[ "${SKIP_IMAGE_BUILD}" != "1" ]]; then
     echo "Building production image..."
-    docker compose build --pull
+    docker build --pull --tag "${IMAGE_NAME}" .
 else
     echo "Using production image loaded by CI."
     docker image inspect "${IMAGE_NAME}" >/dev/null
 fi
 
 echo "Starting bot service..."
-docker compose up -d --remove-orphans
+if ! docker compose up -d --no-build --remove-orphans; then
+    echo "ERROR: Docker Compose could not start the services." >&2
+    docker compose ps -a || true
+    docker compose logs --tail=100 bot admin || true
+    exit 1
+fi
 
 container_id=""
 for _ in {1..15}; do

@@ -713,7 +713,7 @@ sudo install -o 10001 -g 10001 -m 0400 \
 ```bash
 cd /home/deploy/apps/dev-job-radar
 docker compose config --quiet
-docker compose build
+docker build --tag dev-job-radar-bot:latest .
 docker compose run --rm bot python scripts/auth.py
 ```
 
@@ -741,8 +741,8 @@ sudo install -o 10001 -g 10001 -m 0600 \
 ```bash
 cd /home/deploy/apps/dev-job-radar
 docker compose config --quiet
-docker compose build
-docker compose up -d --remove-orphans
+docker build --tag dev-job-radar-bot:latest .
+docker compose up -d --no-build --remove-orphans
 docker compose ps
 docker compose logs --tail=100 bot
 ```
@@ -769,9 +769,12 @@ cd /home/deploy/apps/dev-job-radar
 bash scripts/deploy.sh
 ```
 
-Обычный production deploy получает уже собранный image из GitHub Actions через
-SSH и поэтому не зависит от Docker Hub на VPS. Локальный ручной `deploy.sh`
-может собрать image сам, но для этого ему нужен доступ к registry.
+Скрипт собирает один production image перед запуском Compose, поэтому
+`npm ci` и `pip install` не выполняются отдельно для `bot` и `admin`. Не
+запускайте перед ним `docker builder prune`: это удаляет кэш слоёв и превращает
+следующую сборку в долгую полную пересборку. Обычный production deploy получает
+уже собранный image из GitHub Actions через SSH и запускает Compose с
+`SKIP_IMAGE_BUILD=1`.
 
 `docker compose down` не удаляет bind-mounted `data`. Никогда не
 используйте `down -v` и не удаляйте каталог `data`: там находятся
