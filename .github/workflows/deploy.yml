@@ -96,6 +96,7 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           set -Eeuo pipefail
+          echo 'Checking Docker access on VPS...'
           ssh \
             -i "${HOME}/.ssh/deploy_key" \
             -o BatchMode=yes \
@@ -104,6 +105,7 @@ jobs:
             -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
             "${VPS_USER}@${VPS_HOST}" \
             'docker image inspect dev-job-radar-bot:latest >/dev/null 2>&1 && docker tag dev-job-radar-bot:latest dev-job-radar-bot:previous || true'
+          echo 'Loading verified image on VPS...'
           docker save dev-job-radar-bot:latest | ssh \
             -i "${HOME}/.ssh/deploy_key" \
             -o BatchMode=yes \
@@ -111,6 +113,7 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
             "${VPS_USER}@${VPS_HOST}" 'docker load'
+          echo 'Running VPS deployment script...'
           ssh \
             -i "${HOME}/.ssh/deploy_key" \
             -o BatchMode=yes \
@@ -118,4 +121,4 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
             "${VPS_USER}@${VPS_HOST}" \
-            'cd /home/deploy/apps/dev-job-radar && SKIP_IMAGE_BUILD=1 bash scripts/deploy.sh'
+            'cd /home/deploy/apps/dev-job-radar && test -r scripts/deploy.sh && command -v bash >/dev/null && SKIP_IMAGE_BUILD=1 bash -x scripts/deploy.sh'
