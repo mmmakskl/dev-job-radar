@@ -21,6 +21,9 @@ from tg_vacancy_bot.storage.sheets import (
     get_existing_links,
 )
 from tg_vacancy_bot.storage.vacancy_groups import VacancyGroupStore
+from tg_vacancy_bot.telegram.bot_api import TelegramBotApi
+from tg_vacancy_bot.telegram.candidate_notifier import CandidateVacancyNotifier
+from tg_vacancy_bot.telegram.candidate_store import CandidateStore
 from tg_vacancy_bot.telegram.links import (
     get_message_channel_name,
     get_message_link,
@@ -37,7 +40,13 @@ client = TelegramClient(config.SESSION_NAME, config.API_ID, config.API_HASH)
 
 
 def build_history_notifier():
-    """History never publishes legacy vacancy messages or new channel cards."""
+    """Create the same interactive channel publisher used by live mode."""
+    if config.CANDIDATE_BOT_ENABLED:
+        return CandidateVacancyNotifier(
+            TelegramBotApi(config.CANDIDATE_BOT_TOKEN),
+            CandidateStore(config.CANDIDATE_BOT_DB_PATH),
+            config.CANDIDATE_BOT_CHANNEL,
+        )
     return None
 
 
