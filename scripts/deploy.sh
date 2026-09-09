@@ -62,6 +62,12 @@ mkdir -p data
 
 git pull --ff-only origin master
 
+mkdir -p data
+if [[ ! -d data ]]; then
+    echo "ERROR: ${APP_DIR}/data is not a directory" >&2
+    exit 1
+fi
+
 echo "Validating Docker Compose configuration..."
 docker compose config --quiet
 
