@@ -79,7 +79,7 @@ GOOGLE_SHEET_SHORT_TITLE = (
 )
 
 # Список каналов для мониторинга
-_raw_channels = os.getenv('TARGET_CHANNELS', 'devs_it,job_for_programmers').split(',')
+_raw_channels = os.getenv('TARGET_CHANNELS', 'devs_it,progjob').split(',')
 TARGET_CHANNELS = []
 for ch in _raw_channels:
     ch = ch.strip()
