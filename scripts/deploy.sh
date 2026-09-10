@@ -102,7 +102,7 @@ fi
 
 # Read as the image UID; deploy cannot traverse secrets/ with mode 0700.
 # This process does not open the Telegram session or call external APIs.
-docker compose run --rm --no-deps --no-build bot python -c '
+docker compose run --rm --no-deps bot python -c '
 import os
 from pathlib import Path
 from tg_vacancy_bot import config
