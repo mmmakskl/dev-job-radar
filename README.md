@@ -420,22 +420,33 @@ ADMIN_STATIC_DIR="$PWD/web/out" PYTHONPATH=src \
 ```
 
 Откройте `http://127.0.0.1:8000`. `ADMIN_COOKIE_SECURE=false` допустим только
-для localhost или SSH-туннеля. Для HTTPS он должен быть `true`.
+для localhost или SSH-туннеля. Для публичного HTTPS-домена он должен быть `true`.
 
 ### Панель на текущем VPS
 
-Compose запускает `admin` только на `127.0.0.1:8080`: панель не открыта в
-интернет. Доступ с рабочего компьютера:
+Compose запускает `admin` на `127.0.0.1:8080`, а сервис `proxy` на Caddy
+публикует панель через HTTPS-домен `go-radar-maksim.duckdns.org`. Caddy
+сам получает и обновляет сертификат Let's Encrypt. DNS A-запись домена должна
+указывать на VPS, а TCP/80 и TCP/443 должны быть разрешены в firewall.
+
+Проверка публичного доступа и логи:
+
+```bash
+curl -fsS https://go-radar-maksim.duckdns.org/healthz
+docker compose logs --tail=100 proxy
+docker compose logs --tail=100 admin
+docker compose logs --tail=100 bot
+docker compose ps
+```
+
+Временный доступ через SSH-туннель:
 
 ```bash
 ssh -i ~/.ssh/dev-job-radar-vps -L 8080:127.0.0.1:8080 deploy@95.85.250.171
 ```
 
 После этого откройте `http://127.0.0.1:8080`. SSH-туннель шифрует соединение.
-На сервере уже занят порт 443 VPN-службой, поэтому не устанавливайте Nginx или
-Caddy поверх него. Когда появятся выделенный DNS-домен и согласованный маршрут
-HTTPS, используйте [пример Nginx](deploy/nginx/go-radar-admin.conf.example) и
-задайте `ADMIN_COOKIE_SECURE=true`.
+Конфигурация Caddy находится в [`deploy/caddy/Caddyfile`](deploy/caddy/Caddyfile).
 
 После входа доступны прямые private-ссылки: `/` (дашборд), `/sources`,
 `/settings`, `/prompt`, `/logs` и `/errors`. Фильтры логов сохраняются в URL,
