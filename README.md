@@ -530,9 +530,18 @@ Mistral или Google Sheets. Один раз для него нужен browser
 `master` проходит Python и frontend проверки в GitHub Actions. Workflow собирает
 образ на GitHub runner и передаёт его по SSH в `docker load`; это исключает
 зависимость VPS от Docker Hub. Перед загрузкой предыдущий image получает тег
-`dev-job-radar-bot:previous`. Скрипт деплоя сохраняет managed settings,
-проверяет bot и `/healthz` admin-сервиса, а при неуспехе возвращает предыдущий
-image и settings.
+`dev-job-radar-bot:previous`. Скрипт деплоя проверяет свежий heartbeat бота после запуска контейнера,
+`/healthz` и настроенную авторизацию admin. Heartbeat `running` появляется после
+чтения Google Sheets и авторизации Telegram; сохранённый до restart heartbeat
+не считается готовностью. При ошибке после запуска сервисов скрипт возвращает
+предыдущий image. Production settings, `.env`, session и данные он не восстанавливает
+из старых копий и не перезаписывает. При `monitoring_enabled=false` проверка live
+готовности не проходит: включение мониторинга требует решения владельца.
+
+CI собирает `linux/amd64`, маркирует image SHA коммита и передаёт
+`DEPLOY_REVISION` скрипту. Checkout и метка загруженного image должны совпасть;
+новый push в `master` не подменяет исходники текущего релиза. SSH preflight
+останавливает workflow при ошибке и требует `VPS_USER=deploy`.
 
 Нужные GitHub Secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`,
 `VPS_KNOWN_HOSTS`. Production `.env` остаётся только на VPS и дополнительно
@@ -594,8 +603,8 @@ Telegram session или любые API keys: эти файлы остаются 
 
 ## Production deployment
 
-Production использует один Docker Compose service `bot` без опубликованных
-портов. Контейнер работает не от root, автоматически перезапускается политикой
+Production запускает `bot` без опубликованных портов и `admin` на
+`127.0.0.1:8080`. Optional `candidate-bot` включается профилем `candidate`. Контейнер работает не от root, автоматически перезапускается политикой
 `unless-stopped` и получает SIGTERM напрямую. Постоянные файлы находятся
 в `/app/data` и bind-mounted из `./data` на VPS. Google credential
 монтируется отдельно и read-only.
@@ -713,7 +722,7 @@ sudo install -o 10001 -g 10001 -m 0400 \
 ```bash
 cd /home/deploy/apps/dev-job-radar
 docker compose config --quiet
-docker build --tag dev-job-radar-bot:latest .
+# Image заранее собран на Mac/CI и загружен через docker load.
 docker compose run --rm bot python scripts/auth.py
 ```
 
@@ -738,11 +747,26 @@ sudo install -o 10001 -g 10001 -m 0600 \
 
 ### Первый ручной запуск
 
+Соберите image на доверенной машине из проверенного checkout (на Mac явно
+укажите архитектуру VPS), затем загрузите его без сборки на сервере:
+
+```bash
+docker build --platform linux/amd64 --tag dev-job-radar-bot:latest .
+docker image inspect dev-job-radar-bot:latest --format '{{.Os}}/{{.Architecture}}'
+# Сначала отдельно проверьте SSH и существующий доверенный host key.
+ssh -i ~/.ssh/dev-job-radar-vps -o IdentitiesOnly=yes \
+  -o StrictHostKeyChecking=yes deploy@<VPS_HOST> \
+  'if docker image inspect dev-job-radar-bot:latest >/dev/null 2>&1; then docker tag dev-job-radar-bot:latest dev-job-radar-bot:previous; fi'
+set -o pipefail
+docker save dev-job-radar-bot:latest | ssh -i ~/.ssh/dev-job-radar-vps \
+  -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes deploy@<VPS_HOST> 'docker load'
+```
+
+
 ```bash
 cd /home/deploy/apps/dev-job-radar
 docker compose config --quiet
-docker build --tag dev-job-radar-bot:latest .
-docker compose up -d --no-build --remove-orphans
+SKIP_IMAGE_BUILD=1 bash scripts/deploy.sh
 docker compose ps
 docker compose logs --tail=100 bot
 ```
@@ -766,7 +790,7 @@ GitHub Actions:
 
 ```bash
 cd /home/deploy/apps/dev-job-radar
-bash scripts/deploy.sh
+SKIP_IMAGE_BUILD=1 bash scripts/deploy.sh
 ```
 
 Скрипт собирает один production image перед запуском Compose, поэтому
@@ -796,9 +820,9 @@ ssh-copy-id -i ~/.ssh/github-actions-dev-job-radar.pub deploy@<VPS_HOST>
 GitHub Secret `VPS_SSH_KEY`. Удобнее сделать это без печати:
 
 ```bash
-gh secret set VPS_SSH_KEY < ~/.ssh/github-actions-dev-job-radar
-gh secret set VPS_HOST
-gh secret set VPS_USER
+gh secret set VPS_SSH_KEY --env production < ~/.ssh/github-actions-dev-job-radar
+gh secret set VPS_HOST --env production
+gh secret set VPS_USER --env production
 ```
 
 Для `VPS_USER` используйте `deploy`. IP/hostname хранится только в
@@ -823,7 +847,7 @@ ssh-keygen -lf /tmp/dev-job-radar-known-hosts
 совпадении добавьте файл в Secret:
 
 ```bash
-gh secret set VPS_KNOWN_HOSTS < /tmp/dev-job-radar-known-hosts
+gh secret set VPS_KNOWN_HOSTS --env production < /tmp/dev-job-radar-known-hosts
 ```
 
 Итого workflow использует четыре Secrets:

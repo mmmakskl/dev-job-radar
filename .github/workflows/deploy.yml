@@ -62,7 +62,7 @@ jobs:
           npm --prefix web run test:e2e
 
       - name: Build deploy image
-        run: docker build --tag dev-job-radar-bot:latest .
+        run: docker build --platform linux/amd64 --label org.opencontainers.image.revision="${GITHUB_SHA}" --tag dev-job-radar-bot:latest .
 
   deploy:
     needs: checks
@@ -76,7 +76,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build verified deploy image
-        run: docker build --tag dev-job-radar-bot:latest .
+        run: docker build --platform linux/amd64 --label org.opencontainers.image.revision="${GITHUB_SHA}" --tag dev-job-radar-bot:latest .
 
       - name: Configure SSH
         env:
@@ -96,6 +96,10 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           set -Eeuo pipefail
+          [[ -n "${VPS_HOST}" && "${VPS_USER}" == "deploy" ]] || {
+            echo 'ERROR: VPS_HOST is required and VPS_USER must be deploy' >&2
+            exit 1
+          }
           echo 'Checking Docker access on VPS...'
           ssh \
             -i "${HOME}/.ssh/deploy_key" \
@@ -104,7 +108,7 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
             "${VPS_USER}@${VPS_HOST}" \
-            'set +e; id; printf "PATH=%s\n" "$PATH"; docker_path=$(command -v docker); command_status=$?; echo "command -v docker: ${command_status} (${docker_path:-not found})"; if [ -n "${docker_path}" ]; then ls -l "${docker_path}"; fi; docker version --format "Docker {{.Server.Version}}"; version_status=$?; echo "docker version: ${version_status}"; docker image inspect dev-job-radar-bot:latest >/dev/null 2>&1; inspect_status=$?; echo "docker image inspect: ${inspect_status}"; if [ "${inspect_status}" -eq 0 ]; then docker tag dev-job-radar-bot:latest dev-job-radar-bot:previous; echo "docker tag: $?"; fi; exit 0'
+            'set -eu; test "$(id -un)" = deploy; docker version --format "Docker {{.Server.Version}}"; docker compose version; if docker image inspect dev-job-radar-bot:latest >/dev/null 2>&1; then docker tag dev-job-radar-bot:latest dev-job-radar-bot:previous; fi'
           echo 'Loading verified image on VPS...'
           docker save dev-job-radar-bot:latest | ssh \
             -i "${HOME}/.ssh/deploy_key" \
@@ -121,4 +125,4 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
             "${VPS_USER}@${VPS_HOST}" \
-            'cd /home/deploy/apps/dev-job-radar && test -r scripts/deploy.sh && command -v bash >/dev/null && SKIP_IMAGE_BUILD=1 bash -x scripts/deploy.sh'
+            'cd /home/deploy/apps/dev-job-radar && git fetch origin master && git merge --ff-only ${{ github.sha }} && test -r scripts/deploy.sh && command -v bash >/dev/null && SKIP_IMAGE_BUILD=1 DEPLOY_REVISION=${{ github.sha }} bash scripts/deploy.sh'

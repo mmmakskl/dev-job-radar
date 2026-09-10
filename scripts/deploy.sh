@@ -4,6 +4,7 @@ set -Eeuo pipefail
 readonly APP_DIR="/home/deploy/apps/dev-job-radar"
 readonly IMAGE_NAME="dev-job-radar-bot:latest"
 readonly PREVIOUS_IMAGE="dev-job-radar-bot:previous"
+readonly DEPLOY_REVISION="${DEPLOY_REVISION:-}"
 readonly SKIP_IMAGE_BUILD="${SKIP_IMAGE_BUILD:-0}"
 
 if [[ ! -d "${APP_DIR}/.git" ]]; then
@@ -12,27 +13,20 @@ if [[ ! -d "${APP_DIR}/.git" ]]; then
 fi
 
 cd "${APP_DIR}"
-settings_backup=""
 build_context=""
-if [[ -f data/admin/settings.json ]]; then
-    settings_backup="$(mktemp)"
-    cp data/admin/settings.json "${settings_backup}"
-fi
+services_changed=0
 
 rollback() {
     local exit_code=$?
     if [[ ${exit_code} -eq 0 ]]; then
         return
     fi
-    echo "ERROR: deploy failed; restoring the previous image and managed settings." >&2
+    echo "ERROR: deploy failed; restoring the previous image if services were changed." >&2
     if [[ -n "${build_context}" ]]; then
         rm -rf "${build_context}"
     fi
-    if [[ -n "${settings_backup}" && -f "${settings_backup}" ]]; then
-        mkdir -p data/admin
-        cp "${settings_backup}" data/admin/settings.json
-    fi
-    if docker image inspect "${PREVIOUS_IMAGE}" >/dev/null 2>&1; then
+    if [[ "${services_changed}" == "1" ]] \
+        && docker image inspect "${PREVIOUS_IMAGE}" >/dev/null 2>&1; then
         docker tag "${PREVIOUS_IMAGE}" "${IMAGE_NAME}"
         if ! docker compose up -d --no-build --remove-orphans; then
             echo "ERROR: rollback could not restart the previous image." >&2
@@ -57,14 +51,20 @@ if [[ ! -f .env ]]; then
     exit 1
 fi
 
-if [[ ! -f secrets/google-credentials.json ]]; then
-    echo "ERROR: secrets/google-credentials.json is missing" >&2
-    exit 1
+if [[ -n "${DEPLOY_REVISION}" ]]; then
+    [[ "${DEPLOY_REVISION}" =~ ^[0-9a-f]{40}$ ]] || {
+        echo "ERROR: DEPLOY_REVISION must be a full commit SHA" >&2
+        exit 1
+    }
+    git merge-base --is-ancestor "${DEPLOY_REVISION}" origin/master
+    git merge --ff-only "${DEPLOY_REVISION}"
+    [[ "$(git rev-parse HEAD)" == "${DEPLOY_REVISION}" ]] || {
+        echo "ERROR: checkout does not match requested image revision" >&2
+        exit 1
+    }
+else
+    git pull --ff-only origin master
 fi
-
-mkdir -p data
-
-git pull --ff-only origin master
 
 mkdir -p data
 if [[ ! -d data ]]; then
@@ -91,9 +91,35 @@ if [[ "${SKIP_IMAGE_BUILD}" != "1" ]]; then
 else
     echo "Using production image loaded by CI."
     docker image inspect "${IMAGE_NAME}" >/dev/null
+    if [[ -n "${DEPLOY_REVISION}" ]]; then
+        image_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${IMAGE_NAME}")"
+        [[ "${image_revision}" == "${DEPLOY_REVISION}" ]] || {
+            echo "ERROR: loaded image revision does not match checkout" >&2
+            exit 1
+        }
+    fi
 fi
 
+# Read as the image UID; deploy cannot traverse secrets/ with mode 0700.
+# This process does not open the Telegram session or call external APIs.
+docker compose run --rm --no-deps --no-build bot python -c '
+import os
+from pathlib import Path
+from tg_vacancy_bot import config
+config.validate_required_settings()
+assert Path(config.GOOGLE_CREDENTIALS_PATH).is_file(), "Google credentials missing"
+with open(config.GOOGLE_CREDENTIALS_PATH, "rb") as credentials:
+    assert credentials.read(1), "Google credentials empty"
+assert os.getenv("ADMIN_PASSWORD"), "ADMIN_PASSWORD missing"
+assert os.getenv("ADMIN_SESSION_SECRET"), "ADMIN_SESSION_SECRET missing"
+session = Path(config.SESSION_NAME)
+if session.suffix != ".session":
+    session = Path(str(session) + ".session")
+assert session.is_file(), "Telegram session missing; authorize before deploy"
+'
+
 echo "Starting bot service..."
+services_changed=1
 if ! docker compose up -d --no-build --remove-orphans; then
     echo "ERROR: Docker Compose could not start the services." >&2
     docker compose ps -a || true
@@ -146,6 +172,23 @@ if [[ -z "${admin_id:-}" ]] \
     exit 1
 fi
 
+echo "Checking live bot readiness after Telegram and Google Sheets startup..."
+ready=0
+for _ in {1..90}; do
+    started_at="$(docker inspect --format '{{.State.StartedAt}}' "${container_id}")"
+    if docker compose exec -T bot python -m tg_vacancy_bot.deploy_health "${started_at}"; then
+        ready=1
+        break
+    fi
+    sleep 2
+done
+if [[ "${ready}" != "1" ]]; then
+    echo "ERROR: no fresh running heartbeat from bot" >&2
+    exit 1
+fi
+
+docker compose exec -T admin python -c 'import json; from urllib.request import urlopen; assert json.load(urlopen("http://127.0.0.1:8080/api/v1/auth/status"))["configured"], "Admin authentication is not configured"'
+
 echo "Deployment status:"
 docker compose ps bot
 docker compose ps admin
@@ -155,4 +198,3 @@ docker image prune --force
 
 echo "Deployment completed."
 trap - EXIT
-[[ -z "${settings_backup}" ]] || rm -f "${settings_backup}"
