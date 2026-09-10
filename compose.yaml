@@ -54,14 +54,11 @@ services:
         max-file: "3"
   proxy:
     image: caddy:2-alpine
+    network_mode: host
     restart: unless-stopped
     depends_on:
       admin:
         condition: service_healthy
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
     volumes:
       - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
