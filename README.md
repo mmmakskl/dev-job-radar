@@ -47,6 +47,7 @@ cp .env.example .env
 API_ID=12345678
 API_HASH=your_telegram_api_hash
 SESSION_NAME=my_account
+# Optional only for the first migration:
 TARGET_CHANNELS=channel_username,-1001234567890
 TELEGRAM_CHANNELS_FOLDER=Вакансии
 MISTRAL_API_KEY=your_mistral_api_key
@@ -61,7 +62,6 @@ LIVE_QUEUE_MAXSIZE=1000
 LIVE_WORKERS=1
 TELEGRAM_NOTIFY_ENABLED=false
 TELEGRAM_NOTIFY_TARGET=@my_channel
-TELEGRAM_NOTIFY_HISTORY=false
 CANDIDATE_BOT_ENABLED=false
 CANDIDATE_BOT_TOKEN=
 CANDIDATE_BOT_CHANNEL=@my_beta_vacancies_channel
@@ -114,7 +114,7 @@ make candidate-bot # личный Bot API интерфейс кандидата 
 make history   # обработать сообщения за последнюю неделю
 make discover  # найти каналы среди текущих Telegram dialogs
 make channels  # alias для make discover
-make sync-channels # добавить чаты из Telegram-папки в TARGET_CHANNELS
+make sync-channels # синхронизировать Telegram-папку с persistent SQLite
 make compile   # проверить синтаксис без обращения к внешним API
 make test      # запустить изолированные pytest-тесты
 make check     # выполнить compile и test
@@ -148,32 +148,28 @@ Discovery по умолчанию ищет каналы и группы, в на
 PYTHONPATH=src venv/bin/python scripts/discover_channels.py --query "Ханти"
 ```
 
-Скрипт печатает `username` или числовой `id`, который можно добавить в
-`TARGET_CHANNELS`, и сохраняет найденные диалоги в
-`DATA_DIR/found_channels.json` (`data/found_channels.json` локально).
+Скрипт сохраняет найденные диалоги в `DATA_DIR/found_channels.json` и
+идемпотентно upsert-ит их metadata в `data/admin/admin.sqlite3`. Найденные
+источники сразу включаются.
 
 ### Автоматическое добавление источников из Telegram-папки
 
 Создайте в Telegram папку **«Вакансии»** и добавляйте в неё каналы и группы,
-которые нужно мониторить. `make sync-channels` читает эту папку и атомарно
-добавляет отсутствующие чаты в `TARGET_CHANNELS` в `.env`. Новые источники
-записываются как числовые Telegram ID: это не зависит от последующего
-переименования или смены `@username`. Уже настроенные источники не удаляются.
+которые нужно мониторить. `make sync-channels` полностью читает папку и затем
+одной SQLite-транзакцией обновляет origin `folder`. Numeric Telegram ID остаётся
+стабильной identity, а title/username обновляются как metadata. Удаление чата из
+папки снимает только folder origin и не затрагивает ручной/discovery origin.
 
-Название папки задаёт `TELEGRAM_CHANNELS_FOLDER` (по умолчанию `Вакансии`):
-
-```bash
-TELEGRAM_CHANNELS_FOLDER="Go вакансии" make sync-channels
-```
+Название папки задаётся в панели управления (по умолчанию `Вакансии`).
 
 Скрипт должен быть единственным процессом, использующим этот `SESSION_NAME`:
-перед локальным запуском остановите `make run`. После изменения `.env`
-перезапустите live-бот, чтобы Telethon начал слушать добавленные чаты.
+перед локальным запуском остановите `make run`. Действие из панели выполняется
+самим live bot и не открывает конкурирующую session.
 
 На Docker-стенде используйте `scripts/sync_channels_on_stand.sh`, а не
 `docker compose run` вручную. Скрипт корректно останавливает bot, освобождает
 Telegram session, запускает синхронизацию в одноразовом контейнере, обновляет
-host `.env` и пересоздаёт bot с новой конфигурацией. При любой ошибке trap
+persistent SQLite и запускает bot с новой конфигурацией. При любой ошибке trap
 запускает bot обратно:
 
 ```bash
@@ -335,7 +331,7 @@ src/
   tg_vacancy_bot/
     __init__.py
     config.py                 # загрузка настроек
-    channel_sync.py           # сравнение папки Telegram и TARGET_CHANNELS
+    channel_sync.py           # полное чтение Telegram-папки для SQLite sync
     logging_config.py         # настройка логирования
     models.py                 # модель и нормализация вакансии
     pipeline/
@@ -369,7 +365,7 @@ scripts/
   parse_history.py            # обработка истории за семь дней
   auth.py                     # Telegram-авторизация по QR-коду
   discover_channels.py        # поиск каналов по ключевым словам
-  sync_channels.py            # разовое обновление .env из Telegram-папки
+  sync_channels.py            # transactional sync Telegram-папки в SQLite
   sync_channels_on_stand.sh   # безопасная синхронизация на Docker-стенде
 deploy/
   systemd/                    # timer для периодической синхронизации на VPS
@@ -390,7 +386,7 @@ data/
 Панель позволяет управлять не секретными настройками без ручного редактирования
 `.env`: источниками из Telegram-папки, включением мониторинга и уведомлений,
 окном history, ключевыми словами, дедупликацией, параметрами Mistral и
-названиями листов. Изменение сохраняется в `data/admin/settings.json` с
+названиями листов. Изменение сохраняется в `data/admin/admin.sqlite3` с
 версионностью. Все значения, которые читает live-процесс при старте (включая
 источники, мониторинг, retention и алерты), применяются после явного действия
 **Перезапуск**. Это необходимо, поскольку Telethon handler формируется при
@@ -432,9 +428,11 @@ DNS A-запись домена должна указывать на VPS, а TCP
 должны быть разрешены в firewall.
 
 Production deploy запускает основной bot, admin/proxy и профиль `candidate`,
-а затем проверяет, что `candidate-bot` действительно находится в состоянии running.
-Если отправка карточки через Bot API временно завершается ошибкой, delivery claim
-возвращается в `pending`, поэтому карточку можно безопасно отправить повторно.
+а затем ждёт свежий heartbeat `candidate-bot`, созданный текущим
+экземпляром контейнера.
+Ошибка Bot API возвращает `false` и освобождает delivery claim. При network timeout
+результат может быть неоднозначным, поэтому перед ручным повтором нужна
+сверка с Telegram-каналом.
 
 Проверка публичного доступа и логи:
 
@@ -461,9 +459,10 @@ ssh -i ~/.ssh/dev-job-radar-vps -L 8080:127.0.0.1:8080 deploy@95.85.250.171
 
 ### Действия панели
 
-- **Сохранить настройки** — валидирует и атомарно обновляет managed JSON;
-- **Синхронизировать** — bot освобождает session, читает Telegram-папку и
-  сохраняет её состав в persistent settings;
+- **Сохранить настройки** — валидирует revision и атомарно обновляет SQLite;
+- **Синхронизировать** — live bot через свою Telethon session целиком
+  читает Telegram-папку, транзакционно обновляет SQLite и
+  перезапускает listener;
 - **История** — временно заменяет live-процесс history-задачей, после её
   завершения Compose снова поднимает live-bot;
 - **Перезапуск**, **История** и **Синхронизировать** требуют видимого
@@ -516,10 +515,10 @@ cooldown; после нормализации приходит одно восс
 публичные `@username` либо `t.me/username`: сервер нормализует формат,
 отклоняет закрытые/invite-ссылки и дубликаты, затем через текущую Telegram
 session проверяет, что username доступен и относится к каналу или группе. Если
-проверка не выполнилась, источник не сохраняется. Источник можно выключить; удалить
-можно только тот, который был добавлен через UI. `.env`, Telegram-папка и
-legacy `additional_channels` сохраняют приоритет как входные источники и не
-удаляются из браузера. Любое изменение подписки начинает работать после
+проверка не выполнилась, источник остаётся в SQLite как выключенный `invalid`,
+чтобы ошибка была видна и проверку можно было повторить. Удалить можно только origin
+`admin`; folder/discovery/legacy origins не удаляются из браузера. `.env` участвует
+в импорте каналов только при первой миграции. Любое изменение подписки начинает работать после
 подтверждённого **Перезапуска** — это ограничение Telethon handler.
 
 В **LLM-инструкции** редактируется текст извлечения вакансии (20–12000

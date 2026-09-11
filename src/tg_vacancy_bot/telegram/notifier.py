@@ -7,7 +7,6 @@ from typing import Any
 
 from tg_vacancy_bot.models import NOT_SPECIFIED, VacancyAnalysis
 
-
 MAX_MESSAGE_LENGTH = 3500
 MAX_SUMMARY_LENGTH = 700
 
@@ -148,6 +147,6 @@ async def send_vacancy_notification(
             link_preview=False,
         )
     except Exception:
-        logging.exception("Не удалось отправить Telegram-уведомление: %s", vacancy_id)
+        logging.exception("Не удалось отправить Telegram-уведомление")
         return False
     return True

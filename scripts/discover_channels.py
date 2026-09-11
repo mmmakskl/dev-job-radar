@@ -6,6 +6,7 @@ from pathlib import Path
 from telethon import TelegramClient
 
 from tg_vacancy_bot import config
+from tg_vacancy_bot.admin.settings import SettingsStore
 
 # Ключевые слова для фильтрации каналов
 KEYWORDS = [
@@ -69,6 +70,7 @@ async def fetch_channels(queries: list[str], show_all: bool, output: str | None)
     config.validate_required_settings(
         require_mistral=False,
         require_google_sheets=False,
+        require_sources=False,
     )
     client = TelegramClient(config.SESSION_NAME, config.API_ID, config.API_HASH)
 
@@ -83,6 +85,7 @@ async def fetch_channels(queries: list[str], show_all: bool, output: str | None)
     print(f"✓ Подключено к Telegram как: {await client.get_me()}")
 
     found_channels = []
+    store = SettingsStore(config.DATA_DIR)
 
     print("\nСканируем диалоги...")
     async for dialog in client.iter_dialogs():
@@ -102,11 +105,17 @@ async def fetch_channels(queries: list[str], show_all: bool, output: str | None)
             "id": dialog.id,
         }
         found_channels.append(channel_info)
-        identifier = channel_info['username'] or channel_info['id']
+        store.upsert_source(
+            channel_info['id'],
+            username=channel_info['username'],
+            title=channel_info['name'],
+            chat_type='group' if dialog.is_group else 'channel',
+            origin='discovery',
+            verification_status='verified',
+        )
         print(
             f"  ✓ Найден: {dialog.name} "
-            f"(@{channel_info['username'] or 'закрытый'}, id={channel_info['id']}) "
-            f"-> TARGET_CHANNELS: {identifier}"
+            f"(@{channel_info['username'] or 'закрытый'}) -> admin SQLite"
         )
 
     # Сохраняем в файл

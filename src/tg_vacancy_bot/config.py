@@ -5,7 +5,7 @@
 import os
 from dotenv import load_dotenv
 
-from tg_vacancy_bot.admin.settings import load_runtime_settings
+from tg_vacancy_bot.admin.settings import SettingsStore, load_runtime_settings
 from tg_vacancy_bot.llm.prompts import build_system_prompt
 from tg_vacancy_bot.paths import (
     resolve_candidate_bot_db_path,
@@ -78,33 +78,11 @@ GOOGLE_SHEET_SHORT_TITLE = (
     else os.getenv('GOOGLE_SHEET_SHORT_TITLE', 'Вакансии — кратко')
 )
 
-# Список каналов для мониторинга
-_raw_channels = os.getenv('TARGET_CHANNELS', 'devs_it,progjob').split(',')
-TARGET_CHANNELS = []
-for ch in _raw_channels:
-    ch = ch.strip()
-    if ch:
-        if ch.isdigit() or (ch.startswith('-') and ch[1:].isdigit()):
-            TARGET_CHANNELS.append(int(ch))
-        else:
-            TARGET_CHANNELS.append(ch)
-for channel in _MANAGED.telegram.additional_channels if _MANAGED else []:
-    if channel not in TARGET_CHANNELS:
-        TARGET_CHANNELS.append(channel)
-for source in _MANAGED.telegram.managed_sources if _MANAGED else []:
-    if source.enabled and source.identifier not in TARGET_CHANNELS:
-        TARGET_CHANNELS.append(source.identifier)
-for channel in _MANAGED.telegram.folder_channels if _MANAGED else []:
-    parsed_channel = parse_telegram_target(channel)
-    if parsed_channel not in TARGET_CHANNELS:
-        TARGET_CHANNELS.append(parsed_channel)
-TARGET_CHANNELS = [
-    channel
-    for channel in TARGET_CHANNELS
-    if str(channel) not in (_MANAGED.telegram.disabled_channels if _MANAGED else [])
-]
+# TARGET_CHANNELS is a one-time migration input. SQLite is the live source of
+# truth after the control plane has initialized.
+TARGET_CHANNELS = SettingsStore(DATA_DIR).active_targets()
 
-# Название папки Telegram, чьи чаты автоматически добавляются в TARGET_CHANNELS.
+# Название папки Telegram, чьи чаты синхронизируются с admin SQLite.
 TELEGRAM_CHANNELS_FOLDER = (
     _MANAGED.telegram.folder_name
     if _MANAGED
@@ -147,7 +125,6 @@ TELEGRAM_NOTIFY_ENABLED = (
 TELEGRAM_NOTIFY_TARGET = parse_telegram_target(
     _MANAGED.telegram.notify_target if _MANAGED else os.getenv('TELEGRAM_NOTIFY_TARGET')
 )
-TELEGRAM_NOTIFY_HISTORY = parse_bool_env(os.getenv('TELEGRAM_NOTIFY_HISTORY'))
 
 # The Bot API integration is intentionally independent from the Telethon
 # userbot. It is disabled by default and only stores actions for explicit beta
@@ -199,6 +176,7 @@ def validate_required_settings(
     *,
     require_mistral: bool = True,
     require_google_sheets: bool = True,
+    require_sources: bool = False,
 ) -> None:
     """Проверяет обязательные настройки, не раскрывая их значения."""
     missing = []
@@ -221,6 +199,8 @@ def validate_required_settings(
             missing.append('CANDIDATE_BOT_ALLOWED_USER_IDS')
     if VACANCY_GROUP_WINDOW_DAYS <= 0:
         missing.append('VACANCY_GROUP_WINDOW_DAYS (> 0)')
+    if require_sources and not TARGET_CHANNELS:
+        missing.append('at least one enabled Telegram source')
 
     if missing:
         names = ', '.join(missing)

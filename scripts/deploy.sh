@@ -163,9 +163,8 @@ for _ in {1..15}; do
     fi
     sleep 1
 done
-if [[ -z "${candidate_id}" ]] \
-    || [[ "$(docker inspect --format '{{.State.Running}}' "${candidate_id}" 2>/dev/null || true)" != "true" ]]; then
-    echo "ERROR: candidate-bot container is not running" >&2
+if [[ -z "${candidate_id}" ]]; then
+    echo "ERROR: candidate-bot container was not created" >&2
     docker compose --profile candidate ps -a
     docker compose --profile candidate logs --tail=100 candidate-bot || true
     exit 1
@@ -200,6 +199,21 @@ for _ in {1..90}; do
 done
 if [[ "${ready}" != "1" ]]; then
     echo "ERROR: no fresh running heartbeat from bot" >&2
+    exit 1
+fi
+
+echo "Checking candidate worker readiness..."
+candidate_ready=0
+for _ in {1..45}; do
+    if [[ "$(docker inspect --format '{{.State.Health.Status}}' "${candidate_id}" 2>/dev/null || true)" == "healthy" ]]; then
+        candidate_ready=1
+        break
+    fi
+    sleep 2
+done
+if [[ "${candidate_ready}" != "1" ]]; then
+    echo "ERROR: candidate-bot did not become healthy" >&2
+    docker compose --profile candidate logs --tail=100 candidate-bot || true
     exit 1
 fi
 

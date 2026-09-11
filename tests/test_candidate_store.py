@@ -28,12 +28,10 @@ def test_store_migrates_idempotently_and_keeps_actions_personal(tmp_path) -> Non
     assert second.list_for_user(1001, 'hidden') == []
 
     with sqlite3.connect(path) as connection:
-        action = connection.execute(
-            '''
+        action = connection.execute('''
             SELECT telegram_user_id, status, created_at, updated_at, personal_note
             FROM user_vacancy_actions ORDER BY telegram_user_id
-            '''
-        ).fetchall()
+            ''').fetchall()
     assert action[0][0:2] == (1001, 'saved')
     assert action[0][2] and action[0][3]
     assert action[0][4] is None

@@ -5,16 +5,17 @@ from __future__ import annotations
 import json
 import hashlib
 import hmac
+import fcntl
 import os
 import re
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from tg_vacancy_bot.admin.settings import admin_directory
-
 
 _SECRET_KEY_RE = re.compile(r'(token|secret|password|api[_-]?key|credential)', re.I)
 _SECRET_VALUE_RE = re.compile(
@@ -163,9 +164,7 @@ class TelemetryStore:
     def record(self, event: str, **details: Any) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)
         payload = _redact({'at': _now(), 'event': event, **details})
-        with self.operations_path.open('a', encoding='utf-8') as handle:
-            handle.write(json.dumps(payload, ensure_ascii=False, separators=(',', ':')))
-            handle.write('\n')
+        self._append_jsonl(self.operations_path, payload)
 
     def record_metric(
         self,
@@ -194,9 +193,7 @@ class TelemetryStore:
         }
         if reason:
             payload['reason'] = reason
-        with self.metrics_path.open('a', encoding='utf-8') as handle:
-            handle.write(json.dumps(payload, ensure_ascii=False, separators=(',', ':')))
-            handle.write('\n')
+        self._append_jsonl(self.metrics_path, payload)
 
     def today_metrics(self, timezone_name: str = 'Europe/Moscow') -> dict[str, Any]:
         """Count durable events for the current local calendar day."""
@@ -262,34 +259,35 @@ class TelemetryStore:
         fingerprint = hashlib.sha256(
             f'{safe_component}:{safe_summary}'.encode('utf-8')
         ).hexdigest()[:16]
-        entries = self._read_errors()
-        now = _now()
-        for entry in entries:
-            if (
-                entry.get('fingerprint') == fingerprint
-                and entry.get('status') != 'resolved'
-            ):
-                entry['status'] = 'repeating'
-                entry['count'] = int(entry.get('count', 1)) + 1
-                entry['last_seen_at'] = now
-                if safe_details:
-                    entry['details'] = safe_details
-                self._save_errors(entries)
-                return entry
-        entry = {
-            'id': fingerprint,
-            'fingerprint': fingerprint,
-            'component': safe_component,
-            'summary': safe_summary,
-            'details': safe_details or 'Технические детали безопасно недоступны.',
-            'status': 'new',
-            'count': 1,
-            'first_seen_at': now,
-            'last_seen_at': now,
-        }
-        entries.append(entry)
-        self._save_errors(entries)
-        return entry
+        with self._state_lock('errors'):
+            entries = self._read_errors()
+            now = _now()
+            for entry in entries:
+                if (
+                    entry.get('fingerprint') == fingerprint
+                    and entry.get('status') != 'resolved'
+                ):
+                    entry['status'] = 'repeating'
+                    entry['count'] = int(entry.get('count', 1)) + 1
+                    entry['last_seen_at'] = now
+                    if safe_details:
+                        entry['details'] = safe_details
+                    self._save_errors(entries)
+                    return entry
+            entry = {
+                'id': fingerprint,
+                'fingerprint': fingerprint,
+                'component': safe_component,
+                'summary': safe_summary,
+                'details': safe_details or 'Технические детали безопасно недоступны.',
+                'status': 'new',
+                'count': 1,
+                'first_seen_at': now,
+                'last_seen_at': now,
+            }
+            entries.append(entry)
+            self._save_errors(entries)
+            return entry
 
     def attention_errors(self, days: int = 7) -> list[dict[str, Any]]:
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
@@ -310,13 +308,14 @@ class TelemetryStore:
         )
 
     def resolve_error(self, error_id: str) -> dict[str, Any] | None:
-        entries = self._read_errors()
-        for entry in entries:
-            if hmac.compare_digest(str(entry.get('id', '')), error_id):
-                entry['status'] = 'resolved'
-                entry['resolved_at'] = _now()
-                self._save_errors(entries)
-                return _redact(entry)
+        with self._state_lock('errors'):
+            entries = self._read_errors()
+            for entry in entries:
+                if hmac.compare_digest(str(entry.get('id', '')), error_id):
+                    entry['status'] = 'resolved'
+                    entry['resolved_at'] = _now()
+                    self._save_errors(entries)
+                    return _redact(entry)
         return None
 
     def record_log(self, level: str, component: str, message: str) -> None:
@@ -330,9 +329,32 @@ class TelemetryStore:
             'component': self._component(component),
             'message': sanitize_text(message),
         }
-        with self.logs_path.open('a', encoding='utf-8') as handle:
-            handle.write(json.dumps(payload, ensure_ascii=False, separators=(',', ':')))
-            handle.write('\n')
+        self._append_jsonl(self.logs_path, payload)
+
+    @staticmethod
+    def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+        """Write exactly one record while holding a cross-process file lock."""
+        encoded = json.dumps(payload, ensure_ascii=False, separators=(',', ':')) + '\n'
+        lock_path = path.with_name(f'.{path.name}.lock')
+        with lock_path.open('a') as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            try:
+                with path.open('a', encoding='utf-8') as handle:
+                    handle.write(encoded)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            finally:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+    @contextmanager
+    def _state_lock(self, name: str):
+        self.directory.mkdir(parents=True, exist_ok=True)
+        with (self.directory / f'.{name}.lock').open('a') as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def read_logs(
         self,
@@ -476,23 +498,23 @@ class TelemetryStore:
         return payload if isinstance(payload, list) else []
 
     def _prune_jsonl(self, path: Path, days: int) -> int:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        entries = self._read_jsonl(path)
-        kept: list[dict[str, Any]] = []
-        for entry in entries:
-            try:
-                occurred = datetime.fromisoformat(
-                    str(entry['at']).replace('Z', '+00:00')
-                )
-            except (KeyError, TypeError, ValueError):
-                # Corrupt observability data must not be preserved indefinitely.
-                continue
-            if occurred >= cutoff:
-                kept.append(entry)
-        removed = len(entries) - len(kept)
-        if removed:
-            self._save_jsonl(path, kept)
-        return removed
+        with self._state_lock(path.name):
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+            entries = self._read_jsonl(path)
+            kept: list[dict[str, Any]] = []
+            for entry in entries:
+                try:
+                    occurred = datetime.fromisoformat(
+                        str(entry['at']).replace('Z', '+00:00')
+                    )
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if occurred >= cutoff:
+                    kept.append(entry)
+            removed = len(entries) - len(kept)
+            if removed:
+                self._save_jsonl(path, kept)
+            return removed
 
     def _prune_errors(self, days: int) -> int:
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)

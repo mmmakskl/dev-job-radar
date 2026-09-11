@@ -31,7 +31,7 @@ help:
 	@echo "  make history       обработать историю Telegram-каналов"
 	@echo "  make discover      найти каналы среди текущих Telegram dialogs"
 	@echo "  make channels      alias для make discover"
-	@echo "  make sync-channels добавить чаты из Telegram-папки в TARGET_CHANNELS"
+	@echo "  make sync-channels синхронизировать Telegram-папку с SQLite"
 	@echo "  make smoke         live smoke test; требует Telegram session/API"
 	@echo ""
 	@echo "Validation and diagnostics (без API-запросов):"

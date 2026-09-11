@@ -1,6 +1,7 @@
 {
   "name": "go-radar-admin",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -12,24 +13,28 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^5.0.1",
-    "next": "^15.3.1",
+    "next": "15.5.24",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-hook-form": "^7.56.1",
+    "sharp": "0.35.4",
     "zod": "^3.24.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.52.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
-    "@playwright/test": "^1.52.0",
-    "@types/node": "^22.15.3",
     "@types/aria-query": "^5.0.4",
+    "@types/node": "^22.15.3",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
+    "autoprefixer": "^10.4.21",
     "jsdom": "^26.1.0",
     "tailwindcss": "^3.4.17",
-    "autoprefixer": "^10.4.21",
     "typescript": "^5.8.3",
-    "vitest": "^3.1.2"
+    "vitest": "4.1.11"
+  },
+  "overrides": {
+    "postcss": "8.5.28"
   }
 }

@@ -10,7 +10,7 @@ import { PromptEditor } from '../components/prompt-editor';
 import { SettingsForm } from '../components/settings-form';
 import { SourcesPanel } from '../components/sources-panel';
 import { VacancyGroupsPanel } from '../components/vacancy-groups-panel';
-import { api, type AttentionError, type Metrics, type Settings } from '../lib/api';
+import { api, waitForAction, type AdminAction, type AttentionError, type Metrics, type Settings } from '../lib/api';
 
 type Dashboard = {
   settings_revision:number;
@@ -19,13 +19,14 @@ type Dashboard = {
   heartbeat?:{status?:string;updated_at?:string;settings_revision?:number;queue_size?:number;received_messages?:number;keyword_matches?:number;saved_matches?:number};
   operations:{at:string;event:string;action?:string}[];
   secret_status:{telegram:boolean;mistral:boolean;google_sheets:boolean};
+  active_action?:AdminAction|null;
 };
 type Route = '/'|'/sources'|'/groups'|'/settings'|'/prompt'|'/logs'|'/errors';
 const routeLabels:Record<Route,string> = {'/':'Дашборд','/sources':'Источники','/groups':'Группы','/settings':'Настройки','/prompt':'LLM-инструкции','/logs':'Логи','/errors':'Ошибки'};
 const actionText: Record<string,[string,string]> = {
   restart:['Перезапустить бота','Очередь будет корректно завершена, затем бот применит сохранённые настройки.'],
   history:['Запустить историю','Live-мониторинг временно остановится: один Telegram session нельзя использовать одновременно.'],
-  sync_channels:['Синхронизировать папку','Бот кратко отключится от Telegram, прочитает папку и применит её состав.'],
+  sync_channels:['Синхронизировать папку','Live bot целиком прочитает Telegram-папку, атомарно сохранит её состав и перезапустит listener.'],
 };
 
 function currentRoute():Route {
@@ -35,6 +36,7 @@ function currentRoute():Route {
 
 function navigate(path:Route) { window.history.pushState({},'',path); window.dispatchEvent(new PopStateEvent('popstate')); }
 function formatDate(value?:string|null) { return value ? new Date(value).toLocaleString('ru-RU') : 'нет данных'; }
+function actionResult(result:AdminAction) { return result.status==='succeeded'?`Готово: получено ${result.received}, добавлено ${result.created}, обновлено ${result.updated}, пропущено ${result.skipped}, ошибок ${result.failed}.`:result.error||'Операция завершилась с ошибкой.'; }
 
 function StatusCard({dashboard, errors, onNavigate}:{dashboard?:Dashboard;errors:AttentionError[];onNavigate:(path:Route)=>void}) {
   const heartbeat=dashboard?.heartbeat;
@@ -55,28 +57,29 @@ function DashboardView({dashboard,metrics,errors,loading,onNavigate,onRefresh,on
 }
 
 export default function Page() {
-  const [ready,setReady]=useState(false); const [configured,setConfigured]=useState(false); const [settings,setSettings]=useState<Settings>(); const [dashboard,setDashboard]=useState<Dashboard>(); const [metrics,setMetrics]=useState<Metrics>(); const [attention,setAttention]=useState<AttentionError[]>([]); const [loading,setLoading]=useState(false); const [error,setError]=useState(''); const [pending,setPending]=useState(''); const [route,setRoute]=useState<Route>('/'); const [theme,setTheme]=useState<'light'|'dark'>('light');
+  const [ready,setReady]=useState(false); const [configured,setConfigured]=useState(false); const [settings,setSettings]=useState<Settings>(); const [dashboard,setDashboard]=useState<Dashboard>(); const [metrics,setMetrics]=useState<Metrics>(); const [attention,setAttention]=useState<AttentionError[]>([]); const [loading,setLoading]=useState(false); const [error,setError]=useState(''); const [progress,setProgress]=useState(''); const [pending,setPending]=useState(''); const [sourcesRefresh,setSourcesRefresh]=useState(0); const [route,setRoute]=useState<Route>('/'); const [theme,setTheme]=useState<'light'|'dark'>('light');
   const refresh = useCallback(async()=>{setLoading(true);setError('');try{const [nextSettings,nextDashboard,nextMetrics,nextErrors]=await Promise.all([api.settings(),api.dashboard(),api.metrics(),api.errors()]);setSettings(nextSettings);setDashboard(nextDashboard);setMetrics(nextMetrics);setAttention(nextErrors);}catch(reason){setError(reason instanceof Error?reason.message:'Не удалось загрузить данные панели');}finally{setLoading(false);}},[]);
   useEffect(()=>{const change=()=>setRoute(currentRoute());change();window.addEventListener('popstate',change);api.status().then(async status=>{setConfigured(status.configured);if(status.authenticated) await refresh();setReady(true);}).catch(()=>setReady(true));return()=>window.removeEventListener('popstate',change);},[refresh]);
   useEffect(()=>{const stored=window.localStorage.getItem('admin-theme');if(stored==='dark')setTheme('dark');},[]);
   useEffect(()=>{document.documentElement.classList.toggle('dark',theme==='dark');window.localStorage.setItem('admin-theme',theme);},[theme]);
+  useEffect(()=>{const action=dashboard?.active_action;if(!action)return;setProgress('Операция выполняется…');waitForAction(action.id).then(async result=>{setProgress(actionResult(result));await refresh();setSourcesRefresh(value=>value+1);}).catch(reason=>setError(reason instanceof Error?reason.message:'Не удалось получить статус операции'));},[dashboard?.active_action?.id,refresh]);
   const go=(path:Route)=>navigate(path);
   if(!ready) return <main className="shell">Загружаем…</main>;
   if(!settings) return <LoginForm configured={configured} onLogin={async(password)=>{await api.login(password);await refresh();}}/>;
-  const save=async(value:Partial<Settings>)=>{setError('');try{const saved=await api.save(value);setSettings(saved);setDashboard(current=>current?{...current,settings_revision:saved.revision}:current);}catch(reason){setError(reason instanceof Error?reason.message:'Не удалось сохранить настройки');throw reason;}};
+  const save=async(value:Partial<Settings>)=>{setError('');try{const saved=await api.save({...value,revision:settings.revision});setSettings(saved);setDashboard(current=>current?{...current,settings_revision:saved.revision}:current);}catch(reason){setError(reason instanceof Error?reason.message:'Не удалось сохранить настройки');throw reason;}};
   const resolve=async(id:string)=>{try{await api.resolveError(id);await refresh();}catch(reason){setError(reason instanceof Error?reason.message:'Не удалось обновить статус ошибки');}};
-  const doAction=async()=>{try{await api.action(pending);setPending('');await refresh();}catch(reason){setError(reason instanceof Error?reason.message:'Не удалось выполнить действие');setPending('');}};
+  const doAction=async()=>{try{const action=await api.action(pending);setPending('');setProgress('Операция поставлена в очередь…');const result=await waitForAction(action.id);setProgress(actionResult(result));await refresh();setSourcesRefresh(value=>value+1);}catch(reason){setError(reason instanceof Error?reason.message:'Не удалось выполнить действие');setPending('');}};
   const restartRequired=typeof dashboard?.heartbeat?.settings_revision==='number' && dashboard.heartbeat.settings_revision!==settings.revision;
   const header=<Header route={route} theme={theme} onToggleTheme={()=>setTheme(theme==='light'?'dark':'light')} onNavigate={go} onLogout={async()=>{await api.logout();setSettings(undefined);go('/');}}/>;
   let content:React.ReactNode;
-  if(route==='/sources') content=<SourcesPanel onBack={()=>go('/')} onChanged={refresh} restartRequired={restartRequired}/>;
+  if(route==='/sources') content=<SourcesPanel onBack={()=>go('/')} onChanged={refresh} restartRequired={restartRequired} reloadKey={sourcesRefresh}/>;
   else if(route==='/groups') content=<VacancyGroupsPanel onBack={()=>go('/')} />;
   else if(route==='/settings') content=<SettingsForm settings={settings} onSave={save}/>;
   else if(route==='/prompt') content=<PromptEditor onBack={()=>go('/settings')}/>;
   else if(route==='/logs') content=<LogsPanel onBack={()=>go('/')} />;
   else if(route==='/errors') content=<section className="screen"><div className="section-title"><div><h1>Активные ошибки</h1><p className="muted">Показаны только неразрешённые, безопасно очищенные ошибки. Повтор пока не поддерживается.</p></div><button className="button secondary" onClick={()=>void refresh()} disabled={loading}>Обновить</button></div><AttentionPanel errors={attention} loading={loading} onResolve={resolve} showEmpty/></section>;
   else content=<DashboardView dashboard={dashboard} metrics={metrics} errors={attention} loading={loading} onNavigate={go} onRefresh={()=>void refresh()} onResolve={resolve}/>;
-  return <main className="shell">{header}{error&&<p className="error" role="alert">{error}</p>}<div className="page-content">{content}</div>{route==='/'&&<section className="card span-12"><h2>Управление обработкой</h2><p className="muted">Опасные операции потребуют явного подтверждения.</p><div className="actions"><button className="button" onClick={()=>setPending('sync_channels')}>Синхронизировать папку</button><button className="button secondary" onClick={()=>setPending('history')}>Запустить историю</button><button className="button danger" onClick={()=>setPending('restart')}>Перезапустить бота</button></div></section>}{pending&&<ConfirmAction title={actionText[pending][0]} description={actionText[pending][1]} onConfirm={()=>void doAction()} onCancel={()=>setPending('')}/>}</main>;
+  return <main className="shell">{header}{error&&<p className="error" role="alert">{error}</p>}{progress&&<p className="status" role="status">{progress}</p>}<div className="page-content">{content}</div>{route==='/'&&<section className="card span-12"><h2>Управление обработкой</h2><p className="muted">Опасные операции потребуют явного подтверждения.</p><div className="actions"><button className="button" onClick={()=>setPending('sync_channels')}>Синхронизировать папку</button><button className="button secondary" onClick={()=>setPending('history')}>Запустить историю</button><button className="button danger" onClick={()=>setPending('restart')}>Перезапустить бота</button></div></section>}{pending&&<ConfirmAction title={actionText[pending][0]} description={actionText[pending][1]} onConfirm={()=>void doAction()} onCancel={()=>setPending('')}/>}</main>;
 }
 
 function Header({route,theme,onToggleTheme,onNavigate,onLogout}:{route:Route;theme:'light'|'dark';onToggleTheme:()=>void;onNavigate:(path:Route)=>void;onLogout:()=>void}) { return <header className="app-header"><div><button className="brand link" onClick={()=>onNavigate('/')}>Go Radar</button><p className="muted">Закрытое управление сбором вакансий</p></div><nav aria-label="Основная навигация">{(Object.keys(routeLabels) as Route[]).map(path=><button key={path} className={route===path?'nav-active':'nav-item'} onClick={()=>onNavigate(path)} aria-current={route===path?'page':undefined}>{routeLabels[path]}</button>)}</nav><div className="actions"><button className="button secondary" onClick={onToggleTheme} aria-label="Переключить цветовую тему">{theme==='light'?'Тёмная тема':'Светлая тема'}</button><button className="button secondary" onClick={onLogout}>Выйти</button></div></header>; }

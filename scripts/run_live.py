@@ -10,12 +10,17 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, utils
 
 from tg_vacancy_bot import config
 from tg_vacancy_bot.admin.alerts import AlertDispatcher
-from tg_vacancy_bot.admin.control import acknowledge_action, read_action
+from tg_vacancy_bot.admin.control import (
+    claim_action,
+    finish_action,
+    recover_running_actions,
+)
 from tg_vacancy_bot.admin.settings import SettingsStore
+from tg_vacancy_bot.channel_sync import fetch_folder_channels
 from tg_vacancy_bot.admin.telemetry import TelemetryStore
 from tg_vacancy_bot.llm.mistral import analyze_text
 from tg_vacancy_bot.logging_config import configure_logging
@@ -40,7 +45,6 @@ from tg_vacancy_bot.telegram.candidate_notifier import (
     CandidateVacancyNotifier,
 )
 from tg_vacancy_bot.telegram.candidate_store import CandidateStore
-
 
 # Настройка логирования
 configure_logging(
@@ -104,7 +108,6 @@ class LiveMessageJob:
     channel_name: str
 
 
-@client.on(events.NewMessage(chats=config.TARGET_CHANNELS))
 async def handle_new_message(event):
     """Быстро ставит новое Telegram-сообщение в очередь."""
     global received_messages
@@ -128,10 +131,9 @@ async def handle_new_message(event):
         message_queue.put_nowait(job)
     except asyncio.QueueFull:
         logging.error(
-            "Live-очередь заполнена (%d/%d), сообщение пропущено: %s",
+            "Live-очередь заполнена (%d/%d), сообщение пропущено",
             message_queue.qsize(),
             message_queue.maxsize,
-            post_link,
         )
         processor._metric('skipped_invalid', 'telegram', 'live_queue_full')
         if alert_dispatcher is not None:
@@ -149,8 +151,7 @@ async def handle_new_message(event):
 
     queue_size = message_queue.qsize()
     logging.info(
-        "Сообщение поставлено в live-очередь: %s (размер: %d)",
-        post_link,
+        "Сообщение поставлено в live-очередь (размер: %d)",
         queue_size,
     )
     if queue_size >= QUEUE_WARNING_THRESHOLD:
@@ -168,9 +169,8 @@ async def live_worker(worker_id: int) -> None:
         job = await message_queue.get()
         try:
             logging.info(
-                "Live worker %d обрабатывает сообщение: %s",
+                "Live worker %d обрабатывает сообщение",
                 worker_id,
-                job.post_link,
             )
             await processor.process_message(
                 job.text,
@@ -182,9 +182,8 @@ async def live_worker(worker_id: int) -> None:
         except Exception:
             processor._metric('processing_error', 'telegram')
             logging.exception(
-                "Ошибка live worker %d при обработке %s",
+                "Ошибка live worker %d при обработке сообщения",
                 worker_id,
-                job.post_link,
             )
         finally:
             message_queue.task_done()
@@ -219,17 +218,60 @@ async def stop_workers(worker_tasks: list[asyncio.Task]) -> None:
 async def monitor_admin_control(
     shutdown_event: asyncio.Event,
     telemetry: TelemetryStore,
+    store: SettingsStore,
 ) -> str | None:
-    """Poll the durable local control file without a Docker socket."""
+    """Execute Telegram actions through the bot-owned Telethon session."""
     while not shutdown_event.is_set():
-        requested = read_action(config.DATA_DIR)
+        requested = claim_action(config.DATA_DIR)
         if requested:
             action = requested['action']
-            acknowledge_action(requested['id'], config.DATA_DIR)
-            telemetry.record('action_acknowledged', action=action)
-            logging.info('Получена команда админ-панели: %s', action)
-            shutdown_event.set()
-            return action
+            try:
+                counts: dict[str, int] = {}
+                if action == 'history':
+                    shutdown_event.set()
+                    return f"history:{requested['id']}"
+                if action == 'sync_channels':
+                    folder = store.load().telegram.folder_name
+                    channels = await fetch_folder_channels(client, folder)
+                    counts = store.sync_folder(channels)
+                elif action == 'verify_source':
+                    source = store.get_source(requested['target_id'])
+                    target = source['username'] or int(source['telegram_id'])
+                    entity = await client.get_entity(target)
+                    store.mark_source_verified(
+                        source['id'],
+                        telegram_id=utils.get_peer_id(entity),
+                        username=getattr(entity, 'username', None),
+                        title=getattr(entity, 'title', None),
+                        chat_type=(
+                            'group'
+                            if getattr(entity, 'megagroup', False)
+                            else 'channel'
+                        ),
+                    )
+                    counts = {'received': 1, 'updated': 1}
+                finish_action(
+                    requested['id'],
+                    succeeded=True,
+                    data_dir=config.DATA_DIR,
+                    counts=counts,
+                )
+                telemetry.record('action_succeeded', action=action)
+                logging.info('Команда админ-панели завершена: %s', action)
+                shutdown_event.set()
+                return action
+            except Exception:
+                if action == 'verify_source' and requested.get('target_id'):
+                    store.mark_source_invalid(requested['target_id'])
+                finish_action(
+                    requested['id'],
+                    succeeded=False,
+                    data_dir=config.DATA_DIR,
+                    error='Операция не выполнена; проверьте подключение Telegram и повторите.',
+                    counts={'failed': 1},
+                )
+                telemetry.record('action_failed', action=action)
+                logging.exception('Команда админ-панели не выполнена: %s', action)
         await asyncio.sleep(2)
     return None
 
@@ -269,11 +311,13 @@ async def publish_heartbeat(
 async def main():
     """Основная функция запуска бота"""
     global accepting_messages, alert_dispatcher
-    config.validate_required_settings()
+    config.validate_required_settings(require_sources=False)
     accepting_messages = True
     shutdown_event = asyncio.Event()
     telemetry = TelemetryStore(config.DATA_DIR)
     settings = SettingsStore(config.DATA_DIR).load()
+    store = SettingsStore(config.DATA_DIR)
+    recover_running_actions(config.DATA_DIR)
     removed = telemetry.cleanup(
         logs_days=settings.retention.logs_days,
         errors_days=settings.retention.errors_days,
@@ -313,14 +357,12 @@ async def main():
     logging.info("=" * 60)
     logging.info("Система агрегации вакансий из Telegram")
     logging.info("=" * 60)
-    logging.info(
-        f"Отслеживаемые каналы: {', '.join(str(ch) for ch in config.TARGET_CHANNELS)}"
-    )
+    logging.info("Отслеживаемых каналов: %d", len(store.active_targets()))
     logging.info(f"Фильтр ключевых слов: {', '.join(config.KEYWORD_FILTER)}")
     if config.TELEGRAM_NOTIFY_ENABLED:
         logging.info(
             "Telegram notifications: enabled (target: %s)",
-            config.TELEGRAM_NOTIFY_TARGET,
+            '[configured]',
         )
     else:
         logging.info("Telegram notifications: disabled")
@@ -342,8 +384,25 @@ async def main():
     heartbeat_task: asyncio.Task[None] | None = None
     requested_action: str | None = None
     try:
+        await client.start()
+        await client.get_dialogs()
+        try:
+            channels = await asyncio.wait_for(
+                fetch_folder_channels(client, settings.telegram.folder_name), timeout=30
+            )
+            store.sync_folder(channels)
+        except Exception:
+            logging.warning(
+                'Стартовая синхронизация папки не выполнена; используются последние сохранённые источники.'
+            )
+        active_targets = store.active_targets()
+        if not active_targets:
+            raise RuntimeError('Нет включённых Telegram-источников')
+        client.add_event_handler(
+            handle_new_message, events.NewMessage(chats=active_targets)
+        )
         control_task = asyncio.create_task(
-            monitor_admin_control(shutdown_event, telemetry),
+            monitor_admin_control(shutdown_event, telemetry, store),
             name='admin-control-monitor',
         )
         if not config.MONITORING_ENABLED:
@@ -363,13 +422,8 @@ async def main():
             for worker_id in range(1, config.LIVE_WORKERS + 1)
         ]
 
-        await client.start()
-
-        # Кэшируем диалоги для корректной работы с приватными каналами.
-        await client.get_dialogs()
-
-        me = await client.get_me()
-        logging.info(f"Авторизован как: {me.first_name} (@{me.username})")
+        await client.get_me()
+        logging.info("Telegram-сессия авторизована")
         logging.info("Бот запущен. Ожидаю новые сообщения...")
 
         await alert_dispatcher.check(
@@ -416,15 +470,13 @@ async def main():
         telemetry.heartbeat(
             status='stopped', settings_revision=config.SETTINGS_REVISION
         )
-        if requested_action == 'history':
+        if requested_action and requested_action.startswith('history:'):
             telemetry.record('history_started')
+            os.environ['ADMIN_HISTORY_RESTART'] = '1'
+            os.environ['ADMIN_ACTION_ID'] = requested_action.split(':', 1)[1]
             os.execv(sys.executable, [sys.executable, 'scripts/parse_history.py'])
-        if requested_action == 'sync_channels':
-            telemetry.record('sync_requested')
-            os.execv(
-                sys.executable,
-                [sys.executable, 'scripts/sync_channels.py', '--managed-settings'],
-            )
+        if requested_action in {'sync_channels', 'verify_source', 'restart'}:
+            os.execv(sys.executable, [sys.executable, 'scripts/run_live.py'])
 
 
 if __name__ == '__main__':

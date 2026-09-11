@@ -1,4 +1,14 @@
 services:
+  data-init:
+    image: dev-job-radar-bot:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: root
+    command: ["sh", "scripts/init_data_volume.sh"]
+    volumes:
+      - ./data:/app/data
+    restart: "no"
   bot:
     image: dev-job-radar-bot:latest
     build:
@@ -6,6 +16,10 @@ services:
       dockerfile: Dockerfile
     init: true
     restart: unless-stopped
+    command: ["sh", "scripts/run_live_container.sh"]
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
     env_file:
       - .env
     environment:
@@ -18,6 +32,12 @@ services:
       - ./data:/app/data
       - ./secrets/google-credentials.json:/run/secrets/google-credentials.json:ro
     stop_grace_period: 45s
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /tmp/bot-started-at && python -m tg_vacancy_bot.deploy_health $$(cat /tmp/bot-started-at)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     logging:
       driver: json-file
       options:
@@ -30,13 +50,17 @@ services:
       dockerfile: Dockerfile
     init: true
     restart: unless-stopped
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
     command: ["python", "-m", "uvicorn", "tg_vacancy_bot.admin.api:app", "--host", "0.0.0.0", "--port", "8080"]
     env_file:
       - .env
     environment:
       DATA_DIR: /app/data
       ADMIN_STATIC_DIR: /app/web
-      ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-false}
+      ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-true}
+      ADMIN_ALLOWED_HOSTS: ${ADMIN_ALLOWED_HOSTS:-localhost,127.0.0.1,go-radar-maksim.duckdns.org}
     volumes:
       - ./data:/app/data
     ports:
@@ -79,7 +103,10 @@ services:
     profiles: ["candidate"]
     init: true
     restart: unless-stopped
-    command: ["python", "scripts/run_candidate_bot.py"]
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    command: ["sh", "scripts/run_candidate_bot_container.sh"]
     env_file:
       - .env
     environment:
@@ -88,6 +115,12 @@ services:
     volumes:
       - ./data:/app/data
     stop_grace_period: 35s
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /tmp/candidate-bot-started-at && python -m tg_vacancy_bot.deploy_health $$(cat /tmp/candidate-bot-started-at) /app/data/admin/candidate-heartbeat.json"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     logging:
       driver: json-file
       options:

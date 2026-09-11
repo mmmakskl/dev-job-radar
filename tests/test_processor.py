@@ -29,6 +29,30 @@ class DedupeStateSpy:
         self.marked.append((post_link, text_hash, vacancy_id))
 
 
+class LateDuplicateState(DedupeStateSpy):
+    def __init__(self) -> None:
+        super().__init__()
+        self.checks = 0
+        self.released: list[str] = []
+
+    def is_duplicate(
+        self,
+        post_link: str,
+        text_hash: str,
+        vacancy_id: str | None = None,
+    ) -> bool:
+        self.checks += 1
+        return self.checks > 1
+
+    def claim(
+        self, post_link: str, text_hash: str, vacancy_id: str | None = None
+    ) -> str:
+        return 'worker-claim'
+
+    def release(self, owner: str) -> None:
+        self.released.append(owner)
+
+
 def test_failed_sheet_export_is_not_marked(monkeypatch, tmp_path) -> None:
     async def no_delay(_seconds: float) -> None:
         return None
@@ -62,6 +86,36 @@ def test_failed_sheet_export_is_not_marked(monkeypatch, tmp_path) -> None:
     assert not saved
     assert state.marked == []
     assert processor.group_store.list_groups() == []
+
+
+def test_processor_rechecks_durable_duplicate_after_claim() -> None:
+    async def must_not_analyze(_text: str):
+        raise AssertionError('late duplicate must not reach the LLM')
+
+    async def must_not_export(**_kwargs) -> bool:
+        raise AssertionError('late duplicate must not be exported')
+
+    state = LateDuplicateState()
+    processor = VacancyProcessor(
+        keyword_filter=lambda _text: True,
+        analyze_text=must_not_analyze,
+        append_to_sheet=must_not_export,
+        dedupe_state=state,
+    )
+
+    saved = asyncio.run(
+        processor.process_message(
+            'Go vacancy',
+            'Go vacancy',
+            'https://t.me/jobs/42',
+            datetime(2026, 7, 22, tzinfo=timezone.utc),
+            'jobs',
+        )
+    )
+
+    assert not saved
+    assert state.checks == 2
+    assert state.released == ['worker-claim']
 
 
 def test_processor_passes_metadata_and_marks_stable_id(monkeypatch) -> None:

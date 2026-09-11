@@ -1,4 +1,5 @@
-export type Source = { token:string; label:string; identifier:string|null; enabled:boolean; kind:string; origin:string; added_at:string|null; removable:boolean; verification_status:'verified'|'invalid'|'unverified'|'hidden' };
+export type Source = { token:string; label:string; identifier:string|null; enabled:boolean; kind:string; origin:string; origins:string[]; title:string|null; chat_type:string; added_at:string|null; last_seen_at:string|null; removable:boolean; verification_status:'verified'|'invalid'|'unverified'|'hidden' };
+export type AdminAction = {id:string;action:string;status:'pending'|'running'|'succeeded'|'failed';error?:string|null;received:number;created:number;updated:number;skipped:number;failed:number};
 export type Settings = {
   revision: number;
   telegram: { folder_name: string; monitoring_enabled: boolean; history_days: number; notify_enabled: boolean; notify_target: string; additional_channels: string[]; channels: Source[] };
@@ -26,7 +27,8 @@ export const api = {
   dashboard: () => request<any>('/api/v1/dashboard'),
   settings: () => request<Settings>('/api/v1/settings'),
   save: (settings:Partial<Settings>) => mutate<Settings>('/api/v1/settings', 'PUT', settings),
-  action: (action:string) => mutate('/api/v1/actions', 'POST', {action, confirmed:true}),
+  action: (action:string) => mutate<AdminAction>('/api/v1/actions', 'POST', {action, confirmed:true}),
+  actionStatus: (id:string) => request<AdminAction>(`/api/v1/actions/${encodeURIComponent(id)}`),
   metrics: () => request<Metrics>('/api/v1/metrics/today'),
   errors: () => request<AttentionError[]>('/api/v1/errors'),
   resolveError: (id:string) => mutate<AttentionError>(`/api/v1/errors/${id}/resolve`, 'POST', {confirmed:true}),
@@ -35,11 +37,20 @@ export const api = {
   savePrompt: (instructions:string) => mutate<Prompt>('/api/v1/prompt', 'PUT', {instructions}),
   resetPrompt: () => mutate<Prompt>('/api/v1/prompt/reset', 'POST', {confirmed:true}),
   sources: () => request<{items:Source[];total:number;restart_required:boolean}>('/api/v1/sources'),
-  addSource: (identifier:string) => mutate<{item:Source;restart_required:boolean}>('/api/v1/sources', 'POST', {identifier}),
-  verifySource: (token:string) => mutate<{item:Source;restart_required:boolean}>(`/api/v1/sources/${token}/verify`, 'POST'),
+  addSource: (identifier:string) => mutate<{item:Source;action:AdminAction;restart_required:boolean}>('/api/v1/sources', 'POST', {identifier}),
+  verifySource: (token:string) => mutate<{item:Source;action:AdminAction;restart_required:boolean}>(`/api/v1/sources/${token}/verify`, 'POST'),
   changeSource: (token:string, enabled:boolean) => mutate<{item:Source;restart_required:boolean}>(`/api/v1/sources/${token}`, 'PATCH', {enabled}),
   deleteSource: (token:string) => mutate<{ok:boolean;restart_required:boolean}>(`/api/v1/sources/${token}`, 'DELETE', {confirmed:true}),
   vacancyGroups: () => request<{items:VacancyGroup[];total:number}>('/api/v1/vacancy-groups'),
   vacancyGroup: (groupId:string) => request<VacancyGroupDetail>(`/api/v1/vacancy-groups/${encodeURIComponent(groupId)}`),
   unlinkVacancyPublication: (groupId:string,vacancyId:string) => mutate<{ok:boolean}>(`/api/v1/vacancy-groups/${encodeURIComponent(groupId)}/publications/${encodeURIComponent(vacancyId)}/unlink`, 'POST', {confirmed:true}),
 };
+
+export async function waitForAction(id:string,maxAttempts=30):Promise<AdminAction> {
+  for(let attempt=0;attempt<maxAttempts;attempt+=1){
+    const action=await api.actionStatus(id);
+    if(action.status==='succeeded'||action.status==='failed') return action;
+    await new Promise(resolve=>setTimeout(resolve,2000));
+  }
+  throw new Error('Операция продолжается дольше ожидаемого. Статус сохранён — обновите страницу позже.');
+}

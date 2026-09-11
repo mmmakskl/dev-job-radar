@@ -12,7 +12,6 @@ from tg_vacancy_bot.pipeline.prefilter import candidate_profile_reasons
 from tg_vacancy_bot.storage.vacancy_groups import VacancyGroupStore
 from tg_vacancy_bot.telegram.links import build_vacancy_id
 
-
 KeywordFilter = Callable[[str], bool]
 AnalyzeText = Callable[[str], Awaitable[VacancyAnalysis | None]]
 AppendToSheet = Callable[..., Awaitable[bool]]
@@ -92,43 +91,95 @@ class VacancyProcessor:
         if self.dedupe_state is not None and self.dedupe_state.is_duplicate(
             post_link, text_hash, vacancy_id
         ):
-            logging.info("Пропуск: дубликат вакансии (%s)", post_link)
-            reason_getter = getattr(self.dedupe_state, 'duplicate_reason', None)
-            duplicate_reason = (
-                reason_getter(post_link, text_hash, vacancy_id)
-                if callable(reason_getter)
-                else None
-            ) or 'duplicate_fingerprint'
-            self._metric('skipped_duplicate', reason=duplicate_reason)
-            self._metric('exact_duplicate')
-            if self.group_store is not None:
-                self.group_store.record_exact_repost(
-                    vacancy_id=vacancy_id,
-                    post_link=post_link,
-                    channel_name=channel_name,
-                    published_at=published_at,
-                    text_hash=text_hash,
-                )
-            return False
+            return self._skip_duplicate(
+                post_link, text_hash, vacancy_id, channel_name, published_at
+            )
 
+        claim_owner: str | None = None
+        claim = getattr(self.dedupe_state, 'claim', None)
+        if callable(claim):
+            claim_owner = claim(post_link, text_hash, vacancy_id)
+            if claim_owner is None:
+                self._metric('skipped_duplicate', reason='duplicate_fingerprint')
+                return False
+
+        try:
+            # A competing worker may have finished and released its claim after
+            # our first check but before this claim was acquired. Re-read the
+            # append-only authority while we own the claim.
+            if claim_owner is not None and self.dedupe_state.is_duplicate(
+                post_link, text_hash, vacancy_id
+            ):
+                return self._skip_duplicate(
+                    post_link, text_hash, vacancy_id, channel_name, published_at
+                )
+            return await self._process_claimed(
+                text,
+                raw_text,
+                post_link,
+                published_at,
+                channel_name,
+                text_hash,
+                vacancy_id,
+            )
+        finally:
+            release = getattr(self.dedupe_state, 'release', None)
+            if claim_owner is not None and callable(release):
+                release(claim_owner)
+
+    def _skip_duplicate(
+        self,
+        post_link: str,
+        text_hash: str,
+        vacancy_id: str,
+        channel_name: str,
+        published_at: datetime,
+    ) -> bool:
+        logging.info("Пропуск: дубликат вакансии")
+        reason_getter = getattr(self.dedupe_state, 'duplicate_reason', None)
+        duplicate_reason = (
+            reason_getter(post_link, text_hash, vacancy_id)
+            if callable(reason_getter)
+            else None
+        ) or 'duplicate_fingerprint'
+        self._metric('skipped_duplicate', reason=duplicate_reason)
+        self._metric('exact_duplicate')
+        if self.group_store is not None:
+            self.group_store.record_exact_repost(
+                vacancy_id=vacancy_id,
+                post_link=post_link,
+                channel_name=channel_name,
+                published_at=published_at,
+                text_hash=text_hash,
+            )
+        return False
+
+    async def _process_claimed(
+        self,
+        text: str,
+        raw_text: str,
+        post_link: str,
+        published_at: datetime,
+        channel_name: str,
+        text_hash: str,
+        vacancy_id: str,
+    ) -> bool:
         if not self.keyword_filter(text):
             self._metric('skipped_not_relevant', reason='include_prefilter')
             return False
 
         if any(keyword in text.casefold() for keyword in self.exclude_keywords):
-            logging.info("Пропуск: исключающее ключевое слово (%s)", post_link)
+            logging.info("Пропуск: исключающее ключевое слово")
             self._metric('skipped_not_relevant', reason='exclude_keywords')
             return False
 
         self.keyword_matches += 1
-        logging.info("Найдено сообщение с ключевыми словами: %s", post_link)
-        logging.debug("Текст: %s...", text[:200])
+        logging.info("Найдено сообщение с ключевыми словами")
 
         profile_reasons = candidate_profile_reasons(text)
         if profile_reasons:
             logging.info(
-                "Пропуск: сообщение похоже на резюме кандидата (%s). Признаки: %s",
-                post_link,
+                "Пропуск: сообщение похоже на резюме кандидата. Признаки: %s",
                 ", ".join(profile_reasons),
             )
             self._metric('skipped_not_relevant', reason='candidate_resume')
@@ -220,13 +271,13 @@ class VacancyProcessor:
                     published_at=published_at,
                 )
                 if notified:
-                    logging.info("Telegram-уведомление отправлено: %s", vacancy_id)
+                    logging.info("Telegram-уведомление отправлено")
                 else:
                     self._metric('processing_error', 'telegram', 'notification_error')
-            except Exception:
-                logging.exception(
-                    "Не удалось отправить Telegram-уведомление: %s",
-                    vacancy_id,
+            except Exception as error:
+                logging.error(
+                    "Не удалось отправить Telegram-уведомление (%s)",
+                    type(error).__name__,
                 )
                 self._metric('processing_error', 'telegram', 'notification_error')
         return True

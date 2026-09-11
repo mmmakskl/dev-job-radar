@@ -21,6 +21,7 @@ def bot_is_ready(path: Path, started_at: str, *, now: datetime | None = None) ->
 
 
 if __name__ == '__main__':
-    sys.exit(
-        0 if bot_is_ready(Path('/app/data/admin/heartbeat.json'), sys.argv[1]) else 1
+    heartbeat_path = Path(
+        sys.argv[2] if len(sys.argv) > 2 else '/app/data/admin/heartbeat.json'
     )
+    sys.exit(0 if bot_is_ready(heartbeat_path, sys.argv[1]) else 1)

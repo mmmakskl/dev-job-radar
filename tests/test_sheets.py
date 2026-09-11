@@ -104,3 +104,19 @@ def test_partial_sheet_failure_is_recovered(monkeypatch) -> None:
     assert len(full_sheet.rows) == 1
     assert len(short_sheet.rows) == 1
     assert "vacancy_id:jobs_123" in short_sheet.notes.values()
+
+
+def test_append_uses_raw_values_to_prevent_formula_injection() -> None:
+    calls = []
+
+    class Worksheet:
+        def append_rows(self, rows, **kwargs):
+            calls.append((rows, kwargs))
+            return {'updates': {'updatedRange': 'Sheet!A2:A2'}}
+
+        def get_all_values(self):
+            return [['header'], ['=IMPORTXML("https://example.com")']]
+
+    sheets._append_row(Worksheet(), ['=IMPORTXML("https://example.com")'])
+
+    assert calls[0][1]['value_input_option'] == 'RAW'

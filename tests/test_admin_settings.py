@@ -1,5 +1,3 @@
-import json
-
 import pytest
 
 from tg_vacancy_bot.admin.settings import (
@@ -16,9 +14,8 @@ def test_settings_store_is_versioned_and_atomic(tmp_path) -> None:
 
     assert saved.revision == 1
     assert store.load().schema_version == SCHEMA_VERSION
-    assert (
-        json.loads((tmp_path / 'admin' / 'settings.json').read_text())['revision'] == 1
-    )
+    assert (tmp_path / 'admin' / 'admin.sqlite3').exists()
+    assert not (tmp_path / 'admin' / 'settings.json').exists()
 
 
 def test_rejects_numeric_browser_channel() -> None:

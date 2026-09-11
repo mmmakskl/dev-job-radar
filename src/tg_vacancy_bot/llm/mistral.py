@@ -79,7 +79,7 @@ async def analyze_text(vacancy_text: str) -> VacancyAnalysis | None:
             logging.info("[MISTRAL] Повтор через %d сек.", delay)
             await asyncio.sleep(delay)
         except Exception as exc:
-            logging.error("[MISTRAL] Непредвиденная ошибка: %s", exc)
+            logging.error("[MISTRAL] Непредвиденная ошибка (%s)", type(exc).__name__)
             return None
 
     return None

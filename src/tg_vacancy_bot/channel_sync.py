@@ -1,4 +1,4 @@
-"""Helpers for synchronising Telegram-folder chats into ``TARGET_CHANNELS``."""
+"""Telegram-folder discovery plus deprecated legacy `.env` helpers."""
 
 from __future__ import annotations
 
@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from telethon import utils
+from telethon.tl import functions
+
 
 @dataclass(frozen=True)
 class FolderChannel:
@@ -18,6 +21,7 @@ class FolderChannel:
     id: int
     name: str
     username: str | None
+    chat_type: str = 'unknown'
 
 
 @dataclass(frozen=True)
@@ -71,9 +75,9 @@ def build_synced_target_channels(
 ) -> tuple[tuple[str | int, ...], tuple[FolderChannel, ...]]:
     """Append missing folder chats while preserving the existing config order.
 
-    Usernames already present in ``TARGET_CHANNELS`` are considered equivalent to
-    their matching dialog. ``resolved_configured_ids`` covers the same case when
-    a configured username was resolved through Telegram to a stable numeric ID.
+    Usernames already present in a legacy target list are considered equivalent
+    to their matching dialog. ``resolved_configured_ids`` covers the same case
+    when a configured username resolves to a stable numeric ID.
     """
     targets = list(configured_channels)
     configured_ids = {value for value in targets if isinstance(value, int)} | set(
@@ -107,15 +111,50 @@ def build_synced_target_channels(
     return tuple(targets), tuple(added_channels)
 
 
+async def fetch_folder_channels(client, folder_name: str) -> list[FolderChannel]:
+    """Fetch and validate the complete folder before any persistent mutation."""
+    response = await client(functions.messages.GetDialogFiltersRequest())
+    dialog_filter = find_folder_filter(response.filters, folder_name)
+    included_ids = {
+        utils.get_peer_id(peer)
+        for name in ('pinned_peers', 'include_peers')
+        for peer in getattr(dialog_filter, name, [])
+    }
+    excluded_ids = {
+        utils.get_peer_id(peer) for peer in getattr(dialog_filter, 'exclude_peers', [])
+    }
+    include_groups = bool(getattr(dialog_filter, 'groups', False))
+    include_broadcasts = bool(getattr(dialog_filter, 'broadcasts', False))
+    channels: list[FolderChannel] = []
+    async for dialog in client.iter_dialogs():
+        if not (dialog.is_channel or dialog.is_group) or dialog.id in excluded_ids:
+            continue
+        included = dialog.id in included_ids
+        included = included or (include_groups and dialog.is_group)
+        included = included or (
+            include_broadcasts and dialog.is_channel and not dialog.is_group
+        )
+        if included:
+            channels.append(
+                FolderChannel(
+                    id=dialog.id,
+                    name=dialog.name,
+                    username=getattr(dialog.entity, 'username', None),
+                    chat_type='group' if dialog.is_group else 'channel',
+                )
+            )
+    return channels
+
+
+# Deprecated compatibility helpers. Production workflows never call these;
+# SQLite is the sole live source store.
 def serialize_target_channels(channels: Iterable[str | int]) -> str:
-    """Return the comma-separated value expected by ``TARGET_CHANNELS``."""
     return ','.join(
         str(channel).strip() for channel in channels if str(channel).strip()
     )
 
 
 def replace_env_value(content: str, key: str, value: str) -> str:
-    """Replace one dotenv assignment, preserving unrelated text and line endings."""
     assignment = re.compile(
         rf'^(?P<prefix>\s*(?:export\s+)?{re.escape(key)}\s*=)[^\r\n]*(?P<ending>\r?\n)?$'
     )
@@ -127,7 +166,6 @@ def replace_env_value(content: str, key: str, value: str) -> str:
                 f"{match.group('prefix')}{value}{match.group('ending') or ''}"
             )
             return ''.join(lines)
-
     if content and not content.endswith(('\n', '\r')):
         content += '\n'
     return f'{content}{key}={value}\n'
@@ -136,27 +174,20 @@ def replace_env_value(content: str, key: str, value: str) -> str:
 def update_target_channels_env(
     env_path: Path, target_channels: Iterable[str | int]
 ) -> bool:
-    """Atomically update ``TARGET_CHANNELS`` and return whether the file changed."""
-    target_value = serialize_target_channels(target_channels)
     content = env_path.read_text(encoding='utf-8')
-    updated_content = replace_env_value(content, 'TARGET_CHANNELS', target_value)
-    if updated_content == content:
-        return False
-
-    file_mode = stat.S_IMODE(env_path.stat().st_mode)
-    descriptor, temporary_name = tempfile.mkstemp(
-        dir=env_path.parent,
-        prefix=f'.{env_path.name}.',
-        text=True,
+    updated = replace_env_value(
+        content, 'TARGET_CHANNELS', serialize_target_channels(target_channels)
     )
+    if updated == content:
+        return False
+    descriptor, temporary_name = tempfile.mkstemp(dir=env_path.parent, text=True)
     temporary_path = Path(temporary_name)
     try:
-        with os.fdopen(descriptor, 'w', encoding='utf-8') as temporary_file:
-            temporary_file.write(updated_content)
-        os.chmod(temporary_path, file_mode)
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+            handle.write(updated)
+        os.chmod(temporary_path, stat.S_IMODE(env_path.stat().st_mode))
         os.replace(temporary_path, env_path)
     except Exception:
         temporary_path.unlink(missing_ok=True)
         raise
-
     return True

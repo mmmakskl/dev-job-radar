@@ -12,7 +12,6 @@ from typing import Awaitable, Callable
 from tg_vacancy_bot.admin.settings import admin_directory
 from tg_vacancy_bot.admin.telemetry import TelemetryStore
 
-
 SendAlert = Callable[[str], Awaitable[bool]]
 
 

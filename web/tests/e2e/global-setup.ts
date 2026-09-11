@@ -1,4 +1,7 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const dataDir = '/tmp/dev-job-radar-e2e/admin';
 
@@ -29,5 +32,21 @@ export default async function globalSetup(): Promise<void> {
         }],
       },
     }),
+  );
+  const repositoryRoot = resolve(fileURLToPath(import.meta.url), '../../../..');
+  execFileSync(
+    `${repositoryRoot}/venv/bin/python`,
+    [
+      '-c',
+      'import os; from tg_vacancy_bot.admin.settings import SettingsStore; SettingsStore(os.environ["DATA_DIR"]).load()',
+    ],
+    {
+      cwd: repositoryRoot,
+      env: {
+        ...process.env,
+        DATA_DIR: '/tmp/dev-job-radar-e2e',
+        PYTHONPATH: 'src',
+      },
+    },
   );
 }

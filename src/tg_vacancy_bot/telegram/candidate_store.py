@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 STATUSES = (
     'new',
     'saved',
@@ -77,8 +76,7 @@ class CandidateStore:
     def _migrate(self) -> None:
         with self._connect() as connection:
             connection.execute('PRAGMA journal_mode = WAL')
-            connection.executescript(
-                '''
+            connection.executescript('''
                 CREATE TABLE IF NOT EXISTS vacancies (
                     vacancy_id TEXT PRIMARY KEY,
                     callback_key TEXT NOT NULL UNIQUE,
@@ -128,8 +126,7 @@ class CandidateStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_browser_sessions_user
                     ON candidate_browser_sessions (telegram_user_id, updated_at);
-                '''
-            )
+                ''')
             self._add_column_if_missing(
                 connection,
                 'vacancies',

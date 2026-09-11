@@ -3,6 +3,7 @@
 Скрипт для первичной авторизации в Telegram через QR-код.
 Использует API-ключи и имя сессии из .env.
 """
+
 import argparse
 import asyncio
 import os

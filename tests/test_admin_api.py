@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 
 from tg_vacancy_bot.admin.api import create_app
+from tg_vacancy_bot.admin.control import claim_action, finish_action
+from tg_vacancy_bot.admin.settings import SettingsStore
 from tg_vacancy_bot.admin.telemetry import TelemetryStore
 
 
@@ -10,10 +12,6 @@ def _client(tmp_path, monkeypatch) -> TestClient:
     monkeypatch.setenv('ADMIN_COOKIE_SECURE', 'false')
     monkeypatch.setenv('TARGET_CHANNELS', '-100111,@public_jobs')
 
-    async def verified(_identifier: str) -> None:
-        return None
-
-    monkeypatch.setattr('tg_vacancy_bot.admin.api.verify_public_source', verified)
     return TestClient(create_app(str(tmp_path)))
 
 
@@ -26,7 +24,7 @@ def _login(client: TestClient) -> str:
 def test_api_requires_authentication(tmp_path, monkeypatch) -> None:
     client = _client(tmp_path, monkeypatch)
     assert client.get('/api/v1/settings').status_code == 401
-    assert client.get('/healthz').json() == {'status': 'ok'}
+    assert client.get('/healthz').json()['status'] == 'ok'
 
 
 def test_login_csrf_and_redacted_channels(tmp_path, monkeypatch) -> None:
@@ -42,11 +40,34 @@ def test_login_csrf_and_redacted_channels(tmp_path, monkeypatch) -> None:
         '/api/v1/settings',
         headers={'X-CSRF-Token': csrf},
         json={
-            'filters': {'keywords': ['go', 'golang'], 'exclude_keywords': ['резюме']}
+            'revision': settings['revision'],
+            'filters': {'keywords': ['go', 'golang'], 'exclude_keywords': ['резюме']},
         },
     )
     assert saved.status_code == 200
     assert saved.json()['filters']['exclude_keywords'] == ['резюме']
+
+    stale = client.put(
+        '/api/v1/settings',
+        headers={'X-CSRF-Token': csrf},
+        json={'revision': settings['revision'], 'filters': {'keywords': ['rust']}},
+    )
+    assert stale.status_code == 409
+
+
+def test_login_throttle_and_host_validation(tmp_path, monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch)
+    for _ in range(5):
+        assert (
+            client.post('/api/v1/auth/login', json={'password': 'wrong'}).status_code
+            == 401
+        )
+    throttled = client.post('/api/v1/auth/login', json={'password': 'wrong'})
+    assert throttled.status_code == 429
+    assert throttled.headers['Retry-After'] == '900'
+    assert (
+        client.get('/healthz', headers={'Host': 'attacker.example'}).status_code == 400
+    )
 
 
 def test_dangerous_action_requires_confirmation(tmp_path, monkeypatch) -> None:
@@ -65,7 +86,7 @@ def test_dangerous_action_requires_confirmation(tmp_path, monkeypatch) -> None:
         headers={'X-CSRF-Token': csrf},
         json={'action': 'restart', 'confirmed': True},
     )
-    assert response.status_code == 200
+    assert response.status_code == 202
 
 
 def test_metrics_errors_logs_prompt_and_sources_api(tmp_path, monkeypatch) -> None:
@@ -120,20 +141,23 @@ def test_metrics_errors_logs_prompt_and_sources_api(tmp_path, monkeypatch) -> No
         == 400
     )
 
-    added = client.post(
+    added_response = client.post(
         '/api/v1/sources',
         headers={'X-CSRF-Token': csrf},
         json={'identifier': 'https://t.me/go_jobs'},
-    ).json()
+    )
+    assert added_response.status_code == 202
+    added = added_response.json()
     token = added['item']['token']
     assert added['item']['identifier'] == '@go_jobs'
-    assert added['item']['verification_status'] == 'verified'
+    assert added['item']['verification_status'] == 'unverified'
+    assert added['item']['enabled'] is False
     assert (
         client.post(
             f'/api/v1/sources/{token}/verify',
             headers={'X-CSRF-Token': csrf},
         ).status_code
-        == 200
+        == 202
     )
     assert (
         client.post(
@@ -162,24 +186,22 @@ def test_metrics_errors_logs_prompt_and_sources_api(tmp_path, monkeypatch) -> No
     )
 
 
-def test_source_is_not_saved_when_telegram_validation_fails(
+def test_source_verification_is_queued_for_bot_owned_session(
     tmp_path, monkeypatch
 ) -> None:
     client = _client(tmp_path, monkeypatch)
     csrf = _login(client)
 
-    async def unavailable(_identifier: str) -> None:
-        raise RuntimeError('network unavailable')
-
-    monkeypatch.setattr('tg_vacancy_bot.admin.api.verify_public_source', unavailable)
     response = client.post(
         '/api/v1/sources',
         headers={'X-CSRF-Token': csrf},
         json={'identifier': '@missing_source'},
     )
 
-    assert response.status_code == 422
-    assert client.get('/api/v1/sources').json()['total'] == 2
+    assert response.status_code == 202
+    action = claim_action(str(tmp_path))
+    assert action['action'] == 'verify_source'
+    assert action['target_id'] == response.json()['item']['token']
 
 
 def test_source_verification_marks_managed_source_invalid(
@@ -193,16 +215,15 @@ def test_source_verification_marks_managed_source_invalid(
         json={'identifier': '@go_jobs'},
     ).json()
 
-    async def unavailable(_identifier: str) -> None:
-        raise RuntimeError('network unavailable')
-
-    monkeypatch.setattr('tg_vacancy_bot.admin.api.verify_public_source', unavailable)
-    response = client.post(
-        f"/api/v1/sources/{added['item']['token']}/verify",
-        headers={'X-CSRF-Token': csrf},
+    action = claim_action(str(tmp_path))
+    SettingsStore(str(tmp_path)).mark_source_invalid(added['item']['token'])
+    finish_action(
+        action['id'],
+        succeeded=False,
+        data_dir=str(tmp_path),
+        error='Проверка Telegram не выполнена',
+        counts={'failed': 1},
     )
-
-    assert response.status_code == 422
     items = client.get('/api/v1/sources').json()['items']
     source = next(item for item in items if item['token'] == added['item']['token'])
     assert source['verification_status'] == 'invalid'

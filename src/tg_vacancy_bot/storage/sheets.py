@@ -1,8 +1,11 @@
 """Экспорт структурированных вакансий в два листа Google Sheets."""
 
 import asyncio
+import fcntl
 import logging
 import re
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -11,7 +14,6 @@ import gspread
 
 from tg_vacancy_bot import config
 from tg_vacancy_bot.models import NOT_SPECIFIED, VacancyAnalysis
-
 
 FULL_HEADERS = [
     "ID вакансии",
@@ -79,6 +81,7 @@ _HEADER_FORMAT = {
 }
 _WRAP_FORMAT = {"verticalAlignment": "TOP", "wrapStrategy": "WRAP"}
 _FORMATTED_WORKSHEET_IDS: set[int] = set()
+_EXPORT_LOCK = threading.Lock()
 
 
 def _format_datetime(value: datetime) -> str:
@@ -357,7 +360,7 @@ def _short_row_number(
 def _append_row(worksheet, row: list[Any]) -> int:
     response = worksheet.append_rows(
         [row],
-        value_input_option="USER_ENTERED",
+        value_input_option="RAW",
         insert_data_option="INSERT_ROWS",
     )
     updated_range = response.get("updates", {}).get("updatedRange", "")
@@ -377,19 +380,46 @@ def _export_to_sheets_sync(
     published_at: datetime,
 ) -> bool:
     """Дозаписывает отсутствующие строки и устойчив к частичному сбою."""
+    with _serialized_export():
+        return _export_locked(
+            vacancy_id=vacancy_id,
+            post_link=post_link,
+            channel_name=channel_name,
+            data=data,
+            raw_text=raw_text,
+            published_at=published_at,
+        )
+
+
+@contextmanager
+def _serialized_export():
+    """Serialize the check/append sequence across threads and local processes."""
+    lock_dir = __import__('pathlib').Path(config.DATA_DIR or 'data') / 'admin'
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with _EXPORT_LOCK, (lock_dir / 'sheets.lock').open('a') as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _export_locked(
+    *,
+    vacancy_id: str,
+    post_link: str,
+    channel_name: str,
+    data: VacancyAnalysis,
+    raw_text: str,
+    published_at: datetime,
+) -> bool:
     gc = gspread.service_account(filename=config.GOOGLE_CREDENTIALS_PATH)
     spreadsheet = gc.open_by_url(config.GOOGLE_SHEET_URL)
     full_sheet = _get_or_create_worksheet(
-        spreadsheet,
-        config.GOOGLE_SHEET_FULL_TITLE,
-        FULL_HEADERS,
-        full=True,
+        spreadsheet, config.GOOGLE_SHEET_FULL_TITLE, FULL_HEADERS, full=True
     )
     short_sheet = _get_or_create_worksheet(
-        spreadsheet,
-        config.GOOGLE_SHEET_SHORT_TITLE,
-        SHORT_HEADERS,
-        full=False,
+        spreadsheet, config.GOOGLE_SHEET_SHORT_TITLE, SHORT_HEADERS, full=False
     )
 
     full_exists = vacancy_id in {
@@ -472,15 +502,11 @@ async def append_to_google_sheet(
             published_at=published_at,
         )
         if saved:
-            logging.info(
-                "Вакансия %s записана в полный и краткий листы",
-                vacancy_id,
-            )
+            logging.info("Вакансия записана в полный и краткий листы")
         return saved
     except Exception as exc:
         logging.error(
-            "Ошибка записи вакансии %s в Google Sheets: %s",
-            vacancy_id,
-            exc,
+            "Ошибка записи вакансии в Google Sheets (%s)",
+            type(exc).__name__,
         )
         return False

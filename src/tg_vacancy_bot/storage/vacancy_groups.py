@@ -58,8 +58,7 @@ class VacancyGroupStore:
     def _migrate(self) -> None:
         with self._connect() as connection:
             connection.execute('PRAGMA journal_mode = WAL')
-            connection.executescript(
-                '''
+            connection.executescript('''
                 CREATE TABLE IF NOT EXISTS vacancy_groups (
                     group_id TEXT PRIMARY KEY,
                     canonical_vacancy_id TEXT NOT NULL UNIQUE,
@@ -97,8 +96,7 @@ class VacancyGroupStore:
                     company_key, title_key);
                 CREATE INDEX IF NOT EXISTS idx_group_publications_text_hash
                     ON group_publications (text_hash);
-                '''
-            )
+                ''')
 
     def register_publication(
         self,

@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-
 NOT_SPECIFIED = "Не указано"
 GRADES = ("Intern", "Junior", "Middle", "Senior", "Staff", "Lead", "Head")
 ROLES = {

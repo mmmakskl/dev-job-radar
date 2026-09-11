@@ -7,7 +7,10 @@ import hashlib
 import hmac
 import json
 import os
+import threading
 import time
+import uuid
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -24,12 +27,18 @@ from fastapi import (
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from tg_vacancy_bot.admin.control import request_action
+from tg_vacancy_bot.admin.control import (
+    ActionConflict,
+    active_action,
+    get_action,
+    request_action,
+)
 from tg_vacancy_bot.admin.settings import (
     AdminSettings,
-    ManagedSource,
     SettingsStore,
+    StaleSettingsError,
     normalize_public_source,
     validate_editable_instructions,
 )
@@ -37,8 +46,6 @@ from tg_vacancy_bot.admin.telemetry import TelemetryStore
 from tg_vacancy_bot.llm.prompts import DEFAULT_VACANCY_INSTRUCTIONS
 from tg_vacancy_bot.paths import resolve_vacancy_groups_db_path
 from tg_vacancy_bot.storage.vacancy_groups import VacancyGroupStore
-from tg_vacancy_bot.telegram.sources import verify_public_source
-
 
 SESSION_COOKIE = 'admin_session'
 CSRF_COOKIE = 'admin_csrf'
@@ -104,7 +111,10 @@ def _session_csrf(value: str | None, secret: str) -> str | None:
 
 
 def _is_configured() -> bool:
-    return bool(os.getenv('ADMIN_PASSWORD') and os.getenv('ADMIN_SESSION_SECRET'))
+    return bool(
+        len(os.getenv('ADMIN_PASSWORD', '')) >= 12
+        and len(os.getenv('ADMIN_SESSION_SECRET', '')) >= 24
+    )
 
 
 def _require_session(
@@ -146,90 +156,34 @@ def _source_token(origin: str, value: str, secret: str) -> str:
     return _channel_token(f'{origin}:{value}', secret)
 
 
-def _source_values(
-    settings: AdminSettings, base_channels: list[str]
-) -> list[tuple[str, str, str | None, bool, str]]:
-    return [
-        *[
-            (
-                'environment',
-                value,
-                None,
-                value not in set(settings.telegram.disabled_channels),
-                'unverified',
-            )
-            for value in base_channels
-        ],
-        *[
-            (
-                'folder',
-                value,
-                None,
-                value not in set(settings.telegram.disabled_channels),
-                'unverified',
-            )
-            for value in settings.telegram.folder_channels
-        ],
-        *[
-            (
-                'legacy',
-                value,
-                None,
-                value not in set(settings.telegram.disabled_channels),
-                'unverified',
-            )
-            for value in settings.telegram.additional_channels
-        ],
-        *[
-            (
-                'managed',
-                item.identifier,
-                item.added_at,
-                item.enabled,
-                item.verification_status,
-            )
-            for item in settings.telegram.managed_sources
-        ],
-    ]
-
-
-def _source_entries(
-    settings: AdminSettings, base_channels: list[str]
-) -> list[dict[str, Any]]:
-    secret = os.getenv('ADMIN_SESSION_SECRET', 'unconfigured')
-    entries: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for index, (origin, value, added_at, enabled, verification_status) in enumerate(
-        _source_values(settings, base_channels), start=1
-    ):
-        identity = value.casefold()
-        if identity in seen:
-            continue
-        seen.add(identity)
-        numeric = value.lstrip('-').isdigit()
+def _source_entries(store: SettingsStore) -> list[dict[str, Any]]:
+    entries = []
+    for index, source in enumerate(store.list_sources(), start=1):
+        username = source['username']
+        origins = source['origins']
         entries.append(
             {
-                'token': _source_token(origin, value, secret),
-                'label': (
-                    f'Приватный источник {index}'
-                    if numeric
-                    else f'@{value.lstrip("@")}'
+                'token': source['id'],
+                'label': f'@{username}' if username else f'Приватный источник {index}',
+                'identifier': f'@{username}' if username else None,
+                'enabled': source['enabled'],
+                'kind': 'public' if username else 'private',
+                'origin': origins[0] if len(origins) == 1 else 'multiple',
+                'origins': origins,
+                'title': source['title'],
+                'chat_type': source['chat_type'],
+                'added_at': source['created_at'],
+                'last_seen_at': source['last_seen_at'],
+                'removable': 'admin' in origins,
+                'verification_status': (
+                    source['verification_status'] if username else 'hidden'
                 ),
-                'identifier': None if numeric else f'@{value.lstrip("@")}',
-                'enabled': enabled,
-                'kind': 'private' if numeric else 'public',
-                'origin': origin,
-                'added_at': added_at,
-                'removable': origin == 'managed',
-                'verification_status': 'hidden' if numeric else verification_status,
             }
         )
     return entries
 
 
-def _public_settings(
-    settings: AdminSettings, base_channels: list[str]
-) -> dict[str, Any]:
+def _public_settings(settings: AdminSettings, store: SettingsStore) -> dict[str, Any]:
     payload = settings.model_dump()
     payload['telegram']['disabled_channels'] = []
     payload['telegram']['folder_channels'] = []
@@ -237,17 +191,9 @@ def _public_settings(
     payload['telegram']['notify_target'] = _mask_target(
         payload['telegram']['notify_target']
     )
-    payload['telegram']['channels'] = _source_entries(settings, base_channels)
+    payload['telegram']['channels'] = _source_entries(store)
     payload['mistral'].pop('vacancy_instructions', None)
     return payload
-
-
-def _base_channels() -> list[str]:
-    return [
-        item.strip()
-        for item in os.getenv('TARGET_CHANNELS', '').split(',')
-        if item.strip()
-    ]
 
 
 def create_app(data_dir: str | None = None) -> FastAPI:
@@ -265,6 +211,19 @@ def create_app(data_dir: str | None = None) -> FastAPI:
         )
 
     app = FastAPI(title='Go Radar Admin API', docs_url=None, redoc_url=None)
+    allowed_hosts = [
+        item.strip()
+        for item in os.getenv(
+            'ADMIN_ALLOWED_HOSTS', 'localhost,127.0.0.1,testserver'
+        ).split(',')
+        if item.strip()
+    ]
+    if not allowed_hosts or any('/' in item or ':' in item for item in allowed_hosts):
+        raise RuntimeError('ADMIN_ALLOWED_HOSTS должен содержать только имена хостов')
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+    failed_logins: dict[str, list[float]] = defaultdict(list)
+    login_lock = threading.Lock()
+    instance_id = str(uuid.uuid4())
 
     @app.middleware('http')
     async def security_headers(request: Request, call_next):
@@ -281,7 +240,13 @@ def create_app(data_dir: str | None = None) -> FastAPI:
 
     @app.get('/healthz')
     def health() -> dict[str, str]:
-        return {'status': 'ok'}
+        try:
+            store.load()
+        except Exception as error:
+            raise HTTPException(
+                status_code=503, detail='storage unavailable'
+            ) from error
+        return {'status': 'ok', 'instance_id': instance_id}
 
     @app.get('/api/v1/auth/status')
     def auth_status(
@@ -294,15 +259,39 @@ def create_app(data_dir: str | None = None) -> FastAPI:
         }
 
     @app.post('/api/v1/auth/login')
-    def login(body: LoginRequest, response: Response) -> dict[str, bool]:
+    def login(
+        body: LoginRequest, request: Request, response: Response
+    ) -> dict[str, bool]:
         password = os.getenv('ADMIN_PASSWORD', '')
         secret = os.getenv('ADMIN_SESSION_SECRET', '')
         if not password or not secret:
             raise HTTPException(
                 status_code=503, detail='Доступ администратора ещё не настроен'
             )
+        if len(password) < 12 or len(secret) < 24:
+            raise HTTPException(
+                status_code=503,
+                detail='Пароль или секрет сессии администратора слишком короткий',
+            )
+        client_key = request.client.host if request.client else 'unknown'
+        now = time.monotonic()
+        with login_lock:
+            attempts = [
+                stamp for stamp in failed_logins[client_key] if stamp > now - 900
+            ]
+            failed_logins[client_key] = attempts
+        if len(attempts) >= 5:
+            raise HTTPException(
+                status_code=429,
+                detail='Слишком много попыток входа',
+                headers={'Retry-After': '900'},
+            )
         if not hmac.compare_digest(body.password, password):
+            with login_lock:
+                failed_logins[client_key].append(now)
             raise HTTPException(status_code=401, detail='Неверный пароль')
+        with login_lock:
+            failed_logins.pop(client_key, None)
         session, csrf = _session_value(secret)
         secure = os.getenv('ADMIN_COOKIE_SECURE', 'true').lower() != 'false'
         response.set_cookie(
@@ -342,6 +331,7 @@ def create_app(data_dir: str | None = None) -> FastAPI:
                 else None
             ),
             'operations': telemetry.recent_operations(10),
+            'active_action': active_action(data_dir or os.getenv('DATA_DIR')),
             'secret_status': {
                 'telegram': bool(os.getenv('API_ID') and os.getenv('API_HASH')),
                 'mistral': bool(os.getenv('MISTRAL_API_KEY')),
@@ -350,7 +340,7 @@ def create_app(data_dir: str | None = None) -> FastAPI:
                     and os.getenv('GOOGLE_CREDENTIALS_PATH')
                 ),
             },
-            'channel_count': (len(_source_entries(settings, _base_channels()))),
+            'channel_count': len(store.list_sources(active_only=True)),
         }
 
     @app.get('/api/v1/metrics/today')
@@ -413,13 +403,18 @@ def create_app(data_dir: str | None = None) -> FastAPI:
 
     @app.get('/api/v1/settings')
     def get_settings(_: str = Depends(_require_session)) -> dict[str, Any]:
-        return _public_settings(store.load(), _base_channels())
+        return _public_settings(store.load(), store)
 
     @app.put('/api/v1/settings')
     def put_settings(
         payload: dict[str, Any], _: str = Depends(_require_csrf)
     ) -> dict[str, Any]:
         current = store.load()
+        submitted_revision = payload.get('revision')
+        if submitted_revision != current.revision:
+            raise HTTPException(
+                status_code=409, detail='Настройки уже изменены. Обновите страницу.'
+            )
         merged = current.model_dump()
         for key in ('telegram', 'filters', 'mistral', 'sheets', 'retention', 'alerts'):
             if key in payload and isinstance(payload[key], dict):
@@ -434,29 +429,18 @@ def create_app(data_dir: str | None = None) -> FastAPI:
                     update.pop('vacancy_instructions', None)
                 merged[key].update(update)
         incoming_tokens = payload.get('telegram', {}).get('enabled_channel_tokens')
-        if incoming_tokens is not None:
-            all_channels = [
-                *_base_channels(),
-                *current.telegram.folder_channels,
-                *current.telegram.additional_channels,
-            ]
-            allowed = {
-                _channel_token(
-                    item, os.getenv('ADMIN_SESSION_SECRET', 'unconfigured')
-                ): item
-                for item in all_channels
-            }
-            merged['telegram']['disabled_channels'] = [
-                value
-                for token, value in allowed.items()
-                if token not in set(incoming_tokens)
-            ]
         try:
-            saved = store.replace_from_payload(merged)
+            saved = (
+                store.replace_with_enabled_sources(merged, set(incoming_tokens))
+                if incoming_tokens is not None
+                else store.replace_from_payload(merged)
+            )
+        except StaleSettingsError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         telemetry.record('settings_saved', revision=saved.revision)
-        return _public_settings(saved, _base_channels())
+        return _public_settings(saved, store)
 
     @app.get('/api/v1/operations')
     def operations(_: str = Depends(_require_session)) -> list[dict[str, Any]]:
@@ -531,107 +515,73 @@ def create_app(data_dir: str | None = None) -> FastAPI:
 
     @app.get('/api/v1/sources')
     def sources(_: str = Depends(_require_session)) -> dict[str, Any]:
-        entries = _source_entries(store.load(), _base_channels())
+        entries = _source_entries(store)
         return {'items': entries, 'total': len(entries), 'restart_required': True}
 
     @app.post('/api/v1/sources')
     async def add_source(
-        body: SourceRequest, _: str = Depends(_require_csrf)
+        body: SourceRequest, response: Response, _: str = Depends(_require_csrf)
     ) -> dict[str, Any]:
         try:
             identifier = normalize_public_source(body.identifier)
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
-        current = store.load()
         existing = {
             str(item.get('identifier') or '').strip().lstrip('@').casefold()
-            for item in _source_entries(current, _base_channels())
+            for item in _source_entries(store)
         }
         if identifier.casefold() in existing:
             raise HTTPException(status_code=409, detail='Этот источник уже добавлен')
+        item = store.upsert_source(
+            identifier,
+            origin='admin',
+            enabled=False,
+            verification_status='unverified',
+        )
         try:
-            await verify_public_source(identifier)
-        except Exception as error:
-            telemetry.record('source_verification_failed')
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    'Не удалось проверить доступность публичного Telegram-источника. '
-                    'Убедитесь, что username существует, сессия свободна и повторите.'
-                ),
-            ) from error
-        current.telegram.managed_sources.append(
-            ManagedSource(
-                identifier=identifier,
-                verification_status='verified',
-                verified_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            action = request_action(
+                'verify_source', data_dir or os.getenv('DATA_DIR'), target_id=item['id']
             )
+        except ActionConflict as error:
+            store.remove_admin_origin(item['id'])
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        telemetry.record('source_added')
+        response.status_code = 202
+        public_item = next(
+            entry for entry in _source_entries(store) if entry['token'] == item['id']
         )
-        saved = store.save(current)
-        telemetry.record('source_added', source=identifier, revision=saved.revision)
-        entries = _source_entries(saved, _base_channels())
-        item = next(
-            entry
-            for entry in entries
-            if entry['origin'] == 'managed' and entry['identifier'] == f'@{identifier}'
-        )
-        return {'item': item, 'restart_required': True}
+        return {
+            'item': public_item,
+            'action': action,
+            'restart_required': True,
+        }
 
-    def find_source(token: str) -> tuple[AdminSettings, dict[str, Any]]:
-        current = store.load()
-        for item in _source_entries(current, _base_channels()):
+    def find_source(token: str) -> dict[str, Any]:
+        for item in _source_entries(store):
             if hmac.compare_digest(item['token'], token):
-                return current, item
+                return item
         raise HTTPException(status_code=404, detail='Источник не найден')
 
     @app.patch('/api/v1/sources/{token}')
     def update_source(
         token: str, body: SourceEnabledRequest, _: str = Depends(_require_csrf)
     ) -> dict[str, Any]:
-        current, item = find_source(token)
-        identifier = (item['identifier'] or '').strip().lstrip('@')
-        if item['origin'] == 'managed':
-            for source in current.telegram.managed_sources:
-                if source.identifier.casefold() == identifier.casefold():
-                    source.enabled = body.enabled
-                    break
-        else:
-            secret = os.getenv('ADMIN_SESSION_SECRET', 'unconfigured')
-            raw = next(
-                (
-                    value
-                    for origin, value, _, _, _ in _source_values(
-                        current, _base_channels()
-                    )
-                    if _source_token(origin, value, secret) == token
-                ),
-                None,
-            )
-            if raw is None:
-                raise HTTPException(status_code=404, detail='Источник не найден')
-            disabled = set(current.telegram.disabled_channels)
-            if body.enabled:
-                disabled.discard(raw)
-            else:
-                disabled.add(raw)
-            current.telegram.disabled_channels = sorted(disabled)
-        saved = store.save(current)
-        telemetry.record(
-            'source_enabled_changed', enabled=body.enabled, revision=saved.revision
-        )
+        find_source(token)
+        try:
+            store.set_source_enabled(token, body.enabled)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        telemetry.record('source_enabled_changed', enabled=body.enabled)
         refreshed = next(
-            entry
-            for entry in _source_entries(saved, _base_channels())
-            if entry['origin'] == item['origin']
-            and entry['identifier'] == item['identifier']
+            entry for entry in _source_entries(store) if entry['token'] == token
         )
         return {'item': refreshed, 'restart_required': True}
 
     @app.post('/api/v1/sources/{token}/verify')
     async def verify_source(
-        token: str, _: str = Depends(_require_csrf)
+        token: str, response: Response, _: str = Depends(_require_csrf)
     ) -> dict[str, Any]:
-        current, item = find_source(token)
+        item = find_source(token)
         identifier = (item['identifier'] or '').strip().lstrip('@')
         if not identifier:
             raise HTTPException(
@@ -639,35 +589,13 @@ def create_app(data_dir: str | None = None) -> FastAPI:
                 detail='Приватный источник нельзя проверить из браузера',
             )
         try:
-            await verify_public_source(identifier)
-        except Exception as error:
-            if item['origin'] == 'managed':
-                for source in current.telegram.managed_sources:
-                    if source.identifier.casefold() == identifier.casefold():
-                        source.verification_status = 'invalid'
-                        break
-                store.save(current)
-            raise HTTPException(
-                status_code=422,
-                detail='Проверка источника не прошла: username недоступен или Telegram-сессия занята.',
-            ) from error
-        if item['origin'] == 'managed':
-            for source in current.telegram.managed_sources:
-                if source.identifier.casefold() == identifier.casefold():
-                    source.verification_status = 'verified'
-                    source.verified_at = time.strftime(
-                        '%Y-%m-%dT%H:%M:%SZ', time.gmtime()
-                    )
-                    current = store.save(current)
-                    break
-        refreshed = next(
-            entry
-            for entry in _source_entries(current, _base_channels())
-            if entry['origin'] == item['origin']
-            and entry['identifier'] == item['identifier']
-        )
-        telemetry.record('source_verified')
-        return {'item': refreshed, 'restart_required': True}
+            action = request_action(
+                'verify_source', data_dir or os.getenv('DATA_DIR'), target_id=token
+            )
+        except ActionConflict as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        response.status_code = 202
+        return {'item': item, 'action': action, 'restart_required': True}
 
     @app.delete('/api/v1/sources/{token}')
     def delete_source(
@@ -677,34 +605,42 @@ def create_app(data_dir: str | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=400, detail='Подтвердите удаление источника'
             )
-        current, item = find_source(token)
-        if item['origin'] != 'managed':
+        item = find_source(token)
+        if 'admin' not in item['origins']:
             raise HTTPException(
                 status_code=409,
                 detail='Этот источник пришёл из .env или папки Telegram и не удаляется здесь',
             )
-        identifier = (item['identifier'] or '').strip().lstrip('@').casefold()
-        current.telegram.managed_sources = [
-            source
-            for source in current.telegram.managed_sources
-            if source.identifier.casefold() != identifier
-        ]
-        saved = store.save(current)
-        telemetry.record('source_deleted', revision=saved.revision)
+        store.remove_admin_origin(token)
+        telemetry.record('source_deleted')
         return {'ok': True, 'restart_required': True}
 
     @app.post('/api/v1/actions')
-    def action(body: ActionRequest, _: str = Depends(_require_csrf)) -> dict[str, str]:
+    def action(
+        body: ActionRequest, response: Response, _: str = Depends(_require_csrf)
+    ) -> dict[str, Any]:
         if not body.confirmed:
             raise HTTPException(
                 status_code=400, detail='Требуется явное подтверждение действия'
             )
         try:
             requested = request_action(body.action, data_dir or os.getenv('DATA_DIR'))
+        except ActionConflict as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         telemetry.record('action_requested', action=body.action)
-        return {'id': requested['id'], 'action': requested['action']}
+        response.status_code = 202
+        return requested
+
+    @app.get('/api/v1/actions/{action_id}')
+    def action_status(
+        action_id: str, _: str = Depends(_require_session)
+    ) -> dict[str, Any]:
+        result = get_action(action_id, data_dir or os.getenv('DATA_DIR'))
+        if result is None:
+            raise HTTPException(status_code=404, detail='Операция не найдена')
+        return result
 
     static_dir = Path(os.getenv('ADMIN_STATIC_DIR', '/app/web'))
     if static_dir.exists():

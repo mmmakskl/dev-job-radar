@@ -28,8 +28,8 @@ Mistral API, Google Sheets и администратор через CLI либо
 | Telegram | Telethon | Userbot, QR-авторизация, история и live-события |
 | LLM | Mistral API через OpenAI SDK | Определение релевантности и извлечение структуры |
 | Экспорт | Google Sheets API, gspread, google-auth | Создание и заполнение двух листов |
-| Конфигурация | `.env`, Pydantic-managed JSON | Секреты и не секретные управляемые настройки |
-| Локальное состояние | JSONL/JSON/SQLite | Exact-дедупликация, группы репостов, причины пропусков, метрики, логи, ошибки, alert state и личные статусы кандидатов |
+| Конфигурация | `.env`, Pydantic, admin SQLite | Секреты/static bootstrap в `.env`; revisioned non-secret settings в SQLite |
+| Локальное состояние | JSONL/JSON/SQLite | Источники/actions, exact-дедупликация, группы репостов, причины пропусков, метрики, логи, ошибки, alert state и личные статусы кандидатов |
 | HTTP/API | FastAPI, Uvicorn | Admin API и раздача статического интерфейса |
 | Frontend | Next.js static export, React, TypeScript, Tailwind, RHF, Zod | Русскоязычная админ-панель |
 | Контейнеризация | Docker, Docker Compose | Сервисы `bot` и `admin` |
@@ -90,7 +90,7 @@ flowchart LR
 
 ### Live-обработка новых сообщений
 
-Вход — `Telethon.events.NewMessage` для `TARGET_CHANNELS`. Обработчик создаёт
+Вход — `Telethon.events.NewMessage` для active sources из admin SQLite. Обработчик создаёт
 `LiveMessageJob` и неблокирующе помещает его в ограниченную `asyncio.Queue`.
 Worker вызывает `VacancyProcessor.process_message`. При остановке новые
 события не принимаются, а сервис ждёт завершения очереди до 30 секунд.
@@ -100,12 +100,11 @@ Worker вызывает `VacancyProcessor.process_message`. При остано�
 
 ### Обработка истории
 
-`scripts/parse_history.py` последовательно проходит `TARGET_CHANNELS` через
+`scripts/parse_history.py` последовательно проходит active sources из admin SQLite через
 `client.iter_messages` и прекращает проход на сообщениях старше
 `HISTORY_DAYS`. Для каждого сообщения применяется общий processor. При
-включённом `CANDIDATE_BOT_ENABLED` успешно экспортированные исторические
-вакансии также публикуются интерактивными карточками в beta-канале; повторная
-публикация блокируется durable claim в SQLite. Legacy-текстовые сообщения
+включённом `CANDIDATE_BOT_ENABLED` history-обработка не публикует candidate-channel
+карточки; они создаются только live-pipeline. Legacy-текстовые сообщения
 по-прежнему не создаются.
 
 Один Telegram session нельзя безопасно одновременно использовать для history и
@@ -190,17 +189,13 @@ Telegram-карточку, но его источник сохраняется �
 | `API_ID`, `API_HASH` | Да для Telegram | Telegram API; есть алиасы `TG_API_ID`, `TG_API_HASH` |
 | `SESSION_NAME` | Нет | `my_account` по умолчанию |
 | `SESSION_PATH`, `DATA_DIR` | Нет | Пути persistent данных и session |
-| `TARGET_CHANNELS` | Нужен для мониторинга | CSV username или числовых ID |
-| `TELEGRAM_CHANNELS_FOLDER` | Нет | Папка Telegram, default `Вакансии` |
+| `TARGET_CHANNELS` | Только первая миграция | Legacy CSV username или numeric IDs; затем источник — admin SQLite |
 | `MISTRAL_API_KEY` | Да для processing | Ключ Mistral |
 | `GOOGLE_SHEET_URL` | Да для processing | Целевая таблица |
 | `GOOGLE_CREDENTIALS_PATH` | Нужен для записи | Service Account JSON, default `credentials.json` |
-| `OUTPUT_TIMEZONE` | Нет | `Europe/Moscow` до managed-конфигурации |
-| `GOOGLE_SHEET_FULL_TITLE`, `GOOGLE_SHEET_SHORT_TITLE` | Нет | Имена листов до managed-конфигурации |
-| `STATE_FILE_PATH`, `TEXT_HASH_TTL_DAYS` | Нет | `data/state.jsonl`, 30 дней |
+| `STATE_FILE_PATH` | Нет | `data/state.jsonl` |
 | `VACANCY_GROUP_WINDOW_DAYS`, `VACANCY_GROUPS_DB_PATH` | Нет | Окно строгой группировки новых репостов и `data/vacancy_groups.sqlite3` |
-| `LIVE_QUEUE_MAXSIZE`, `LIVE_WORKERS` | Нет | 1000 и 1 |
-| `TELEGRAM_NOTIFY_*` | Target обязателен при включении | Эксплуатационные алерты Telethon; не публикация вакансий |
+| `TELEGRAM_NOTIFY_TARGET` | При alerts | Получатель эксплуатационных алертов; policy хранится в SQLite |
 | `CANDIDATE_BOT_*` | Все обязательны при включении | Bot API token, общий beta-канал, allowlist numeric user ID и SQLite path |
 | `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET` | Да для UI | Вход и HMAC сессии |
 | `ADMIN_COOKIE_SECURE`, `ADMIN_STATIC_DIR` | Нет | Cookie и каталог статической панели |
@@ -232,7 +227,7 @@ HTTP API существует. За исключением healthcheck, стат
 | `GET/PUT/POST` | `/api/v1/prompt`, `/api/v1/prompt/reset` | Изменение инструкций LLM |
 | `GET/POST/PATCH/DELETE` | `/api/v1/sources` | Управление managed-источниками |
 | `POST` | `/api/v1/sources/{token}/verify` | Повторно безопасно проверить public username |
-| `POST` | `/api/v1/actions` | `restart`, `history`, `sync_channels` |
+| `POST/GET` | `/api/v1/actions`, `/api/v1/actions/{id}` | Очередь и durable status операций |
 
 Полный код контракта: `admin/api.py`.
 
@@ -266,9 +261,9 @@ Google Sheets остаются пользовательским представ
 | `make run` / `make live` | Live-мониторинг | Telegram, Mistral, Sheets | Пишет Sheets/state/telemetry; при beta-режиме — карточки Bot API |
 | `make candidate-bot` | Личный Bot API long polling | `CANDIDATE_BOT_*` | Пишет личные статусы/жалобы и редактирует одну карточку списка в SQLite |
 | `make history` | Исторический проход | Те же | Обрабатывает старые посты |
-| `make discover` | Поиск диалогов | Telegram session | Создаёт `found_channels.json` |
-| `make sync-channels` | Обновление `.env` из папки | Telegram session, `.env` | Меняет `TARGET_CHANNELS` |
-| `sync_channels.py --managed-settings` | Сохраняет папку в settings | Telegram session | Меняет managed JSON |
+| `make discover` | Поиск диалогов | Telegram session | Создаёт JSON и upsert-ит discovery sources |
+| `make sync-channels` | Sync папки | Telegram session, data volume | Transactional write в admin SQLite |
+| `sync_channels.py` | Синхронизирует папку | Telegram session | Transactional write в admin SQLite |
 | `make smoke` | Интерактивный smoke-test | Telegram session | Реальные API-запросы |
 | `make test`, `make check`, `make ci` | Проверки | Python env | Без внешних API |
 | `make web-check` | TypeScript, Vitest, Next build | Node/npm | Build-артефакты |

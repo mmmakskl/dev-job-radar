@@ -4,7 +4,6 @@ import hashlib
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-
 _ZERO_WIDTH_RE = re.compile(r"[\u200b-\u200d\u2060\ufeff]")
 _TELEGRAM_LINK_RE = re.compile(
     r"(?<![\w.])(?:https?://)?t\.me/\S+",

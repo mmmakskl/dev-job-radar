@@ -60,7 +60,7 @@ class CandidateVacancyNotifier:
             published_at=published_at.isoformat(),
         )
         if not self.store.claim_channel_delivery(vacancy_id):
-            logging.info('Карточка вакансии уже была заявлена: %s', vacancy_id)
+            logging.info('Карточка вакансии уже была заявлена')
             return True
         message = format_vacancy_notification(
             vacancy_id=vacancy_id,
