@@ -48,6 +48,7 @@ test('private screens use the full content width at every supported viewport', a
   await page.goto('/');
   await page.getByLabel('Пароль администратора').fill('e2e-password');
   await page.getByRole('button', { name: 'Войти' }).click();
+  await expect(page.getByRole('heading', { name: 'Состояние обработки' })).toBeVisible();
 
   for (const viewport of [
     { width: 1440, height: 1000 },
