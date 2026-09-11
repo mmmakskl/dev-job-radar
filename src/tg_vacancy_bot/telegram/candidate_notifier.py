@@ -77,6 +77,7 @@ class CandidateVacancyNotifier:
                 reply_markup=channel_keyboard(vacancy.callback_key, post_link),
             )
         except Exception:
+            self.store.release_channel_delivery(vacancy_id)
             logging.exception('Не удалось отправить пользовательскую Telegram-карточку')
             return False
         message_id = sent.get('message_id') if isinstance(sent, dict) else None

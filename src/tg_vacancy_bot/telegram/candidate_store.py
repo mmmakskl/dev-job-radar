@@ -234,6 +234,18 @@ class CandidateStore:
                 (message_id, utc_now(), vacancy_id),
             )
 
+    def release_channel_delivery(self, vacancy_id: str) -> None:
+        """Return a failed delivery claim to pending so it can be retried."""
+        with self._connect() as connection:
+            connection.execute(
+                '''
+                UPDATE vacancies
+                SET delivery_state = 'pending', updated_at = ?
+                WHERE vacancy_id = ? AND delivery_state = 'sending'
+                ''',
+                (utc_now(), vacancy_id),
+            )
+
     def set_status(
         self, telegram_user_id: int, callback_key: str, status: str
     ) -> CandidateVacancy | None:
