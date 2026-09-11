@@ -34,12 +34,15 @@ class PremiumAnalysis:
         definition = get_track(track)
         if (
             not self.is_vacancy
-            or not self.is_track_match
-            or not self.analysis.is_match
             or self.go_role_strength not in definition.accepted_strengths
         ):
             return 'rejected'
-        if self.needs_review or self.confidence < definition.confidence_threshold:
+        if (
+            not self.is_track_match
+            or not self.analysis.is_match
+            or self.needs_review
+            or self.confidence < definition.confidence_threshold
+        ):
             return 'review'
         return 'accepted'
 

@@ -131,7 +131,9 @@ def setup(tmp_path, messages=None, analyzer=None, **kwargs):
         ('Вакансия Golang: подпишитесь на наш канал', False),
         ('Golang webinar hiring tips', False),
         ('Hiring sales: go to the office', False),
-        ('Golang developer', False),
+        ('Golang developer', True),
+        ('Go-разработчик · удалённо · 300000 рублей', True),
+        ('Golang microservices tutorial', False),
         ('Hiring engineers ' + '.' * 160 + ' go', False),
         ('', False),
     ],
@@ -175,18 +177,11 @@ def test_decision_threshold(field, value):
         ('go_role_strength', 'optional'),
         ('go_role_strength', 'absent'),
         ('is_vacancy', False),
-        ('is_track_match', False),
     ],
 )
 def test_decision_negative_always_rejected(field, value):
     assert (
         replace(decision(), needs_review=True, **{field: value}).status() == 'rejected'
-    )
-    assert (
-        replace(
-            decision(), analysis=replace(decision().analysis, is_match=False)
-        ).status()
-        == 'rejected'
     )
 
 
@@ -494,6 +489,50 @@ def test_save_publish_idempotency_and_recovery(tmp_path):
     store.recover()
     assert store.get_result(result['result_id'])['action_error'] == 'delivery_uncertain'
     assert store.claim_action() is None
+    with pytest.raises(ValueError):
+        store.request_action(result['result_id'], 'publish')
+
+
+@pytest.mark.parametrize('disagreement', ['track', 'analysis', 'confidence'])
+def test_borderline_go_requires_manual_publish(tmp_path, disagreement):
+    candidate = replace(
+        decision(),
+        is_track_match=disagreement != 'track',
+        analysis=replace(decision().analysis, is_match=disagreement != 'analysis'),
+        confidence=60 if disagreement == 'confidence' else 95,
+    )
+    assert candidate.status() == 'review'
+    svc, store, processor, _, _, sheets = setup(
+        tmp_path,
+        [message(text='Golang developer')],
+        analyzer=AsyncMock(return_value=candidate),
+    )
+    bot = SimpleNamespace(send_message=AsyncMock(return_value={'message_id': 9}))
+    processor.notify_vacancy = CandidateVacancyNotifier(
+        bot, CandidateStore(str(tmp_path / 'candidate.sqlite3')), '@cards'
+    )
+    run = store.create_run(query='Golang', mode='save_publish')
+    asyncio.run(svc.tick())
+    result = store.list_results(run['search_run_id'])['items'][0]
+    assert result['status'] == 'review'
+    assert result['can_persist'] is True
+    sheets.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+    store.request_action(result['result_id'], 'publish')
+    asyncio.run(svc.tick())
+    assert store.public_result(result['result_id'])['status'] == 'published'
+    store.request_action(result['result_id'], 'publish')
+    asyncio.run(svc.tick())
+    assert sheets.await_count == bot.send_message.await_count == 1
+
+
+def test_expired_review_cannot_be_published(tmp_path):
+    svc, store, _, _, _, _ = setup(tmp_path, [message()])
+    run = store.create_run(query='Golang')
+    asyncio.run(svc.tick())
+    result = store.list_results(run['search_run_id'])['items'][0]
+    store.cleanup(raw_days=0)
+    assert store.public_result(result['result_id'])['can_persist'] is False
     with pytest.raises(ValueError):
         store.request_action(result['result_id'], 'publish')
 

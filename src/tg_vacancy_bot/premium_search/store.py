@@ -697,6 +697,12 @@ class PremiumSearchStore:
         result['analysis'] = json.loads(result.pop('analysis_json') or 'null')
         result['apply_urls'] = json.loads(result.pop('apply_urls_json'))
         if not raw:
+            result['can_persist'] = bool(
+                result['analysis']
+                and result['raw_text']
+                and result['status'] in {'accepted', 'review', 'saved'}
+                and result['delivery_state'] != 'sending'
+            )
             if result['analysis']:
                 result['language'] = result['analysis'].get('language')
                 result['go_role_strength'] = result['analysis'].get('go_role_strength')

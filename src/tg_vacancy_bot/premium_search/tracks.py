@@ -40,9 +40,10 @@ def go_prefilter(text: str) -> str | None:
         return 'empty_text'
     if candidate_profile_reasons(text) or _EXCLUDE.search(text):
         return 'profile_or_promotion'
-    if not _HIRING.search(text):
-        return 'missing_hiring_context'
     primary = bool(_ROLE.search(text))
+    # A role title is enough to request LLM review, even without a hiring keyword.
+    if not _HIRING.search(text) and not primary:
+        return 'missing_hiring_context'
     for match in _GO.finditer(text):
         if match.group().casefold() == 'go' and re.match(
             r'\s+(?:to|ahead|for|with|on|through|back|out|home|further)\b',

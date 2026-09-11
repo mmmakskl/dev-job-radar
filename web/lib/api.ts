@@ -57,7 +57,7 @@ export async function waitForAction(id:string,maxAttempts=30):Promise<AdminActio
 
 export type PremiumCapabilities = {enabled:boolean;publisher_configured:boolean;tracks:{key:string;label:string;confidence_threshold:number}[]};
 export type PremiumRun = {search_run_id:string;query:string;track:string;mode:string;status:string;phase:string;cancel_requested:number;retry_at:string|null;error_reason:string|null;quota:{remains?:number;reset_at?:string|null};metrics:Record<string,number>;include_review:boolean;created_at:string};
-export type PremiumResult = {result_id:string;post_link:string|null;channel_username:string|null;channel_name:string|null;published_at:string|null;title:string|null;company:string|null;summary:string|null;status:string;decision_reason:string;confidence:number|null;go_role_strength?:string;language?:string;group_id:string|null;action_state:string;action_error:string|null;delivery_state:string};
+export type PremiumResult = {can_persist:boolean;result_id:string;post_link:string|null;channel_username:string|null;channel_name:string|null;published_at:string|null;title:string|null;company:string|null;summary:string|null;status:string;decision_reason:string;confidence:number|null;go_role_strength?:string;language?:string;group_id:string|null;action_state:string;action_error:string|null;delivery_state:string};
 export type PremiumResults = {items:PremiumResult[];total:number;offset:number;limit:number};
 export type PremiumParams = {query:string;track:string;mode:string;result_limit:number;period_days:number;include_review:boolean};
 export const premiumApi = {
