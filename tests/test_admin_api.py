@@ -27,6 +27,21 @@ def test_api_requires_authentication(tmp_path, monkeypatch) -> None:
     assert client.get('/healthz').json()['status'] == 'ok'
 
 
+def test_auth_status_requires_non_empty_credentials_only(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv('ADMIN_PASSWORD', 'short')
+    monkeypatch.setenv('ADMIN_SESSION_SECRET', 'x')
+    client = TestClient(create_app(str(tmp_path)))
+
+    assert client.get('/api/v1/auth/status').json()['configured'] is True
+
+    monkeypatch.delenv('ADMIN_PASSWORD')
+    assert client.get('/api/v1/auth/status').json()['configured'] is False
+
+    monkeypatch.setenv('ADMIN_PASSWORD', 'short')
+    monkeypatch.delenv('ADMIN_SESSION_SECRET')
+    assert client.get('/api/v1/auth/status').json()['configured'] is False
+
+
 def test_login_csrf_and_redacted_channels(tmp_path, monkeypatch) -> None:
     client = _client(tmp_path, monkeypatch)
     csrf = _login(client)

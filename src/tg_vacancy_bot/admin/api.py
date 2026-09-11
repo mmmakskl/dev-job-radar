@@ -112,8 +112,7 @@ def _session_csrf(value: str | None, secret: str) -> str | None:
 
 def _is_configured() -> bool:
     return bool(
-        len(os.getenv('ADMIN_PASSWORD', '')) >= 12
-        and len(os.getenv('ADMIN_SESSION_SECRET', '')) >= 24
+        os.getenv('ADMIN_PASSWORD', '') and os.getenv('ADMIN_SESSION_SECRET', '')
     )
 
 
