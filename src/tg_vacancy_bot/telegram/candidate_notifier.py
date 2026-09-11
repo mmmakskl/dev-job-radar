@@ -48,6 +48,7 @@ class CandidateVacancyNotifier:
         channel_name: str,
         data: VacancyAnalysis,
         published_at: datetime,
+        strict_delivery: bool = False,
     ) -> bool:
         """Publishes the shared card; failure never interrupts the ingestion pipeline."""
         vacancy = self.store.register_vacancy(
@@ -61,7 +62,11 @@ class CandidateVacancyNotifier:
         )
         if not self.store.claim_channel_delivery(vacancy_id):
             logging.info('Карточка вакансии уже была заявлена')
-            return True
+            return (
+                self.store.channel_delivery_state(vacancy_id) == 'published'
+                if strict_delivery
+                else True
+            )
         message = format_vacancy_notification(
             vacancy_id=vacancy_id,
             post_link=post_link,
@@ -77,8 +82,9 @@ class CandidateVacancyNotifier:
                 reply_markup=channel_keyboard(vacancy.callback_key, post_link),
             )
         except Exception:
-            self.store.release_channel_delivery(vacancy_id)
-            logging.exception('Не удалось отправить пользовательскую Telegram-карточку')
+            if not strict_delivery:
+                self.store.release_channel_delivery(vacancy_id)
+            logging.error('Не удалось отправить пользовательскую Telegram-карточку')
             return False
         message_id = sent.get('message_id') if isinstance(sent, dict) else None
         self.store.mark_channel_published(

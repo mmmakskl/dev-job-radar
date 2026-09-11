@@ -642,6 +642,23 @@ def create_app(data_dir: str | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail='Операция не найдена')
         return result
 
+    from tg_vacancy_bot.premium_search.settings import (
+        database_path,
+        enabled,
+        publisher_configured,
+    )
+
+    if enabled():
+        from tg_vacancy_bot.premium_search.api import install_routes
+
+        install_routes(
+            app,
+            path=database_path(data_dir),
+            session=_require_session,
+            csrf=_require_csrf,
+            publisher_configured=publisher_configured(),
+        )
+
     static_dir = Path(os.getenv('ADMIN_STATIC_DIR', '/app/web'))
     if static_dir.exists():
         app.mount('/_next', StaticFiles(directory=static_dir / '_next'), name='next')

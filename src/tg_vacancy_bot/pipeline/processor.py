@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
@@ -47,6 +48,14 @@ class DedupeState(Protocol):
     ) -> None: ...
 
 
+@dataclass(frozen=True)
+class PersistenceOutcome:
+    outcome: str
+    saved: bool
+    vacancy_id: str
+    group_id: str | None = None
+
+
 class VacancyProcessor:
     """Фильтрует, анализирует и сохраняет подходящие вакансии."""
 
@@ -71,6 +80,7 @@ class VacancyProcessor:
         self.group_store = group_store
         self.keyword_matches = 0
         self.saved_matches = 0
+        self._persistence_lock = asyncio.Lock()
 
     async def process_message(
         self,
@@ -199,12 +209,146 @@ class VacancyProcessor:
             self._metric('skipped_not_relevant', reason='llm_not_match')
             return False
 
+        outcome = await self.persist_analyzed_message(
+            raw_text=raw_text,
+            post_link=post_link,
+            published_at=published_at,
+            channel_name=channel_name,
+            analysis_result=analysis_result,
+            publish=self.notify_vacancy is not None,
+        )
+        return outcome.saved
+
+    async def persist_analyzed_message(
+        self,
+        *,
+        raw_text: str,
+        post_link: str,
+        published_at: datetime,
+        channel_name: str,
+        analysis_result: VacancyAnalysis,
+        publish: bool = False,
+        strict_delivery: bool = False,
+    ) -> PersistenceOutcome:
+        """Serialize Sheets/group writes across live and Premium; save before publish."""
+        if publish and self.notify_vacancy is None:
+            raise ValueError('publisher_not_configured')
+        vacancy_id = build_vacancy_id(post_link)
+        text_hash = build_text_hash(raw_text)
+        async with self._persistence_lock:
+            if self.dedupe_state is not None and self.dedupe_state.is_duplicate(
+                post_link, text_hash, vacancy_id
+            ):
+                self._skip_duplicate(
+                    post_link, text_hash, vacancy_id, channel_name, published_at
+                )
+                # Only the exact saved canonical post can be published by a later action.
+                group = (
+                    self.group_store.preview_publication(
+                        vacancy_id=vacancy_id,
+                        data=analysis_result,
+                        published_at=published_at,
+                    )
+                    if self.group_store
+                    else None
+                )
+                exact = post_link in getattr(
+                    self.dedupe_state, 'exported_links', set()
+                ) and (group is None or group.is_canonical)
+                if (
+                    strict_delivery
+                    and exact
+                    and vacancy_id
+                    not in getattr(self.dedupe_state, 'exported_ids', set())
+                ):
+                    # A legacy/full-sheet link alone does not prove both sheets completed.
+                    return await self._finish_persistence(
+                        raw_text,
+                        post_link,
+                        published_at,
+                        channel_name,
+                        analysis_result,
+                        publish,
+                        strict_delivery,
+                    )
+                if publish and exact:
+                    outcome = await self._publish(
+                        vacancy_id,
+                        post_link,
+                        channel_name,
+                        analysis_result,
+                        published_at,
+                        strict_delivery,
+                    )
+                    return PersistenceOutcome(
+                        outcome, True, vacancy_id, group.group_id if group else None
+                    )
+                return PersistenceOutcome(
+                    'saved' if exact else 'duplicate',
+                    exact,
+                    vacancy_id,
+                    group.group_id if group else None,
+                )
+            return await self._finish_persistence(
+                raw_text,
+                post_link,
+                published_at,
+                channel_name,
+                analysis_result,
+                publish,
+                strict_delivery,
+            )
+
+    async def _finish_persistence(self, *args) -> PersistenceOutcome:
+        # A cancelled to_thread await does not stop the Sheets SDK thread. Keep
+        # the shared lock until that write finishes before another job can save.
+        task = asyncio.create_task(self._persist_unlocked(*args))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await asyncio.gather(task, return_exceptions=True)
+            raise
+
+    async def _publish(
+        self, vacancy_id, post_link, channel_name, data, published_at, strict_delivery
+    ) -> str:
+        try:
+            kwargs = dict(
+                vacancy_id=vacancy_id,
+                post_link=post_link,
+                channel_name=channel_name,
+                data=data,
+                published_at=published_at,
+            )
+            if strict_delivery:
+                kwargs['strict_delivery'] = True
+            notified = await self.notify_vacancy(**kwargs)
+            if notified:
+                return 'published'
+        except Exception:
+            pass
+        self._metric('processing_error', 'telegram', 'notification_error')
+        return 'delivery_uncertain' if strict_delivery else 'publish_failed'
+
+    async def _persist_unlocked(
+        self,
+        raw_text,
+        post_link,
+        published_at,
+        channel_name,
+        analysis_result,
+        publish,
+        strict_delivery,
+    ):
+        vacancy_id = build_vacancy_id(post_link)
+        text_hash = build_text_hash(raw_text)
         group_decision = None
         if self.group_store is not None:
             group_decision = self.group_store.preview_publication(
                 vacancy_id=vacancy_id,
                 data=analysis_result,
                 published_at=published_at,
+                fuzzy=strict_delivery,
             )
             if group_decision.left_separate_candidate:
                 self._metric('group_candidate_separate')
@@ -216,6 +360,7 @@ class VacancyProcessor:
                     data=analysis_result,
                     published_at=published_at,
                     text_hash=text_hash,
+                    fuzzy=strict_delivery,
                 )
                 if self.dedupe_state is not None:
                     self.dedupe_state.mark_exported(post_link, text_hash, vacancy_id)
@@ -225,14 +370,9 @@ class VacancyProcessor:
                     group_decision.group_id,
                     group_decision.merge_reason,
                 )
-                return True
-
-        logging.info(
-            "Релевантная вакансия: %s | %s",
-            analysis_result.company,
-            analysis_result.title,
-        )
-        logging.info("Стек: %s", ", ".join(analysis_result.required_stack))
+                return PersistenceOutcome(
+                    'duplicate', True, vacancy_id, group_decision.group_id
+                )
 
         saved = await self.append_to_sheet(
             vacancy_id=vacancy_id,
@@ -245,7 +385,7 @@ class VacancyProcessor:
         if not saved:
             logging.error("[Google Sheets] Не удалось сохранить вакансию")
             self._metric('processing_error', 'google_sheets', 'export_error')
-            return False
+            return PersistenceOutcome('save_failed', False, vacancy_id)
 
         if self.group_store is not None:
             self.group_store.register_publication(
@@ -261,26 +401,22 @@ class VacancyProcessor:
         self.saved_matches += 1
         self._metric('vacancy_saved', 'google_sheets')
 
-        if self.notify_vacancy is not None:
-            try:
-                notified = await self.notify_vacancy(
-                    vacancy_id=vacancy_id,
-                    post_link=post_link,
-                    channel_name=channel_name,
-                    data=analysis_result,
-                    published_at=published_at,
-                )
-                if notified:
-                    logging.info("Telegram-уведомление отправлено")
-                else:
-                    self._metric('processing_error', 'telegram', 'notification_error')
-            except Exception as error:
-                logging.error(
-                    "Не удалось отправить Telegram-уведомление (%s)",
-                    type(error).__name__,
-                )
-                self._metric('processing_error', 'telegram', 'notification_error')
-        return True
+        outcome = 'saved'
+        if publish and self.notify_vacancy is not None:
+            outcome = await self._publish(
+                vacancy_id,
+                post_link,
+                channel_name,
+                analysis_result,
+                published_at,
+                strict_delivery,
+            )
+        return PersistenceOutcome(
+            outcome,
+            True,
+            vacancy_id,
+            group_decision.group_id if group_decision else None,
+        )
 
     def _metric(
         self,

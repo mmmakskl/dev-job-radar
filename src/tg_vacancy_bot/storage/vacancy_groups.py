@@ -6,6 +6,7 @@ import hashlib
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from tg_vacancy_bot.models import NOT_SPECIFIED, VacancyAnalysis
@@ -97,6 +98,14 @@ class VacancyGroupStore:
                 CREATE INDEX IF NOT EXISTS idx_group_publications_text_hash
                     ON group_publications (text_hash);
                 ''')
+            columns = {
+                row['name']
+                for row in connection.execute('PRAGMA table_info(group_publications)')
+            }
+            if 'description_key' not in columns:
+                connection.execute(
+                    'ALTER TABLE group_publications ADD COLUMN description_key TEXT'
+                )
 
     def register_publication(
         self,
@@ -107,10 +116,11 @@ class VacancyGroupStore:
         data: VacancyAnalysis,
         published_at: datetime,
         text_hash: str,
+        fuzzy: bool = False,
     ) -> GroupDecision:
         """Registers one LLM-analyzed post using only strong, exact evidence."""
         with self._connect() as connection:
-            decision = self._decision(connection, vacancy_id, data, published_at)
+            decision = self._decision(connection, vacancy_id, data, published_at, fuzzy)
             if self._publication_exists(connection, vacancy_id):
                 return decision
 
@@ -171,10 +181,11 @@ class VacancyGroupStore:
         vacancy_id: str,
         data: VacancyAnalysis,
         published_at: datetime,
+        fuzzy: bool = False,
     ) -> GroupDecision:
         """Checks grouping before export without creating a durable group record."""
         with self._connect() as connection:
-            return self._decision(connection, vacancy_id, data, published_at)
+            return self._decision(connection, vacancy_id, data, published_at, fuzzy)
 
     def record_exact_repost(
         self,
@@ -335,6 +346,7 @@ class VacancyGroupStore:
         vacancy_id: str,
         data: VacancyAnalysis,
         published_at: datetime,
+        fuzzy: bool = False,
     ) -> GroupDecision:
         existing = connection.execute(
             '''
@@ -356,9 +368,18 @@ class VacancyGroupStore:
             )
         keys = self._keys(data)
         left_separate = False
+        fuzzy_matches = {}
         for candidate in self._candidates(connection, published_at):
             reason = self._merge_reason(keys, candidate)
             if reason is None:
+                if (
+                    fuzzy
+                    and self._fuzzy_match(keys, candidate)
+                    and not self._pair_is_blocked(
+                        connection, vacancy_id, candidate['vacancy_id']
+                    )
+                ):
+                    fuzzy_matches[candidate['group_id']] = candidate
                 if self._weak_candidate(keys, candidate):
                     left_separate = True
                 continue
@@ -371,6 +392,14 @@ class VacancyGroupStore:
                 False,
                 reason,
                 left_separate,
+            )
+        if len(fuzzy_matches) == 1:
+            candidate = next(iter(fuzzy_matches.values()))
+            return GroupDecision(
+                candidate['group_id'],
+                candidate['canonical_vacancy_id'],
+                False,
+                'similar_company_title_description',
             )
         return GroupDecision(
             _group_id(vacancy_id), vacancy_id, True, None, left_separate
@@ -394,6 +423,13 @@ class VacancyGroupStore:
             'title_key': normalize_group_text(_known(data.title)),
             'contact_key': normalize_group_text(_known(data.contact)),
             'apply_url_key': normalize_application_url(_known(data.apply_link)),
+            'description_key': normalize_group_text(
+                ' '.join(
+                    filter(
+                        None, (_known(data.responsibilities), _known(data.requirements))
+                    )
+                )
+            ),
         }
 
     @staticmethod
@@ -415,6 +451,73 @@ class VacancyGroupStore:
         ):
             return 'same_company_and_title'
         return None
+
+    @staticmethod
+    def _fuzzy_match(keys: dict, candidate: sqlite3.Row) -> bool:
+        if not keys['company_key'] or keys['company_key'] != candidate['company_key']:
+            return False
+        if not keys['title_key'] or not candidate['title_key']:
+            return False
+        left = set((keys['description_key'] or '').split())
+        right = set((candidate['description_key'] or '').split())
+        return (
+            min(len(left), len(right)) >= 20
+            and SequenceMatcher(
+                None, keys['title_key'], candidate['title_key'], autojunk=False
+            ).ratio()
+            >= 0.92
+            and len(left & right) / len(left | right) >= 0.85
+        )
+
+    def known_duplicate(
+        self, *, post_link: str, text_hash: str, apply_urls: list[str]
+    ) -> dict | None:
+        with self._connect() as connection:
+            rows = connection.execute(
+                'SELECT * FROM group_publications WHERE post_link=? OR text_hash=?',
+                (post_link, text_hash),
+            ).fetchall()
+            if not rows and apply_urls:
+                placeholders = ','.join('?' for _ in apply_urls)
+                rows = connection.execute(
+                    f'SELECT * FROM group_publications WHERE apply_url_key IN ({placeholders})',
+                    apply_urls,
+                ).fetchall()
+        groups = {row['group_id'] for row in rows}
+        return dict(rows[0]) if len(groups) == 1 else None
+
+    def record_duplicate_source(
+        self,
+        *,
+        group_id: str,
+        vacancy_id: str,
+        post_link: str,
+        channel_name: str,
+        published_at: datetime,
+        text_hash: str,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            if not connection.execute(
+                'SELECT 1 FROM vacancy_groups WHERE group_id=?', (group_id,)
+            ).fetchone():
+                return
+            connection.execute(
+                """INSERT OR IGNORE INTO group_publications
+                (vacancy_id,group_id,post_link,channel_name,published_at,text_hash,merge_reason,is_canonical,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,'premium_exact_evidence',0,?,?)""",
+                (
+                    vacancy_id,
+                    group_id,
+                    post_link,
+                    channel_name,
+                    published_at.isoformat(),
+                    text_hash,
+                    _now(),
+                    _now(),
+                ),
+            )
+            self._refresh_group_times(connection, group_id, _now())
 
     @staticmethod
     def _weak_candidate(keys: dict[str, str | None], candidate: sqlite3.Row) -> bool:
@@ -457,9 +560,9 @@ class VacancyGroupStore:
             '''
             INSERT INTO group_publications (
                 vacancy_id, group_id, post_link, channel_name, published_at,
-                text_hash, company_key, title_key, contact_key, apply_url_key,
+                text_hash, company_key, title_key, contact_key, apply_url_key, description_key,
                 merge_reason, is_canonical, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
                 vacancy_id,
@@ -472,6 +575,7 @@ class VacancyGroupStore:
                 keys['title_key'],
                 keys['contact_key'],
                 keys['apply_url_key'],
+                keys['description_key'],
                 merge_reason,
                 int(is_canonical),
                 now,

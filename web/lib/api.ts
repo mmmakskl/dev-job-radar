@@ -18,7 +18,7 @@ export type VacancyGroup = {group_id:string;canonical_vacancy_id:string;first_se
 export type VacancyGroupDetail = {group_id:string;canonical_vacancy_id:string;first_seen_at:string;last_seen_at:string;publications:{vacancy_id:string;post_link:string;channel_name:string|null;published_at:string;merge_reason:string;is_canonical:number}[]};
 
 function csrf(): string { return document.cookie.split('; ').find((item) => item.startsWith('admin_csrf='))?.split('=')[1] ?? ''; }
-async function request<T>(path:string, init:RequestInit = {}):Promise<T> { const response = await fetch(path, { credentials:'same-origin', ...init, headers:{ 'Content-Type':'application/json', ...init.headers } }); if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.detail || 'Не удалось выполнить запрос'); } return response.json(); }
+async function request<T>(path:string, init:RequestInit = {}):Promise<T> { const response = await fetch(path, { credentials:'same-origin', ...init, headers:{ 'Content-Type':'application/json', ...init.headers } }); if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(typeof data.detail==='string'?data.detail:data.detail?.message ? `${data.detail.message}${data.detail.existing_run_id ? ` (${data.detail.existing_run_id})` : ''}` : 'Не удалось выполнить запрос'); } return response.json(); }
 const mutate = <T>(path:string, method:string, body?:unknown) => request<T>(path, {method, headers:{'X-CSRF-Token':csrf()}, body:body === undefined ? undefined : JSON.stringify(body)});
 export const api = {
   status: () => request<{configured:boolean;authenticated:boolean}>('/api/v1/auth/status'),
@@ -54,3 +54,18 @@ export async function waitForAction(id:string,maxAttempts=30):Promise<AdminActio
   }
   throw new Error('Операция продолжается дольше ожидаемого. Статус сохранён — обновите страницу позже.');
 }
+
+export type PremiumCapabilities = {enabled:boolean;publisher_configured:boolean;tracks:{key:string;label:string;confidence_threshold:number}[]};
+export type PremiumRun = {search_run_id:string;query:string;track:string;mode:string;status:string;phase:string;cancel_requested:number;retry_at:string|null;error_reason:string|null;quota:{remains?:number;reset_at?:string|null};metrics:Record<string,number>;include_review:boolean;created_at:string};
+export type PremiumResult = {result_id:string;post_link:string|null;channel_username:string|null;channel_name:string|null;published_at:string|null;title:string|null;company:string|null;summary:string|null;status:string;decision_reason:string;confidence:number|null;go_role_strength?:string;language?:string;group_id:string|null;action_state:string;action_error:string|null;delivery_state:string};
+export type PremiumResults = {items:PremiumResult[];total:number;offset:number;limit:number};
+export type PremiumParams = {query:string;track:string;mode:string;result_limit:number;period_days:number;include_review:boolean};
+export const premiumApi = {
+  capabilities: async ():Promise<PremiumCapabilities|null> => {const response=await fetch('/api/v1/premium-search/capabilities',{credentials:'same-origin'});if(response.status===404)return null;if(!response.ok)throw new Error('Не удалось загрузить возможности поиска');return response.json();},
+  runs: () => request<{items:PremiumRun[]}>('/api/v1/premium-search/runs'),
+  run: (id:string) => request<PremiumRun>(`/api/v1/premium-search/runs/${encodeURIComponent(id)}`),
+  create: (params:PremiumParams) => mutate<PremiumRun>('/api/v1/premium-search/runs','POST',{...params,confirmed:true}),
+  cancel: (id:string) => mutate<PremiumRun>(`/api/v1/premium-search/runs/${encodeURIComponent(id)}/cancel`,'POST',{confirmed:true}),
+  results: (id:string,status='',offset=0) => request<PremiumResults>(`/api/v1/premium-search/runs/${encodeURIComponent(id)}/results?${new URLSearchParams({status,offset:String(offset),limit:'25'})}`),
+  action: (id:string,action:string) => mutate<{item:PremiumResult;restart_required:boolean}>(`/api/v1/premium-search/results/${encodeURIComponent(id)}/actions`,'POST',{action,confirmed:true}),
+};

@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { PremiumSearchPanel } from '../components/premium-search-panel';
+import { premiumApi, type PremiumCapabilities } from '../lib/api';
 import { AttentionPanel } from '../components/attention-panel';
 import { ConfirmAction } from '../components/confirm-action';
 import { LoginForm } from '../components/login-form';
@@ -21,8 +23,8 @@ type Dashboard = {
   secret_status:{telegram:boolean;mistral:boolean;google_sheets:boolean};
   active_action?:AdminAction|null;
 };
-type Route = '/'|'/sources'|'/groups'|'/settings'|'/prompt'|'/logs'|'/errors';
-const routeLabels:Record<Route,string> = {'/':'Дашборд','/sources':'Источники','/groups':'Группы','/settings':'Настройки','/prompt':'LLM-инструкции','/logs':'Логи','/errors':'Ошибки'};
+type Route = '/premium-search'|'/'|'/sources'|'/groups'|'/settings'|'/prompt'|'/logs'|'/errors';
+const routeLabels:Record<Route,string> = {'/premium-search':'Premium поиск','/':'Дашборд','/sources':'Источники','/groups':'Группы','/settings':'Настройки','/prompt':'LLM-инструкции','/logs':'Логи','/errors':'Ошибки'};
 const actionText: Record<string,[string,string]> = {
   restart:['Перезапустить бота','Очередь будет корректно завершена, затем бот применит сохранённые настройки.'],
   history:['Запустить историю','Live-мониторинг временно остановится: один Telegram session нельзя использовать одновременно.'],
@@ -57,8 +59,9 @@ function DashboardView({dashboard,metrics,errors,loading,onNavigate,onRefresh,on
 }
 
 export default function Page() {
+  const [premium,setPremium]=useState<PremiumCapabilities|null>(null);
   const [ready,setReady]=useState(false); const [configured,setConfigured]=useState(false); const [settings,setSettings]=useState<Settings>(); const [dashboard,setDashboard]=useState<Dashboard>(); const [metrics,setMetrics]=useState<Metrics>(); const [attention,setAttention]=useState<AttentionError[]>([]); const [loading,setLoading]=useState(false); const [error,setError]=useState(''); const [progress,setProgress]=useState(''); const [pending,setPending]=useState(''); const [sourcesRefresh,setSourcesRefresh]=useState(0); const [route,setRoute]=useState<Route>('/'); const [theme,setTheme]=useState<'light'|'dark'>('light');
-  const refresh = useCallback(async()=>{setLoading(true);setError('');try{const [nextSettings,nextDashboard,nextMetrics,nextErrors]=await Promise.all([api.settings(),api.dashboard(),api.metrics(),api.errors()]);setSettings(nextSettings);setDashboard(nextDashboard);setMetrics(nextMetrics);setAttention(nextErrors);}catch(reason){setError(reason instanceof Error?reason.message:'Не удалось загрузить данные панели');}finally{setLoading(false);}},[]);
+  const refresh = useCallback(async()=>{setLoading(true);setError('');try{const [nextSettings,nextDashboard,nextMetrics,nextErrors]=await Promise.all([api.settings(),api.dashboard(),api.metrics(),api.errors()]);setSettings(nextSettings);setDashboard(nextDashboard);setMetrics(nextMetrics);setAttention(nextErrors);void premiumApi.capabilities().then(setPremium).catch(()=>setPremium(null));}catch(reason){setError(reason instanceof Error?reason.message:'Не удалось загрузить данные панели');}finally{setLoading(false);}},[]);
   useEffect(()=>{const change=()=>setRoute(currentRoute());change();window.addEventListener('popstate',change);api.status().then(async status=>{setConfigured(status.configured);if(status.authenticated) await refresh();setReady(true);}).catch(()=>setReady(true));return()=>window.removeEventListener('popstate',change);},[refresh]);
   useEffect(()=>{const stored=window.localStorage.getItem('admin-theme');if(stored==='dark')setTheme('dark');},[]);
   useEffect(()=>{document.documentElement.classList.toggle('dark',theme==='dark');window.localStorage.setItem('admin-theme',theme);},[theme]);
@@ -70,9 +73,10 @@ export default function Page() {
   const resolve=async(id:string)=>{try{await api.resolveError(id);await refresh();}catch(reason){setError(reason instanceof Error?reason.message:'Не удалось обновить статус ошибки');}};
   const doAction=async()=>{try{const action=await api.action(pending);setPending('');setProgress('Операция поставлена в очередь…');const result=await waitForAction(action.id);setProgress(actionResult(result));await refresh();setSourcesRefresh(value=>value+1);}catch(reason){setError(reason instanceof Error?reason.message:'Не удалось выполнить действие');setPending('');}};
   const restartRequired=typeof dashboard?.heartbeat?.settings_revision==='number' && dashboard.heartbeat.settings_revision!==settings.revision;
-  const header=<Header route={route} theme={theme} onToggleTheme={()=>setTheme(theme==='light'?'dark':'light')} onNavigate={go} onLogout={async()=>{await api.logout();setSettings(undefined);go('/');}}/>;
+  const header=<Header premiumEnabled={!!premium} route={route} theme={theme} onToggleTheme={()=>setTheme(theme==='light'?'dark':'light')} onNavigate={go} onLogout={async()=>{await api.logout();setSettings(undefined);go('/');}}/>;
   let content:React.ReactNode;
-  if(route==='/sources') content=<SourcesPanel onBack={()=>go('/')} onChanged={refresh} restartRequired={restartRequired} reloadKey={sourcesRefresh}/>;
+  if(route==='/premium-search') content=<PremiumSearchPanel capabilities={premium}/>;
+  else if(route==='/sources') content=<SourcesPanel onBack={()=>go('/')} onChanged={refresh} restartRequired={restartRequired} reloadKey={sourcesRefresh}/>;
   else if(route==='/groups') content=<VacancyGroupsPanel onBack={()=>go('/')} />;
   else if(route==='/settings') content=<SettingsForm settings={settings} onSave={save}/>;
   else if(route==='/prompt') content=<PromptEditor onBack={()=>go('/settings')}/>;
@@ -82,4 +86,4 @@ export default function Page() {
   return <main className="shell">{header}{error&&<p className="error" role="alert">{error}</p>}{progress&&<p className="status" role="status">{progress}</p>}<div className="page-content">{content}</div>{route==='/'&&<section className="card span-12"><h2>Управление обработкой</h2><p className="muted">Опасные операции потребуют явного подтверждения.</p><div className="actions"><button className="button" onClick={()=>setPending('sync_channels')}>Синхронизировать папку</button><button className="button secondary" onClick={()=>setPending('history')}>Запустить историю</button><button className="button danger" onClick={()=>setPending('restart')}>Перезапустить бота</button></div></section>}{pending&&<ConfirmAction title={actionText[pending][0]} description={actionText[pending][1]} onConfirm={()=>void doAction()} onCancel={()=>setPending('')}/>}</main>;
 }
 
-function Header({route,theme,onToggleTheme,onNavigate,onLogout}:{route:Route;theme:'light'|'dark';onToggleTheme:()=>void;onNavigate:(path:Route)=>void;onLogout:()=>void}) { return <header className="app-header"><div><button className="brand link" onClick={()=>onNavigate('/')}>Go Radar</button><p className="muted">Закрытое управление сбором вакансий</p></div><nav aria-label="Основная навигация">{(Object.keys(routeLabels) as Route[]).map(path=><button key={path} className={route===path?'nav-active':'nav-item'} onClick={()=>onNavigate(path)} aria-current={route===path?'page':undefined}>{routeLabels[path]}</button>)}</nav><div className="actions"><button className="button secondary" onClick={onToggleTheme} aria-label="Переключить цветовую тему">{theme==='light'?'Тёмная тема':'Светлая тема'}</button><button className="button secondary" onClick={onLogout}>Выйти</button></div></header>; }
+function Header({premiumEnabled=false,route,theme,onToggleTheme,onNavigate,onLogout}:{premiumEnabled?:boolean;route:Route;theme:'light'|'dark';onToggleTheme:()=>void;onNavigate:(path:Route)=>void;onLogout:()=>void}) { return <header className="app-header"><div><button className="brand link" onClick={()=>onNavigate('/')}>Go Radar</button><p className="muted">Закрытое управление сбором вакансий</p></div><nav aria-label="Основная навигация">{(Object.keys(routeLabels) as Route[]).filter(path=>path!=='/premium-search'||premiumEnabled).map(path=><button key={path} className={route===path?'nav-active':'nav-item'} onClick={()=>onNavigate(path)} aria-current={route===path?'page':undefined}>{routeLabels[path]}</button>)}</nav><div className="actions"><button className="button secondary" onClick={onToggleTheme} aria-label="Переключить цветовую тему">{theme==='light'?'Тёмная тема':'Светлая тема'}</button><button className="button secondary" onClick={onLogout}>Выйти</button></div></header>; }

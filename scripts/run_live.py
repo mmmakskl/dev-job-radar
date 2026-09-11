@@ -383,6 +383,7 @@ async def main():
     control_task: asyncio.Task[str | None] | None = None
     heartbeat_task: asyncio.Task[None] | None = None
     requested_action: str | None = None
+    premium_task: asyncio.Task | None = None
     try:
         await client.start()
         await client.get_dialogs()
@@ -422,6 +423,24 @@ async def main():
             for worker_id in range(1, config.LIVE_WORKERS + 1)
         ]
 
+        from tg_vacancy_bot.premium_search.settings import database_path, enabled
+
+        if enabled():
+            from tg_vacancy_bot.premium_search.service import PremiumSearchService
+            from tg_vacancy_bot.premium_search.store import PremiumSearchStore
+
+            premium = PremiumSearchService(
+                client,
+                PremiumSearchStore(database_path(config.DATA_DIR)),
+                processor,
+                telemetry,
+                live_queue=message_queue,
+                settings_store=store,
+            )
+            premium_task = asyncio.create_task(
+                premium.serve(shutdown_event), name='premium-search'
+            )
+
         await client.get_me()
         logging.info("Telegram-сессия авторизована")
         logging.info("Бот запущен. Ожидаю новые сообщения...")
@@ -454,6 +473,9 @@ async def main():
         if shutdown_requested:
             accepting_messages = False
     finally:
+        if premium_task:
+            premium_task.cancel()
+            await asyncio.gather(premium_task, return_exceptions=True)
         await stop_workers(worker_tasks)
         if client.is_connected():
             logging.info("Очередь завершена, отключаем Telegram...")

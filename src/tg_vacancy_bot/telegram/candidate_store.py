@@ -207,6 +207,13 @@ class CandidateStore:
             published_at=published_at,
         )
 
+    def channel_delivery_state(self, vacancy_id: str) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                'SELECT delivery_state FROM vacancies WHERE vacancy_id=?', (vacancy_id,)
+            ).fetchone()
+        return row[0] if row else None
+
     def claim_channel_delivery(self, vacancy_id: str) -> bool:
         """Claims a card once; an interrupted send stays claimed to prevent duplicates."""
         with self._connect() as connection:

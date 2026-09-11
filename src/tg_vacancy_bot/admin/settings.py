@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -232,7 +233,16 @@ class SettingsStore:
         connection.row_factory = sqlite3.Row
         connection.execute('PRAGMA foreign_keys = ON')
         connection.execute('PRAGMA busy_timeout = 10000')
-        connection.execute('PRAGMA journal_mode = WAL')
+        # Concurrent first open may return SQLITE_BUSY before busy_timeout applies.
+        for attempt in range(5):
+            try:
+                connection.execute('PRAGMA journal_mode = WAL')
+                break
+            except sqlite3.OperationalError as error:
+                if 'locked' not in str(error) or attempt == 4:
+                    connection.close()
+                    raise
+                time.sleep(0.02 * (2**attempt))
         return connection
 
     def _migrate(self) -> None:
