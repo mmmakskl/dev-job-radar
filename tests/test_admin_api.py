@@ -33,6 +33,9 @@ def test_auth_status_requires_non_empty_credentials_only(tmp_path, monkeypatch) 
     client = TestClient(create_app(str(tmp_path)))
 
     assert client.get('/api/v1/auth/status').json()['configured'] is True
+    assert (
+        client.post('/api/v1/auth/login', json={'password': 'short'}).status_code == 200
+    )
 
     monkeypatch.delenv('ADMIN_PASSWORD')
     assert client.get('/api/v1/auth/status').json()['configured'] is False

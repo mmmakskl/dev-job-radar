@@ -267,11 +267,6 @@ def create_app(data_dir: str | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=503, detail='Доступ администратора ещё не настроен'
             )
-        if len(password) < 12 or len(secret) < 24:
-            raise HTTPException(
-                status_code=503,
-                detail='Пароль или секрет сессии администратора слишком короткий',
-            )
         client_key = request.client.host if request.client else 'unknown'
         now = time.monotonic()
         with login_lock:
