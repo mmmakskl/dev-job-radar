@@ -28,10 +28,10 @@ rollback() {
     if [[ "${services_changed}" == "1" ]] \
         && docker image inspect "${PREVIOUS_IMAGE}" >/dev/null 2>&1; then
         docker tag "${PREVIOUS_IMAGE}" "${IMAGE_NAME}"
-        if ! docker compose up -d --no-build --remove-orphans; then
+        if ! docker compose --profile candidate up -d --no-build --remove-orphans; then
             echo "ERROR: rollback could not restart the previous image." >&2
             docker compose ps -a || true
-            docker compose logs --tail=100 bot admin || true
+            docker compose logs --tail=100 bot admin candidate-bot || true
         fi
     fi
     exit "${exit_code}"
@@ -120,10 +120,10 @@ assert session.is_file(), "Telegram session missing; authorize before deploy"
 
 echo "Starting bot service..."
 services_changed=1
-if ! docker compose up -d --no-build --remove-orphans; then
+if ! docker compose --profile candidate up -d --no-build --remove-orphans; then
     echo "ERROR: Docker Compose could not start the services." >&2
     docker compose ps -a || true
-    docker compose logs --tail=100 bot admin || true
+    docker compose logs --tail=100 bot admin candidate-bot || true
     exit 1
 fi
 
@@ -152,6 +152,22 @@ if [[ "$(docker inspect --format '{{.State.Running}}' "${container_id}")" != "tr
     echo "ERROR: bot container is not running after 30 seconds" >&2
     docker compose ps -a
     docker compose logs --tail=100 bot
+    exit 1
+fi
+
+candidate_id=""
+for _ in {1..15}; do
+    candidate_id="$(docker compose --profile candidate ps -aq candidate-bot | sed -n '$p')"
+    if [[ -n "${candidate_id}" ]]; then
+        break
+    fi
+    sleep 1
+done
+if [[ -z "${candidate_id}" ]] \
+    || [[ "$(docker inspect --format '{{.State.Running}}' "${candidate_id}" 2>/dev/null || true)" != "true" ]]; then
+    echo "ERROR: candidate-bot container is not running" >&2
+    docker compose --profile candidate ps -a
+    docker compose --profile candidate logs --tail=100 candidate-bot || true
     exit 1
 fi
 
@@ -192,6 +208,7 @@ docker compose exec -T admin python -c 'import json; from urllib.request import 
 echo "Deployment status:"
 docker compose ps bot
 docker compose ps admin
+docker compose --profile candidate ps candidate-bot
 
 echo "Removing dangling Docker images only..."
 docker image prune --force

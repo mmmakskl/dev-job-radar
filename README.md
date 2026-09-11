@@ -425,9 +425,14 @@ ADMIN_STATIC_DIR="$PWD/web/out" PYTHONPATH=src \
 ### Панель на текущем VPS
 
 Compose запускает `admin` на `127.0.0.1:8080`, а сервис `proxy` на Caddy
-публикует панель через HTTPS-домен `go-radar-maksim.duckdns.org`. Caddy
-сам получает и обновляет сертификат Let's Encrypt. DNS A-запись домена должна
-указывать на VPS, а TCP/80 и TCP/443 должны быть разрешены в firewall.
+публикует панель через HTTPS-домен `go-radar-maksim.duckdns.org`. Внутри
+обычной Compose-сети Caddy обращается к upstream `admin:8080`; host networking
+не используется. Caddy сам получает и обновляет сертификат Let's Encrypt.
+DNS A-запись домена должна указывать на VPS, а TCP/80, TCP/443 и UDP/443
+должны быть разрешены в firewall.
+
+Production deploy запускает основной bot, admin/proxy и профиль `candidate`,
+а затем проверяет, что `candidate-bot` действительно находится в состоянии running.
 
 Проверка публичного доступа и логи:
 
