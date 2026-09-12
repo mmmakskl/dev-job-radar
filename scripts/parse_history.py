@@ -29,6 +29,7 @@ from tg_vacancy_bot.telegram.links import (
     get_message_channel_name,
     get_message_link,
 )
+from tg_vacancy_bot.telegram.candidate_notifier import build_candidate_notifier
 
 # Настройка логирования
 configure_logging(
@@ -58,7 +59,7 @@ async def parse_history() -> dict[str, int]:
         analyze_text=analyze_text,
         append_to_sheet=append_to_google_sheet,
         dedupe_state=dedupe_state,
-        notify_vacancy=None,
+        notify_vacancy=build_candidate_notifier(),
         exclude_keywords=config.EXCLUDE_KEYWORDS,
         event_recorder=TelemetryStore(config.DATA_DIR),
         group_store=VacancyGroupStore(
@@ -67,7 +68,10 @@ async def parse_history() -> dict[str, int]:
         ),
     )
 
-    logging.info("Telegram notifications for history: disabled")
+    logging.info(
+        "Telegram card publishing for history: %s",
+        "enabled" if processor.notify_vacancy is not None else "disabled",
+    )
 
     # Принудительно кэшируем диалоги для корректной работы с приватными каналами
     await client.get_dialogs()

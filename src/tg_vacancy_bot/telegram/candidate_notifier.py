@@ -3,6 +3,7 @@
 import logging
 from datetime import datetime
 
+from tg_vacancy_bot import config
 from tg_vacancy_bot.models import NOT_SPECIFIED, VacancyAnalysis
 from tg_vacancy_bot.telegram.bot_api import TelegramBotApi
 from tg_vacancy_bot.telegram.candidate_store import CandidateStore
@@ -91,3 +92,14 @@ class CandidateVacancyNotifier:
             vacancy_id, message_id if isinstance(message_id, int) else None
         )
         return True
+
+
+def build_candidate_notifier() -> CandidateVacancyNotifier | None:
+    """Create the shared-card publisher when Candidate Bot delivery is enabled."""
+    if not config.CANDIDATE_BOT_ENABLED:
+        return None
+    return CandidateVacancyNotifier(
+        TelegramBotApi(config.CANDIDATE_BOT_TOKEN),
+        CandidateStore(config.CANDIDATE_BOT_DB_PATH),
+        config.CANDIDATE_BOT_CHANNEL,
+    )

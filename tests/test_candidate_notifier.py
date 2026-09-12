@@ -3,6 +3,8 @@ import sqlite3
 from datetime import datetime, timezone
 
 from tg_vacancy_bot.llm.schemas import validate_analysis_result
+from tg_vacancy_bot import config
+from tg_vacancy_bot.telegram import candidate_notifier
 from tg_vacancy_bot.telegram.candidate_notifier import CandidateVacancyNotifier
 from tg_vacancy_bot.telegram.candidate_store import CandidateStore
 from tests.test_llm_schemas import valid_payload
@@ -20,6 +22,26 @@ class FakeBotApi:
 class FailingBotApi:
     async def send_message(self, *args, **kwargs):
         raise RuntimeError('temporary Bot API failure')
+
+
+def test_build_candidate_notifier_uses_configured_card_channel(monkeypatch, tmp_path):
+    class FakeApi:
+        def __init__(self, token: str) -> None:
+            self.token = token
+
+    monkeypatch.setattr(config, 'CANDIDATE_BOT_ENABLED', True)
+    monkeypatch.setattr(config, 'CANDIDATE_BOT_TOKEN', 'bot-token')
+    monkeypatch.setattr(config, 'CANDIDATE_BOT_CHANNEL', '@vacancy_cards')
+    monkeypatch.setattr(
+        config, 'CANDIDATE_BOT_DB_PATH', str(tmp_path / 'cards.sqlite3')
+    )
+    monkeypatch.setattr(candidate_notifier, 'TelegramBotApi', FakeApi)
+
+    notifier = candidate_notifier.build_candidate_notifier()
+
+    assert isinstance(notifier, CandidateVacancyNotifier)
+    assert notifier.target == '@vacancy_cards'
+    assert notifier.api.token == 'bot-token'
 
 
 def test_candidate_notifier_sends_compact_buttons_and_registers_vacancy(

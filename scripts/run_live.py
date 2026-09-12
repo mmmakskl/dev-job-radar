@@ -40,11 +40,9 @@ from tg_vacancy_bot.telegram.links import (
     get_event_channel_name,
     get_event_message_link,
 )
-from tg_vacancy_bot.telegram.bot_api import TelegramBotApi
 from tg_vacancy_bot.telegram.candidate_notifier import (
-    CandidateVacancyNotifier,
+    build_candidate_notifier,
 )
-from tg_vacancy_bot.telegram.candidate_store import CandidateStore
 
 # Настройка логирования
 configure_logging(
@@ -64,13 +62,7 @@ dedupe_state = JsonlDedupeState(
 
 def build_live_notifier():
     """Creates the sole vacancy publication path: an interactive Bot API card."""
-    if config.CANDIDATE_BOT_ENABLED:
-        return CandidateVacancyNotifier(
-            TelegramBotApi(config.CANDIDATE_BOT_TOKEN),
-            CandidateStore(config.CANDIDATE_BOT_DB_PATH),
-            config.CANDIDATE_BOT_CHANNEL,
-        )
-    return None
+    return build_candidate_notifier()
 
 
 processor = VacancyProcessor(
