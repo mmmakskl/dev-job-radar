@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -120,3 +121,36 @@ def test_append_uses_raw_values_to_prevent_formula_injection() -> None:
     sheets._append_row(Worksheet(), ['=IMPORTXML("https://example.com")'])
 
     assert calls[0][1]['value_input_option'] == 'RAW'
+
+
+def test_google_export_retries_transient_connection_failure(monkeypatch) -> None:
+    attempts = 0
+
+    def export(**_kwargs) -> bool:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise ConnectionError('Google endpoint is temporarily unavailable')
+        return True
+
+    async def no_wait(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(sheets, '_export_to_sheets_sync', export)
+    monkeypatch.setattr(asyncio, 'sleep', no_wait)
+    monkeypatch.setattr(config, 'GOOGLE_SHEET_URL', 'https://example.com/sheet')
+    data = validate_analysis_result(valid_payload())
+
+    saved = asyncio.run(
+        sheets.append_to_google_sheet(
+            vacancy_id='jobs_123',
+            post_link='https://t.me/jobs/123',
+            channel_name='jobs',
+            data=data,
+            raw_text='Go vacancy',
+            published_at=datetime(2026, 7, 22, tzinfo=timezone.utc),
+        )
+    )
+
+    assert saved is True
+    assert attempts == 3

@@ -82,6 +82,8 @@ _HEADER_FORMAT = {
 _WRAP_FORMAT = {"verticalAlignment": "TOP", "wrapStrategy": "WRAP"}
 _FORMATTED_WORKSHEET_IDS: set[int] = set()
 _EXPORT_LOCK = threading.Lock()
+_GOOGLE_MAX_ATTEMPTS = 3
+_RETRYABLE_GOOGLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 def _format_datetime(value: datetime) -> str:
@@ -89,6 +91,36 @@ def _format_datetime(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(ZoneInfo(config.OUTPUT_TIMEZONE)).strftime("%Y-%m-%d %H:%M")
+
+
+def _is_retryable_google_error(error: Exception) -> bool:
+    """Return whether a Google API failure can safely be retried."""
+    if isinstance(error, (ConnectionError, TimeoutError, OSError)):
+        return True
+    if isinstance(error, gspread.exceptions.APIError):
+        response = getattr(error, 'response', None)
+        return getattr(response, 'status_code', None) in _RETRYABLE_GOOGLE_STATUS_CODES
+    return False
+
+
+async def _run_google_operation(operation, description: str):
+    """Run blocking Google work with short retries for transient failures."""
+    for attempt in range(1, _GOOGLE_MAX_ATTEMPTS + 1):
+        try:
+            return await asyncio.to_thread(operation)
+        except Exception as error:
+            if not _is_retryable_google_error(error) or attempt == _GOOGLE_MAX_ATTEMPTS:
+                raise
+            delay = 2 ** (attempt - 1)
+            logging.warning(
+                'Google Sheets: %s failed (%s), retrying in %s s (%s/%s)',
+                description,
+                type(error).__name__,
+                delay,
+                attempt,
+                _GOOGLE_MAX_ATTEMPTS,
+            )
+            await asyncio.sleep(delay)
 
 
 def _join(values: list[str]) -> str:
@@ -471,7 +503,10 @@ async def get_existing_links() -> set[str]:
     """Один раз загружает ссылки из старого листа."""
     if not config.GOOGLE_SHEET_URL:
         raise RuntimeError("GOOGLE_SHEET_URL не настроен в .env файле")
-    links = await asyncio.to_thread(_get_existing_links_sync)
+    links = await _run_google_operation(
+        _get_existing_links_sync,
+        'reading legacy links',
+    )
     logging.info("Загружено legacy-ссылок из Google Таблицы: %d", len(links))
     return links
 
@@ -492,14 +527,16 @@ async def append_to_google_sheet(
         logging.error("GOOGLE_SHEET_URL не настроен в .env файле")
         return False
     try:
-        saved = await asyncio.to_thread(
-            _export_to_sheets_sync,
-            vacancy_id=vacancy_id,
-            post_link=post_link,
-            channel_name=channel_name,
-            data=data,
-            raw_text=raw_text,
-            published_at=published_at,
+        saved = await _run_google_operation(
+            lambda: _export_to_sheets_sync(
+                vacancy_id=vacancy_id,
+                post_link=post_link,
+                channel_name=channel_name,
+                data=data,
+                raw_text=raw_text,
+                published_at=published_at,
+            ),
+            'saving vacancy',
         )
         if saved:
             logging.info("Вакансия записана в полный и краткий листы")
