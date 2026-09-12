@@ -25,17 +25,23 @@ describe('Premium search',()=>{
     await waitFor(()=>expect(premiumApi.action).toHaveBeenCalledWith('r1','publish'));
     expect(await screen.findByText('Действие поставлено в очередь: Опубликовать в Candidate Bot')).toBeInTheDocument();
   });
-  it.each(['duplicate','rejected','published'])('does not offer publication of a %s card',async(status)=>{
+  it.each(['duplicate','published'])('does not offer publication of a %s card',async(status)=>{
     vi.mocked(premiumApi.results).mockResolvedValue({items:[{...result,status,can_persist:false}],total:1,offset:0,limit:25});
     render(<PremiumSearchPanel capabilities={capabilities}/>);
     await screen.findByText('Go developer');
     expect(screen.queryByRole('option',{name:'Опубликовать в Candidate Bot'})).not.toBeInTheDocument();
   });
+  it('offers manual publication for a rejected card with a source post',async()=>{
+    vi.mocked(premiumApi.results).mockResolvedValue({items:[{...result,status:'rejected',can_persist:true}],total:1,offset:0,limit:25});
+    render(<PremiumSearchPanel capabilities={capabilities}/>);
+    expect(await screen.findByRole('option',{name:'Опубликовать в Candidate Bot'})).toBeEnabled();
+  });
   it('explains unavailable analysis',async()=>{
     vi.mocked(premiumApi.results).mockResolvedValue({items:[{...result,status:'review',can_persist:false}],total:1,offset:0,limit:25});
     render(<PremiumSearchPanel capabilities={capabilities}/>);
-    expect(await screen.findByRole('option',{name:'Опубликовать в Candidate Bot'})).toBeDisabled();
-    expect(screen.getByText(/Публикация недоступна: нет сохранённого анализа/)).toBeInTheDocument();
+    expect(await screen.findByText(/Публикация недоступна: нет исходного текста/)).toBeInTheDocument();
+    expect(screen.queryByRole('option',{name:'Опубликовать в Candidate Bot'})).not.toBeInTheDocument();
+    expect(screen.getByText(/Публикация недоступна: нет исходного текста/)).toBeInTheDocument();
   });
   it('does not load anything when disabled',()=>{render(<PremiumSearchPanel capabilities={null}/>);expect(screen.getByText('Экспериментальный поиск отключён.')).toBeInTheDocument();expect(premiumApi.runs).not.toHaveBeenCalled();});
   it('shows empty history',async()=>{vi.mocked(premiumApi.runs).mockResolvedValue({items:[]});render(<PremiumSearchPanel capabilities={capabilities}/>);expect(await screen.findByText('Поисков ещё нет. Начните с предпросмотра.')).toBeInTheDocument();});

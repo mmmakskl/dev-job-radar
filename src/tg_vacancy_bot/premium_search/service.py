@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError
-from telethon import errors, functions, types
+from telethon import errors, functions, types, utils
 
 from tg_vacancy_bot.pipeline.fingerprints import (
     build_text_hash,
@@ -23,7 +23,6 @@ from tg_vacancy_bot.premium_search.analyzer import (
     parse_premium_analysis,
 )
 from tg_vacancy_bot.premium_search.store import PremiumSearchStore, now
-from tg_vacancy_bot.premium_search.tracks import prefilter_reason
 from tg_vacancy_bot.telegram.links import build_vacancy_id
 from tg_vacancy_bot.storage.vacancy_groups import VacancyGroupStore
 
@@ -144,9 +143,6 @@ def normalize_result(
         return dict(values, status='rejected', decision_reason='empty_text')
     if date < datetime.now(timezone.utc) - timedelta(days=period_days):
         return dict(values, status='rejected', decision_reason='old_content')
-    reason = prefilter_reason(text, track)
-    if reason:
-        return dict(values, status='rejected', decision_reason='prefilter:' + reason)
     values['apply_urls_json'] = json.dumps(
         extract_apply_urls(text, getattr(message, 'entities', None))
     )
@@ -161,7 +157,7 @@ class PremiumSearchService:
         processor,
         telemetry,
         analyzer: PremiumAnalyzer = analyze_premium_text,
-        max_llm_calls: int = 20,
+        max_llm_calls: int = 3000,
         live_queue: asyncio.Queue | None = None,
         settings_store=None,
     ):
@@ -172,7 +168,7 @@ class PremiumSearchService:
             telemetry,
         )
         self.analyzer = analyzer
-        self.max_llm_calls = min(20, max_llm_calls)
+        self.max_llm_calls = max_llm_calls
         self.live_queue = live_queue
         self.settings_store = settings_store
         self._lock = asyncio.Lock()
@@ -287,42 +283,15 @@ class PremiumSearchService:
                     raise QuotaExhausted()
                 self._recovered('free_quota_exhausted')
                 self.store.update_run(run_id, phase='searching')
-                response = await self._telegram(
-                    run_id,
-                    functions.channels.SearchPostsRequest(
-                        query=run['query'],
-                        offset_rate=0,
-                        offset_peer=types.InputPeerEmpty(),
-                        offset_id=0,
-                        limit=run['result_limit'],
-                        allow_paid_stars=None,
-                    ),
-                )
+                await self._collect(run)
                 self._recovered('search_failed')
-                channels = {
-                    getattr(c, 'id', None): c for c in getattr(response, 'chats', [])
-                }
-                results = [
-                    normalize_result(
-                        message,
-                        channels.get(
-                            getattr(
-                                getattr(message, 'peer_id', None), 'channel_id', None
-                            )
-                        ),
-                        run['period_days'],
-                        run['track'],
-                    )
-                    for message in getattr(response, 'messages', [])[
-                        : run['result_limit']
-                    ]
-                ]
-                self.store.retain_search(run_id, results)
             self.store.update_run(run_id, phase='analyzing', retry_at=None)
             for result in self.store.pending_results(run_id):
                 await self._priority(run_id)
                 if result['status'] == 'pending':
                     await self._evaluate(run, result)
+            # Publish only after all candidates have been scored and ranked.
+            for result in self.store.ranked_results(run_id):
                 current = self.store.get_result(result['result_id'])
                 if current['action_state'] == 'queued':
                     await self._priority(run_id)
@@ -374,7 +343,7 @@ class PremiumSearchService:
             self.store.defer(
                 run_id,
                 max(1, error.seconds),
-                'analyzing' if phase == 'analyzing' else 'flood_wait',
+                'analyzing' if phase in {'analyzing', 'llm_retry'} else 'flood_wait',
             )
         except Exception as error:
             self._error('search_failed')
@@ -388,14 +357,55 @@ class PremiumSearchService:
                 run_id, status='failed', error_reason=reason, finished_at=now()
             )
 
+    async def _collect(self, run: dict) -> None:
+        offset_rate, offset_id = 0, 0
+        offset_peer = types.InputPeerEmpty()
+        seen = set()
+        for _ in range(10):
+            response = await self._telegram(
+                run['search_run_id'],
+                functions.channels.SearchPostsRequest(
+                    query=run['query'],
+                    offset_rate=offset_rate,
+                    offset_peer=offset_peer,
+                    offset_id=offset_id,
+                    limit=100,
+                    allow_paid_stars=None,
+                ),
+            )
+            channels = {c.id: c for c in getattr(response, 'chats', [])}
+            messages = list(getattr(response, 'messages', []))
+            fresh = []
+            for message in messages:
+                key = (
+                    getattr(getattr(message, 'peer_id', None), 'channel_id', None),
+                    message.id,
+                )
+                if key not in seen:
+                    seen.add(key)
+                    fresh.append(
+                        normalize_result(
+                            message,
+                            channels.get(key[0]),
+                            run['period_days'],
+                            run['track'],
+                        )
+                    )
+            if not fresh:
+                break
+            self.store.retain_search(run['search_run_id'], fresh, phase='collecting')
+            next_rate = getattr(response, 'next_rate', None)
+            if not messages or next_rate is None:
+                break
+            last = messages[-1]
+            channel = channels.get(getattr(last.peer_id, 'channel_id', None))
+            if channel is None:
+                break
+            offset_peer = utils.get_input_peer(channel)
+            offset_rate, offset_id = next_rate, last.id
+
     async def _evaluate(self, run: dict, result: dict) -> None:
         rid = result['result_id']
-        reason = prefilter_reason(result['raw_text'], run['track'])
-        if reason:
-            self.store.update_result(
-                rid, status='rejected', decision_reason='prefilter:' + reason
-            )
-            return
         group_store = self.processor.group_store
         group = (
             group_store.known_duplicate(
@@ -593,7 +603,26 @@ class PremiumSearchService:
                     decision_reason='source_added_restart_required',
                 )
             else:
+                if not result['analysis']:
+                    result = await self._manual_analysis(result)
                 await self._save(result, publish=action == 'publish')
+        except ValueError as error:
+            self._error('result_action_failed')
+            self.store.update_result(
+                rid,
+                action_state='failed',
+                action_error=(
+                    str(error)
+                    if str(error)
+                    in {
+                        'manual_analysis_failed',
+                        'publisher_not_configured',
+                        'save_failed',
+                        'delivery_uncertain',
+                    }
+                    else 'action_failed'
+                ),
+            )
         except Exception:
             self._error('result_action_failed')
             self.store.update_result(
@@ -608,13 +637,33 @@ class PremiumSearchService:
                 ),
             )
 
+    async def _manual_analysis(self, result: dict) -> dict:
+        """Create the structured card needed to publish an admin-approved post."""
+        try:
+            candidate = await asyncio.wait_for(self.analyzer(result['raw_text']), 60)
+            decision = parse_premium_analysis(json.loads(candidate.as_json()))
+        except Exception as error:
+            self._error('manual_analysis_failed')
+            raise ValueError('manual_analysis_failed') from error
+        status = decision.status(self.store.get_run(result['search_run_id'])['track'])
+        self.store.update_result(
+            result['result_id'],
+            status=status,
+            decision_status=status,
+            decision_reason='manual_override',
+            analysis_json=decision.as_json(),
+            confidence=decision.confidence,
+            title=decision.analysis.title,
+            company=decision.analysis.company,
+            summary=decision.analysis.summary,
+        )
+        return self.store.get_result(result['result_id'])
+
     async def _save(self, result: dict, publish: bool) -> None:
         rid = result['result_id']
         if publish and not self.processor.notify_vacancy:
             raise ValueError('publisher_not_configured')
         decision = parse_premium_analysis(result['analysis'])
-        if decision.status() == 'rejected':
-            raise ValueError('rejected_decision')
         saved = await self.processor.persist_analyzed_message(
             raw_text=result['raw_text'],
             post_link=result['post_link'],

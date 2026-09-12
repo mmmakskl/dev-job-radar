@@ -52,7 +52,8 @@ def install_routes(
             publisher_configured=publisher_configured,
             result_limit=50,
             max_results=100,
-            max_llm_calls=20,
+            max_llm_calls=3000,
+            max_search_posts=1000,
             period_days=7,
             max_period_days=30,
             tracks=[

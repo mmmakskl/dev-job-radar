@@ -182,13 +182,14 @@ class PremiumSearchStore:
                         BEGIN SELECT RAISE(ABORT, 'invalid status'); END''')
 
             for operation in ('INSERT', 'UPDATE'):
+                c.execute(f'DROP TRIGGER IF EXISTS premium_run_parameters_{operation}')
                 c.execute(
                     f"""CREATE TRIGGER IF NOT EXISTS premium_run_parameters_{operation}
                     BEFORE {operation} ON premium_search_runs
                     WHEN NEW.mode NOT IN ('preview','save','save_publish')
                         OR NEW.result_limit NOT BETWEEN 1 AND 100
                         OR NEW.period_days NOT BETWEEN 1 AND 30
-                        OR NEW.llm_calls NOT BETWEEN 0 AND 20
+                        OR NEW.llm_calls NOT BETWEEN 0 AND 3000
                         OR NEW.include_review NOT IN (0,1) OR NEW.cancel_requested NOT IN (0,1)
                     BEGIN SELECT RAISE(ABORT, 'invalid run parameters'); END"""
                 )
@@ -359,7 +360,9 @@ class PremiumSearchStore:
         with self._connect() as c:
             return self._insert_result(c, run_id, values)
 
-    def retain_search(self, run_id: str, results: list[dict]) -> None:
+    def retain_search(
+        self, run_id: str, results: list[dict], *, phase: str = 'analyzing'
+    ) -> None:
         with self._connect() as c:
             c.execute('BEGIN IMMEDIATE')
             cancelled = c.execute(
@@ -373,8 +376,8 @@ class PremiumSearchStore:
                     )
                 self._insert_result(c, run_id, values)
             c.execute(
-                "UPDATE premium_search_runs SET phase='analyzing',retry_at=NULL WHERE search_run_id=?",
-                (run_id,),
+                "UPDATE premium_search_runs SET phase=?,retry_at=NULL WHERE search_run_id=?",
+                (phase, run_id),
             )
             self._metrics(c, run_id)
 
@@ -459,8 +462,8 @@ class PremiumSearchStore:
         urls = set(result['apply_urls'])
         with self._connect() as c:
             rows = c.execute(
-                "SELECT * FROM premium_search_results WHERE result_id!=? AND (status IN ('accepted','duplicate','saved','published') OR (status IN ('review','rejected') AND analysis_json IS NOT NULL)) ORDER BY created_at",
-                (result['result_id'],),
+                "SELECT * FROM premium_search_results WHERE result_id!=? AND (analysis_json IS NOT NULL OR status IN ('accepted','duplicate','saved','published') OR (search_run_id=? AND status='error')) ORDER BY created_at",
+                (result['result_id'], result['search_run_id']),
             ).fetchall()
         for row in rows:
             if (
@@ -512,10 +515,14 @@ class PremiumSearchStore:
             if row['action_state'] in {'queued', 'running'}:
                 raise ValueError('Действие уже выполняется')
             if action in {'save', 'publish'}:
-                if (
+                if not all(
+                    row[key]
+                    for key in ('raw_text', 'post_link', 'published_at', 'channel_name')
+                ):
+                    raise ValueError('Нет доступного анализа для сохранения')
+                if origin == 'run' and (
                     row['status'] not in {'accepted', 'review', 'saved', 'published'}
                     or not row['analysis_json']
-                    or not row['raw_text']
                 ):
                     raise ValueError('Нет доступного анализа для сохранения')
                 if row['delivery_state'] == 'sending':
@@ -593,15 +600,16 @@ class PremiumSearchStore:
     def list_results(
         self, run_id: str, offset: int = 0, limit: int = 50, status: str | None = None
     ) -> dict:
-        clause = 'search_run_id=?'
-        args: list = [run_id]
-        if status:
-            clause += ' AND status=?'
-            args.append(status)
-        else:
-            run = self.get_run(run_id)
-            if run and not run['include_review']:
-                clause += " AND status!='review'"
+        if not status:
+            items = self.ranked_results(run_id)
+            return dict(
+                items=items[offset : offset + limit],
+                total=len(items),
+                offset=offset,
+                limit=limit,
+            )
+        clause = 'search_run_id=? AND status=?'
+        args: list = [run_id, status]
         with self._connect() as c:
             total = c.execute(
                 'SELECT COUNT(*) FROM premium_search_results WHERE ' + clause, args
@@ -618,6 +626,23 @@ class PremiumSearchStore:
             offset=offset,
             limit=limit,
         )
+
+    def ranked_results(self, run_id: str) -> list[dict]:
+        """Return the best unique suitable posts; audit statuses remain queryable."""
+        run = self.get_run(run_id)
+        if not run:
+            return []
+        statuses = "'accepted','saved','published'"
+        if run['include_review']:
+            statuses += ",'review'"
+        with self._connect() as c:
+            rows = c.execute(
+                f"SELECT * FROM premium_search_results WHERE search_run_id=? AND status IN ({statuses}) "
+                "ORDER BY CASE WHEN status='review' THEN 1 ELSE 0 END, "
+                "confidence DESC, published_at DESC, result_id LIMIT ?",
+                (run_id, run['result_limit']),
+            ).fetchall()
+        return [self._result(row, False) for row in rows]
 
     def cleanup(self, raw_days: int = 30, metadata_days: int = 90) -> None:
         raw_cutoff = (datetime.now(timezone.utc) - timedelta(days=raw_days)).isoformat()
@@ -698,9 +723,11 @@ class PremiumSearchStore:
         result['apply_urls'] = json.loads(result.pop('apply_urls_json'))
         if not raw:
             result['can_persist'] = bool(
-                result['analysis']
-                and result['raw_text']
-                and result['status'] in {'accepted', 'review', 'saved'}
+                result['raw_text']
+                and result['post_link']
+                and result['published_at']
+                and result['channel_name']
+                and result['status'] != 'published'
                 and result['delivery_state'] != 'sending'
             )
             if result['analysis']:

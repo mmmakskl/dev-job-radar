@@ -264,7 +264,7 @@ def test_preview_search_correct_api_and_redaction(tmp_path):
         functions.channels.SearchPostsRequest,
     ]
     assert client.calls[1].query == 'Golang'
-    assert client.calls[1].limit == 50
+    assert client.calls[1].limit == 100
     assert analyzer.await_count == 1
     assert sheets.await_count == 0
     result = store.list_results(run['search_run_id'])['items'][0]
@@ -537,6 +537,28 @@ def test_expired_review_cannot_be_published(tmp_path):
         store.request_action(result['result_id'], 'publish')
 
 
+def test_manual_publish_reanalyzes_legacy_rejected_vacancy(tmp_path):
+    svc, store, processor, _, analyzer, sheets = setup(
+        tmp_path, [message(text='We use Go for product updates')]
+    )
+    bot = SimpleNamespace(send_message=AsyncMock(return_value={'message_id': 9}))
+    processor.notify_vacancy = CandidateVacancyNotifier(
+        bot, CandidateStore(str(tmp_path / 'candidate.sqlite3')), '@cards'
+    )
+    run = store.create_run(query='Golang', mode='preview')
+    asyncio.run(svc.tick())
+    result = store.list_results(run['search_run_id'])['items'][0]
+    store.update_result(result['result_id'], status='rejected', analysis_json=None)
+    analyzer.reset_mock()
+
+    store.request_action(result['result_id'], 'publish')
+    asyncio.run(svc.tick())
+
+    assert analyzer.await_count == 1
+    assert store.public_result(result['result_id'])['status'] == 'published'
+    assert sheets.await_count == bot.send_message.await_count == 1
+
+
 def test_uncertain_bot_delivery_never_retried(tmp_path):
     svc, store, processor, _, _, sheets = setup(tmp_path, [message()])
     candidate_store = CandidateStore(str(tmp_path / 'candidate.sqlite3'))
@@ -578,7 +600,8 @@ def test_preview_duplicate_preserves_source_and_registry_action(tmp_path):
     client.response.messages = [message(2)]
     second = store.create_run(query='Golang')
     asyncio.run(svc.tick())
-    result = store.list_results(second['search_run_id'])['items'][0]
+    assert store.list_results(second['search_run_id'])['total'] == 0
+    result = store.list_results(second['search_run_id'], status='duplicate')['items'][0]
     assert result['status'] == 'duplicate'
     assert sheets.await_count == 1
     group = processor.group_store.get_group(result['group_id'])
@@ -711,7 +734,7 @@ def test_source_action_during_analysis_does_not_disrupt_auto_save(tmp_path):
     run = store.create_run(query='Golang', mode='save')
 
     async def analyze(_):
-        result = store.list_results(run['search_run_id'])['items'][0]
+        result = store.list_results(run['search_run_id'], status='pending')['items'][0]
         store.request_action(result['result_id'], 'add_public_source')
         return decision()
 
@@ -764,7 +787,88 @@ def test_rejected_llm_decision_is_deduplicated(tmp_path):
     run = store.create_run(query='Golang')
     asyncio.run(svc.tick())
     assert analyzer.await_count == 1
-    assert store.list_results(run['search_run_id'])['items'][0]['status'] == 'duplicate'
+    assert store.list_results(run['search_run_id'])['total'] == 0
+    assert store.list_results(run['search_run_id'], status='duplicate')['total'] == 1
+
+
+@pytest.mark.parametrize('mode', ['preview', 'save_publish'])
+def test_collects_pages_skips_duplicates_and_returns_ranked_top(tmp_path, mode):
+    svc, store, processor, client, analyzer, sheets = setup(tmp_path)
+    bot = SimpleNamespace(send_message=AsyncMock(return_value={'message_id': 9}))
+    processor.notify_vacancy = CandidateVacancyNotifier(
+        bot, CandidateStore(str(tmp_path / 'candidate.sqlite3')), '@cards'
+    )
+    source = channel(access_hash=12345)
+    pages = [
+        SimpleNamespace(
+            messages=[message(1, 'First'), message(2, 'First')],
+            chats=[source],
+            next_rate=9,
+        ),
+        SimpleNamespace(messages=[message(3, 'Second')], chats=[source]),
+    ]
+
+    async def telegram(request, **kwargs):
+        client.calls.append(request)
+        if isinstance(request, functions.channels.CheckSearchPostsFloodRequest):
+            return client.quota
+        return pages.pop(0)
+
+    svc.client = telegram
+
+    async def analyze(text):
+        return replace(
+            decision(),
+            confidence=91 if text == 'First' else 99,
+            analysis=replace(
+                decision().analysis,
+                company=text,
+                title=text,
+                contact=None,
+                apply_link=None,
+            ),
+        )
+
+    analyzer.side_effect = analyze
+    run = store.create_run(query='Golang', result_limit=1, mode=mode)
+    asyncio.run(svc.tick())
+    assert store.get_run(run['search_run_id'])['status'] == 'completed'
+    assert analyzer.await_count == 2
+    assert client.calls[-1].offset_rate == 9
+    assert client.calls[-1].offset_id == 2
+    results = store.list_results(run['search_run_id'])
+    assert results['total'] == 1
+    assert results['items'][0]['title'] == 'Second'
+    assert store.list_results(run['search_run_id'], status='duplicate')['total'] == 1
+    assert (
+        sheets.await_count == bot.send_message.await_count == (mode == 'save_publish')
+    )
+    if mode == 'save_publish':
+        assert results['items'][0]['status'] == 'published'
+
+
+def test_default_budget_analyzes_more_than_twenty_unique_posts(tmp_path):
+    svc, store, _, _, analyzer, _ = setup(
+        tmp_path, [message(i, f'Post {i}') for i in range(1, 26)]
+    )
+
+    async def analyze(text):
+        return replace(
+            decision(),
+            analysis=replace(
+                decision().analysis,
+                company=text,
+                title=text,
+                contact=None,
+                apply_link=None,
+            ),
+        )
+
+    analyzer.side_effect = analyze
+    run = store.create_run(query='Golang')
+    asyncio.run(svc.tick())
+    assert analyzer.await_count == 25
+    assert store.list_results(run['search_run_id'])['total'] == 25
 
 
 def test_mistral_sdk_retries_disabled(monkeypatch):

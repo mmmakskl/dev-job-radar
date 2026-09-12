@@ -69,7 +69,7 @@ def test_mutations_require_csrf_and_confirmation(api_client, route, body):
 def test_create_limits_conflict_and_no_publisher(api_client, tmp_path):
     csrf = _login(api_client)
     headers = {'X-CSRF-Token': csrf}
-    assert api_client.get(PREFIX + '/capabilities').json()['max_llm_calls'] == 20
+    assert api_client.get(PREFIX + '/capabilities').json()['max_llm_calls'] == 3000
     result = api_client.post(
         PREFIX + '/runs',
         json={'query': ' Go  jobs ', 'confirmed': True},
