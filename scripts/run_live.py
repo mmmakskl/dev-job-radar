@@ -376,6 +376,7 @@ async def main():
     heartbeat_task: asyncio.Task[None] | None = None
     requested_action: str | None = None
     premium_task: asyncio.Task | None = None
+    search_task: asyncio.Task | None = None
     try:
         await client.start()
         await client.get_dialogs()
@@ -417,13 +418,15 @@ async def main():
 
         from tg_vacancy_bot.premium_search.settings import database_path, enabled
 
+        premium_store = None
         if enabled():
             from tg_vacancy_bot.premium_search.service import PremiumSearchService
             from tg_vacancy_bot.premium_search.store import PremiumSearchStore
 
+            premium_store = PremiumSearchStore(database_path(config.DATA_DIR))
             premium = PremiumSearchService(
                 client,
-                PremiumSearchStore(database_path(config.DATA_DIR)),
+                premium_store,
                 processor,
                 telemetry,
                 live_queue=message_queue,
@@ -432,6 +435,21 @@ async def main():
             premium_task = asyncio.create_task(
                 premium.serve(shutdown_event), name='premium-search'
             )
+
+        from tg_vacancy_bot.search.service import SearchService
+        from tg_vacancy_bot.search.settings import search_database_path
+        from tg_vacancy_bot.search.store import SearchStore
+
+        search = SearchService(
+            SearchStore(search_database_path(config.DATA_DIR)),
+            processor,
+            candidate_path=config.CANDIDATE_BOT_DB_PATH,
+            settings=config.THREADS_SETTINGS,
+            premium_store=premium_store,
+        )
+        search_task = asyncio.create_task(
+            search.serve(shutdown_event), name='source-search'
+        )
 
         await client.get_me()
         logging.info("Telegram-сессия авторизована")
@@ -465,6 +483,9 @@ async def main():
         if shutdown_requested:
             accepting_messages = False
     finally:
+        if search_task:
+            search_task.cancel()
+            await asyncio.gather(search_task, return_exceptions=True)
         if premium_task:
             premium_task.cancel()
             await asyncio.gather(premium_task, return_exceptions=True)

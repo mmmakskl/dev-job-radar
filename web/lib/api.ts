@@ -69,3 +69,19 @@ export const premiumApi = {
   results: (id:string,status='',offset=0) => request<PremiumResults>(`/api/v1/premium-search/runs/${encodeURIComponent(id)}/results?${new URLSearchParams({status,offset:String(offset),limit:'25'})}`),
   action: (id:string,action:string) => mutate<{item:PremiumResult;restart_required:boolean}>(`/api/v1/premium-search/results/${encodeURIComponent(id)}/actions`,'POST',{action,confirmed:true}),
 };
+
+export type SearchSource = 'telegram' | 'premium' | 'threads';
+export type SearchCapabilities = {sources:{key:SearchSource;label:string;enabled:boolean;reason:string|null}[];publisher_configured:boolean};
+export type SearchParams = {query:string;sources:SearchSource[];track:'go';mode:'preview'|'save'|'save_publish';result_limit:number;period_days:number;include_review:boolean};
+export type SearchRun = SearchParams & {id:string;status:string;created_at:string;source_states:Partial<Record<SearchSource,{status:string;reason?:string|null;retry_at?:string|null}>>};
+export type SearchResult = {id:string;source:SearchSource;external_id:string;text:string;username:string|null;permalink:string|null;timestamp:string;title:string|null;company:string|null;summary:string|null;language:string;classification:'accepted'|'review'|'rejected';confidence:number|null;can_persist:boolean;action_state:'idle'|'queued'|'running'|'failed';action_error:string|null;publication_status:'preview'|'saved'|'published'|'duplicate';found_queries:string[]};
+export type SearchResults = {items:SearchResult[];total:number;offset:number;limit:number};
+export const searchApi = {
+  capabilities: () => request<SearchCapabilities>('/api/v1/search/capabilities'),
+  runs: () => request<{items:SearchRun[]}>('/api/v1/search/runs'),
+  run: (id:string) => request<SearchRun>(`/api/v1/search/runs/${encodeURIComponent(id)}`),
+  create: (params:SearchParams) => mutate<SearchRun>('/api/v1/search/runs','POST',{...params,confirmed:true}),
+  cancel: (id:string) => mutate<SearchRun>(`/api/v1/search/runs/${encodeURIComponent(id)}/cancel`,'POST',{confirmed:true}),
+  results: (id:string,offset=0,includeReview=true) => request<SearchResults>(`/api/v1/search/runs/${encodeURIComponent(id)}/results?${new URLSearchParams({offset:String(offset),limit:'25',include_review:String(includeReview)})}`),
+  action: (id:string,action:string) => mutate<{ok:boolean}>(`/api/v1/search/results/${encodeURIComponent(id)}/actions`,'POST',{action,confirmed:true}),
+};

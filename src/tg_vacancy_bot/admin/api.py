@@ -653,6 +653,17 @@ def create_app(data_dir: str | None = None) -> FastAPI:
             publisher_configured=publisher_configured(),
         )
 
+    from tg_vacancy_bot.search.api import install_routes as install_search_routes
+    from tg_vacancy_bot.search.settings import search_database_path
+
+    install_search_routes(
+        app,
+        path=search_database_path(data_dir),
+        session=_require_session,
+        csrf=_require_csrf,
+        publisher_configured=publisher_configured(),
+    )
+
     static_dir = Path(os.getenv('ADMIN_STATIC_DIR', '/app/web'))
     if static_dir.exists():
         app.mount('/_next', StaticFiles(directory=static_dir / '_next'), name='next')

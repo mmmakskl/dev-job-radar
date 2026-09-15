@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 from tg_vacancy_bot.admin.settings import SettingsStore, load_runtime_settings
 from tg_vacancy_bot.llm.prompts import build_system_prompt
+from tg_vacancy_bot.search.settings import SearchSettings
 from tg_vacancy_bot.paths import (
     resolve_candidate_bot_db_path,
     resolve_session_path,
@@ -225,3 +226,8 @@ def validate_candidate_bot_settings() -> None:
         raise RuntimeError(
             'Не настроен пользовательский Bot API: ' + ', '.join(missing)
         )
+
+
+# Isolated optional source settings; invalid Threads settings never stop Telegram.
+
+THREADS_SETTINGS = SearchSettings.from_env()

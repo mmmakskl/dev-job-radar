@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { SearchPanel } from '../components/search-panel';
 import { PremiumSearchPanel } from '../components/premium-search-panel';
 import { premiumApi, type PremiumCapabilities } from '../lib/api';
 import { AttentionPanel } from '../components/attention-panel';
@@ -23,8 +24,8 @@ type Dashboard = {
   secret_status:{telegram:boolean;mistral:boolean;google_sheets:boolean};
   active_action?:AdminAction|null;
 };
-type Route = '/premium-search'|'/'|'/sources'|'/groups'|'/settings'|'/prompt'|'/logs'|'/errors';
-const routeLabels:Record<Route,string> = {'/premium-search':'Premium поиск','/':'Дашборд','/sources':'Источники','/groups':'Группы','/settings':'Настройки','/prompt':'LLM-инструкции','/logs':'Логи','/errors':'Ошибки'};
+type Route = '/search'|'/premium-search'|'/'|'/sources'|'/groups'|'/settings'|'/prompt'|'/logs'|'/errors';
+const routeLabels:Record<Route,string> = {'/search':'Общий поиск','/premium-search':'Premium поиск','/':'Дашборд','/sources':'Источники','/groups':'Группы','/settings':'Настройки','/prompt':'LLM-инструкции','/logs':'Логи','/errors':'Ошибки'};
 const actionText: Record<string,[string,string]> = {
   restart:['Перезапустить бота','Очередь будет корректно завершена, затем бот применит сохранённые настройки.'],
   history:['Запустить историю','Live-мониторинг временно остановится: один Telegram session нельзя использовать одновременно.'],
@@ -75,7 +76,8 @@ export default function Page() {
   const restartRequired=typeof dashboard?.heartbeat?.settings_revision==='number' && dashboard.heartbeat.settings_revision!==settings.revision;
   const header=<Header premiumEnabled={!!premium} route={route} theme={theme} onToggleTheme={()=>setTheme(theme==='light'?'dark':'light')} onNavigate={go} onLogout={async()=>{await api.logout();setSettings(undefined);go('/');}}/>;
   let content:React.ReactNode;
-  if(route==='/premium-search') content=<PremiumSearchPanel capabilities={premium}/>;
+  if(route==='/search') content=<SearchPanel/>;
+  else if(route==='/premium-search') content=<PremiumSearchPanel capabilities={premium}/>;
   else if(route==='/sources') content=<SourcesPanel onBack={()=>go('/')} onChanged={refresh} restartRequired={restartRequired} reloadKey={sourcesRefresh}/>;
   else if(route==='/groups') content=<VacancyGroupsPanel onBack={()=>go('/')} />;
   else if(route==='/settings') content=<SettingsForm settings={settings} onSave={save}/>;

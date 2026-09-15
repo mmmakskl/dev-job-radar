@@ -12,6 +12,9 @@ from pathlib import Path
 from tg_vacancy_bot import config
 from tg_vacancy_bot.logging_config import configure_logging
 from tg_vacancy_bot.runtime import install_shutdown_signal_handlers
+from tg_vacancy_bot.search.bot import CandidateSearch
+from tg_vacancy_bot.search.settings import search_database_path, source_capabilities
+from tg_vacancy_bot.search.store import SearchStore
 from tg_vacancy_bot.telegram.bot_api import TelegramBotApi
 from tg_vacancy_bot.telegram.candidate_bot import CandidateBot
 from tg_vacancy_bot.telegram.candidate_store import CandidateStore
@@ -63,14 +66,21 @@ async def main() -> None:
     install_shutdown_signal_handlers(shutdown_event)
     api = TelegramBotApi(config.CANDIDATE_BOT_TOKEN)
     await api.delete_webhook()
+    search = CandidateSearch(
+        api, SearchStore(search_database_path(config.DATA_DIR)), source_capabilities()
+    )
     bot = CandidateBot(
         api,
         CandidateStore(config.CANDIDATE_BOT_DB_PATH),
         config.CANDIDATE_BOT_ALLOWED_USER_IDS,
+        search=search,
     )
     heartbeat_path = Path(config.DATA_DIR) / 'admin' / 'candidate-heartbeat.json'
     logging.info('Пользовательский Bot API запущен в режиме long polling.')
     task = asyncio.create_task(bot.run(shutdown_event), name='candidate-bot-polling')
+    search_task = asyncio.create_task(
+        search.run(shutdown_event), name='candidate-search-progress'
+    )
     heartbeat_task = asyncio.create_task(
         publish_heartbeat(heartbeat_path, shutdown_event),
         name='candidate-bot-heartbeat',
@@ -87,9 +97,10 @@ async def main() -> None:
     finally:
         task.cancel()
         heartbeat_task.cancel()
+        search_task.cancel()
         shutdown_task.cancel()
         await asyncio.gather(
-            task, heartbeat_task, shutdown_task, return_exceptions=True
+            task, heartbeat_task, search_task, shutdown_task, return_exceptions=True
         )
         write_heartbeat(heartbeat_path, 'stopped')
 

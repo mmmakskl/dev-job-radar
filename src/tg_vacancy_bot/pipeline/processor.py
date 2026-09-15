@@ -229,11 +229,12 @@ class VacancyProcessor:
         analysis_result: VacancyAnalysis,
         publish: bool = False,
         strict_delivery: bool = False,
+        vacancy_id: str | None = None,
     ) -> PersistenceOutcome:
         """Serialize Sheets/group writes across live and Premium; save before publish."""
         if publish and self.notify_vacancy is None:
             raise ValueError('publisher_not_configured')
-        vacancy_id = build_vacancy_id(post_link)
+        vacancy_id = vacancy_id or build_vacancy_id(post_link)
         text_hash = build_text_hash(raw_text)
         async with self._persistence_lock:
             if self.dedupe_state is not None and self.dedupe_state.is_duplicate(
@@ -270,6 +271,7 @@ class VacancyProcessor:
                         analysis_result,
                         publish,
                         strict_delivery,
+                        vacancy_id,
                     )
                 if publish and exact:
                     outcome = await self._publish(
@@ -297,6 +299,7 @@ class VacancyProcessor:
                 analysis_result,
                 publish,
                 strict_delivery,
+                vacancy_id,
             )
 
     async def _finish_persistence(self, *args) -> PersistenceOutcome:
@@ -339,8 +342,9 @@ class VacancyProcessor:
         analysis_result,
         publish,
         strict_delivery,
+        vacancy_id=None,
     ):
-        vacancy_id = build_vacancy_id(post_link)
+        vacancy_id = vacancy_id or build_vacancy_id(post_link)
         text_hash = build_text_hash(raw_text)
         group_decision = None
         if self.group_store is not None:

@@ -67,16 +67,81 @@ def test_candidate_notifier_sends_compact_buttons_and_registers_vacancy(
     args, kwargs = api.calls[0]
     assert args[0] == '@beta_vacancies'
     buttons = kwargs['reply_markup']['inline_keyboard']
-    assert buttons[0][0] == {'text': 'Открыть', 'url': 'https://t.me/jobs/42'}
+    assert len(buttons) == 1
+    assert buttons[0][0] == {
+        'text': '🚀 Откликнуться',
+        'url': 'https://example.com/apply',
+    }
+    assert buttons[0][1]['text'] == '⭐ Сохранить'
     assert [button['text'] for row in buttons for button in row] == [
-        'Открыть',
-        'Сохранить',
-        'Откликнулся',
-        'Не подходит',
-        'Пожаловаться',
+        '🚀 Откликнуться',
+        '⭐ Сохранить',
     ]
     assert len(buttons[0][1]['callback_data']) <= 64
     assert store.list_for_user(1001, 'new')[0].vacancy_id == 'jobs_42'
+
+
+def test_candidate_notifier_uses_post_link_without_apply_link(tmp_path) -> None:
+    store = CandidateStore(str(tmp_path / 'candidate.sqlite3'))
+    api = FakeBotApi()
+    notifier = CandidateVacancyNotifier(api, store, '@beta_vacancies')
+
+    sent = asyncio.run(
+        notifier(
+            vacancy_id='jobs_44',
+            post_link='https://t.me/jobs/44',
+            channel_name='jobs',
+            data=validate_analysis_result(valid_payload(apply_link=None)),
+            published_at=datetime(2026, 8, 13, tzinfo=timezone.utc),
+        )
+    )
+
+    buttons = api.calls[0][1]['reply_markup']['inline_keyboard']
+    assert sent is True
+    assert buttons[0][0] == {'text': '🔎 Подробнее', 'url': 'https://t.me/jobs/44'}
+    assert buttons[0][1]['text'] == '⭐ Сохранить'
+
+
+def test_candidate_notifier_falls_back_when_apply_link_is_not_an_http_url(
+    tmp_path,
+) -> None:
+    store = CandidateStore(str(tmp_path / 'candidate.sqlite3'))
+    api = FakeBotApi()
+    notifier = CandidateVacancyNotifier(api, store, '@beta_vacancies')
+
+    asyncio.run(
+        notifier(
+            vacancy_id='jobs_45',
+            post_link='https://t.me/jobs/45',
+            channel_name='jobs',
+            data=validate_analysis_result(valid_payload(apply_link='@recruiter')),
+            published_at=datetime(2026, 8, 13, tzinfo=timezone.utc),
+        )
+    )
+
+    button = api.calls[0][1]['reply_markup']['inline_keyboard'][0][0]
+    assert button == {'text': '🔎 Подробнее', 'url': 'https://t.me/jobs/45'}
+
+
+def test_candidate_notifier_falls_back_when_apply_link_is_malformed_url(
+    tmp_path,
+) -> None:
+    store = CandidateStore(str(tmp_path / 'candidate.sqlite3'))
+    api = FakeBotApi()
+    notifier = CandidateVacancyNotifier(api, store, '@beta_vacancies')
+
+    asyncio.run(
+        notifier(
+            vacancy_id='jobs_46',
+            post_link='https://t.me/jobs/46',
+            channel_name='jobs',
+            data=validate_analysis_result(valid_payload(apply_link='https://[broken')),
+            published_at=datetime(2026, 8, 13, tzinfo=timezone.utc),
+        )
+    )
+
+    button = api.calls[0][1]['reply_markup']['inline_keyboard'][0][0]
+    assert button == {'text': '🔎 Подробнее', 'url': 'https://t.me/jobs/46'}
 
 
 def test_candidate_notifier_releases_failed_delivery_for_retry(tmp_path) -> None:

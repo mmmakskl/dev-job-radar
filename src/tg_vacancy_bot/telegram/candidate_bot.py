@@ -419,11 +419,18 @@ class CandidateBot:
         api: CandidateBotApi,
         store: CandidateStore,
         allowed_user_ids: set[int],
+        search: Any | None = None,
     ) -> None:
         self.api = api
         self.store = store
         self.allowed_user_ids = allowed_user_ids
         self.browser = CandidateVacancyBrowser(api, store)
+        self.search = search
+        self.main_keyboard = (
+            {**MAIN_KEYBOARD, 'keyboard': [*MAIN_KEYBOARD['keyboard'], ['Поиск']]}
+            if search is not None
+            else MAIN_KEYBOARD
+        )
 
     async def run(self, shutdown_event: asyncio.Event) -> None:
         """Runs Bot API long polling. A transient API failure retries safely."""
@@ -462,11 +469,14 @@ class CandidateBot:
             await self.api.send_message(chat_id, 'Доступ к beta-боту ограничен.')
             return
         text = (message.get('text') or '').strip()
+        if self.search is not None:
+            if await self.search.handle_message(chat_id, user_id, text):
+                return
         if text in {'/start', '/help'}:
             await self.api.send_message(
                 chat_id,
                 'Выберите подборку вакансий. Статусы видны только вам.',
-                reply_markup=MAIN_KEYBOARD,
+                reply_markup=self.main_keyboard,
             )
             return
         buckets = {
@@ -485,7 +495,7 @@ class CandidateBot:
             await self.api.send_message(
                 chat_id,
                 'Используйте кнопки «Новые», «Мои отклики», «Сохранённые» или «Скрытые».',
-                reply_markup=MAIN_KEYBOARD,
+                reply_markup=self.main_keyboard,
             )
 
     async def _handle_callback(self, callback: dict[str, Any]) -> None:
@@ -498,7 +508,9 @@ class CandidateBot:
             await self.api.answer_callback_query(callback_id, 'Доступ ограничен.')
             return
         data = callback.get('data') or ''
-        if data.startswith('b:'):
+        if data.startswith('q:') and self.search is not None:
+            await self.search.handle_callback(callback, user_id, callback_id, data)
+        elif data.startswith('b:'):
             await self.browser.handle_callback(callback, user_id, callback_id, data)
         elif data.startswith('v:'):
             await self._handle_vacancy_callback(callback_id, user_id, data)
