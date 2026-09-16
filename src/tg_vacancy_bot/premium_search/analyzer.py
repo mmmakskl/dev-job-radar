@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import asdict, dataclass
 from typing import Awaitable, Callable
 
@@ -14,6 +15,43 @@ from tg_vacancy_bot.llm.schemas import (
 )
 from tg_vacancy_bot.models import VacancyAnalysis
 from tg_vacancy_bot.premium_search.tracks import get_track
+
+_NUMERIC_ANALYSIS_FIELDS = ('experience_from', 'salary_from', 'salary_to')
+_EMPTY_NUMERIC_VALUES = {
+    '',
+    'n/a',
+    'na',
+    'none',
+    'null',
+    'не указано',
+    'не указана',
+    'нет',
+    'открытая',
+    'открытый',
+    'по договоренности',
+}
+_NUMERIC_TEXT = re.compile(r'^[+-]?\d+(?:[.,]\d+)?$')
+
+
+def _coerce_numeric_analysis_fields(payload: dict) -> dict:
+    """Accept numeric JSON values emitted as plain numeric strings by the LLM."""
+    analysis = payload.get('analysis')
+    if not isinstance(analysis, dict):
+        return payload
+    normalized = dict(payload)
+    normalized_analysis = dict(analysis)
+    for field in _NUMERIC_ANALYSIS_FIELDS:
+        value = normalized_analysis.get(field)
+        if not isinstance(value, str):
+            continue
+        text = value.strip().casefold()
+        if text in _EMPTY_NUMERIC_VALUES:
+            normalized_analysis[field] = None
+        elif _NUMERIC_TEXT.fullmatch(text):
+            number = float(text.replace(',', '.'))
+            normalized_analysis[field] = int(number) if number.is_integer() else number
+    normalized['analysis'] = normalized_analysis
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -49,6 +87,7 @@ class PremiumAnalysis:
 
 def parse_premium_analysis(payload: dict) -> PremiumAnalysis:
     """Reject invalid structure before the shared validator can log payload fragments."""
+    payload = _coerce_numeric_analysis_fields(payload)
     expected = set(PremiumAnalysis.__dataclass_fields__)
     valid = isinstance(payload, dict) and set(payload) == expected
     if valid:

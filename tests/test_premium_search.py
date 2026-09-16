@@ -216,6 +216,17 @@ def test_strict_nested_schema(caplog):
         parse_premium_analysis(payload)
 
 
+def test_numeric_analysis_strings_are_normalized():
+    payload = decision_payload()
+    payload['analysis']['experience_from'] = '3'
+    payload['analysis']['salary_from'] = '120000,5'
+    payload['analysis']['salary_to'] = 'открытая'
+    parsed = parse_premium_analysis(payload)
+    assert parsed.analysis.experience_from == 3
+    assert parsed.analysis.salary_from == 120000.5
+    assert parsed.analysis.salary_to is None
+
+
 def test_dates_sources_and_entities():
     assert normalize_result(message(date=datetime.now()), channel(), 7)[
         'published_at'
