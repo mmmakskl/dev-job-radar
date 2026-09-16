@@ -129,7 +129,9 @@ def parse_premium_analysis(payload: dict) -> PremiumAnalysis:
         elif key in numbers:
             ok = value is None or (type(value) in (int, float) and math.isfinite(value))
         else:
-            ok = value is None or isinstance(value, str)
+            ok = value is None or isinstance(value, str) or (
+                isinstance(value, list) and all(isinstance(item, str) for item in value)
+            )
         if not ok:
             raise InvalidAnalysisResultError('invalid_premium_analysis')
     normalized = validate_analysis_result(analysis)
