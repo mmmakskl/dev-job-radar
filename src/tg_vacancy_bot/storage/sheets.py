@@ -547,8 +547,9 @@ async def append_to_google_sheet(
             logging.info("Вакансия записана в полный и краткий листы")
         return saved
     except Exception as exc:
-        logging.error(
-            "Ошибка записи вакансии в Google Sheets (%s)",
+        logging.exception(
+            "Ошибка записи вакансии в Google Sheets (%s): %s",
             type(exc).__name__,
+            exc,
         )
         return False
