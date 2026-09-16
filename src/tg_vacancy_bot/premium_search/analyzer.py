@@ -50,6 +50,9 @@ def _coerce_numeric_analysis_fields(payload: dict) -> dict:
         elif _NUMERIC_TEXT.fullmatch(text):
             number = float(text.replace(',', '.'))
             normalized_analysis[field] = int(number) if number.is_integer() else number
+    relocation = normalized_analysis.get('relocation')
+    if isinstance(relocation, bool):
+        normalized_analysis['relocation'] = 'Да' if relocation else 'Нет'
     normalized['analysis'] = normalized_analysis
     return normalized
 

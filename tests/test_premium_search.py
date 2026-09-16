@@ -227,6 +227,13 @@ def test_numeric_analysis_strings_are_normalized():
     assert parsed.analysis.salary_to is None
 
 
+def test_boolean_relocation_is_normalized():
+    payload = decision_payload()
+    payload['analysis']['relocation'] = False
+    parsed = parse_premium_analysis(payload)
+    assert parsed.analysis.relocation == 'Нет'
+
+
 def test_dates_sources_and_entities():
     assert normalize_result(message(date=datetime.now()), channel(), 7)[
         'published_at'
