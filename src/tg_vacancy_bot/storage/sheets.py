@@ -54,6 +54,11 @@ FULL_HEADERS = [
     "Статус вакансии",
     "Качество данных",
 ]
+# Versions released before source-neutral naming used these two labels.  The
+# column positions and row shape are identical, so existing production sheets
+# can continue receiving rows without a destructive header rewrite.
+LEGACY_FULL_HEADERS = FULL_HEADERS.copy()
+LEGACY_FULL_HEADERS[28:30] = ["Telegram-источник", "Название Telegram-канала"]
 SHORT_HEADERS = [
     "Дата",
     "Вакансия",
@@ -358,7 +363,7 @@ def _get_or_create_worksheet(
     current_headers = worksheet.row_values(1)
     if not current_headers:
         worksheet.update([headers], "A1", value_input_option="RAW")
-    elif current_headers[: len(headers)] != headers:
+    elif current_headers[: len(headers)] not in (headers, LEGACY_FULL_HEADERS):
         raise RuntimeError(
             f"Лист «{title}» уже существует с несовместимыми заголовками"
         )

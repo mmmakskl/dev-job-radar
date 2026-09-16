@@ -41,6 +41,27 @@ def test_full_and_short_rows(monkeypatch) -> None:
     assert "Full vacancy" not in short
 
 
+def test_existing_legacy_full_headers_remain_compatible(monkeypatch) -> None:
+    class Worksheet:
+        id = 1
+
+        def row_values(self, _row):
+            return sheets.LEGACY_FULL_HEADERS
+
+    worksheet = Worksheet()
+
+    class Spreadsheet:
+        def worksheet(self, _title):
+            return worksheet
+
+    monkeypatch.setattr(sheets, "_format_worksheet", lambda *args, **kwargs: None)
+    sheets._FORMATTED_WORKSHEET_IDS.clear()
+    result = sheets._get_or_create_worksheet(
+        Spreadsheet(), config.GOOGLE_SHEET_FULL_TITLE, sheets.FULL_HEADERS, full=True
+    )
+    assert result is worksheet
+
+
 def test_partial_sheet_failure_is_recovered(monkeypatch) -> None:
     class FakeWorksheet:
         def __init__(self, title: str, fail_once: bool = False) -> None:
