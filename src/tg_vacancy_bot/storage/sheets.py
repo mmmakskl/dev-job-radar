@@ -59,6 +59,20 @@ FULL_HEADERS = [
 # can continue receiving rows without a destructive header rewrite.
 LEGACY_FULL_HEADERS = FULL_HEADERS.copy()
 LEGACY_FULL_HEADERS[28:30] = ["Telegram-источник", "Название Telegram-канала"]
+
+
+def _header_value(value: Any) -> str:
+    """Normalize harmless spreadsheet formatting differences in headers."""
+    return " ".join(str(value).replace("\ufeff", "").split()).casefold()
+
+
+def _headers_match(current: list[Any], expected: list[str]) -> bool:
+    """Compare headers while tolerating whitespace and BOM artifacts."""
+    return [_header_value(value) for value in current[: len(expected)]] == [
+        _header_value(value) for value in expected
+    ]
+
+
 SHORT_HEADERS = [
     "Дата",
     "Вакансия",
@@ -363,7 +377,16 @@ def _get_or_create_worksheet(
     current_headers = worksheet.row_values(1)
     if not current_headers:
         worksheet.update([headers], "A1", value_input_option="RAW")
-    elif current_headers[: len(headers)] not in (headers, LEGACY_FULL_HEADERS):
+    elif not (
+        _headers_match(current_headers, headers)
+        or (full and _headers_match(current_headers, LEGACY_FULL_HEADERS))
+    ):
+        logging.error(
+            "Несовместимые заголовки листа %s: фактические=%r, ожидаемые=%r",
+            title,
+            current_headers[: len(headers)],
+            headers,
+        )
         raise RuntimeError(
             f"Лист «{title}» уже существует с несовместимыми заголовками"
         )

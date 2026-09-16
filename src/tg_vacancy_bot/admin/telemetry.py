@@ -123,15 +123,17 @@ class SafeLogHandler:
     def emit(self, record: Any) -> None:
         try:
             component = classify_component(record.name, record.getMessage())
+            message = getattr(record, '_safe_original_message', record.getMessage())
+            exception_message = getattr(record, '_safe_exception_message', '')
+            if exception_message:
+                message = f'{message}: {exception_message}'
             self.store.record_log(
                 level=record.levelname,
                 component=component,
-                message=record.getMessage(),
+                message=message,
             )
             if record.levelname.upper() == 'ERROR':
-                self.store.record_error(
-                    component, 'Ошибка приложения', record.getMessage()
-                )
+                self.store.record_error(component, 'Ошибка приложения', message)
         except Exception:
             # The dashboard must never break the bot logging path.
             return

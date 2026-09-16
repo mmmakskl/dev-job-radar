@@ -1,6 +1,7 @@
 """Общая настройка логирования приложения."""
 
 import logging
+import traceback
 
 from tg_vacancy_bot.admin.telemetry import SafeLogHandler, TelemetryStore, sanitize_text
 
@@ -9,11 +10,19 @@ class RedactingConsoleFilter(logging.Filter):
     """Sanitize formatted records before console/container handlers emit them."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        message = sanitize_text(record.getMessage())
+        original_message = sanitize_text(record.getMessage())
+        exception_message = ""
         if record.exc_info:
-            message = f'{message} ({record.exc_info[0].__name__})'
+            exception_message = sanitize_text(
+                ''.join(traceback.format_exception_only(*record.exc_info[:2])).strip()
+            )
+            message = f'{original_message} ({record.exc_info[0].__name__})'
             record.exc_info = None
             record.exc_text = None
+        else:
+            message = original_message
+        record._safe_original_message = original_message
+        record._safe_exception_message = exception_message
         record.msg = message
         record.args = ()
         return True
