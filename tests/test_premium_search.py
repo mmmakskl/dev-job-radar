@@ -577,6 +577,32 @@ def test_manual_publish_reanalyzes_legacy_rejected_vacancy(tmp_path):
     assert sheets.await_count == bot.send_message.await_count == 1
 
 
+def test_manual_publish_overrides_classifier_rejection(tmp_path):
+    rejected = replace(
+        decision(),
+        analysis=replace(decision().analysis, is_match=False),
+    )
+    analyzer = AsyncMock(return_value=rejected)
+    svc, store, processor, _, _, sheets = setup(
+        tmp_path,
+        [message(text='Разработчик Golang Middle в X5')],
+        analyzer=analyzer,
+    )
+    bot = SimpleNamespace(send_message=AsyncMock(return_value={'message_id': 9}))
+    processor.notify_vacancy = CandidateVacancyNotifier(
+        bot, CandidateStore(str(tmp_path / 'candidate.sqlite3')), '@cards'
+    )
+    run = store.create_run(query='Golang', mode='preview')
+    asyncio.run(svc.tick())
+    result = store.list_results(run['search_run_id'])['items'][0]
+
+    store.request_action(result['result_id'], 'publish')
+    asyncio.run(svc.tick())
+
+    assert store.public_result(result['result_id'])['status'] == 'published'
+    assert sheets.await_count == bot.send_message.await_count == 1
+
+
 def test_uncertain_bot_delivery_never_retried(tmp_path):
     svc, store, processor, _, _, sheets = setup(tmp_path, [message()])
     candidate_store = CandidateStore(str(tmp_path / 'candidate.sqlite3'))

@@ -6,6 +6,7 @@ import asyncio
 import json
 import random
 import re
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlsplit
@@ -664,12 +665,18 @@ class PremiumSearchService:
         if publish and not self.processor.notify_vacancy:
             raise ValueError('publisher_not_configured')
         decision = parse_premium_analysis(result['analysis'])
+        analysis = decision.analysis
+        # An explicit manual publish action is an operator approval.  Keep the
+        # extracted fields, but allow the shared persistence path to save and
+        # deliver a card even when the classifier marked it as non-matching.
+        if publish and not analysis.is_match:
+            analysis = replace(analysis, is_match=True)
         saved = await self.processor.persist_analyzed_message(
             raw_text=result['raw_text'],
             post_link=result['post_link'],
             published_at=datetime.fromisoformat(result['published_at']),
             channel_name=result['channel_name'],
-            analysis_result=decision.analysis,
+            analysis_result=analysis,
             publish=False,
             strict_delivery=True,
         )
@@ -692,7 +699,7 @@ class PremiumSearchService:
                 post_link=result['post_link'],
                 published_at=datetime.fromisoformat(result['published_at']),
                 channel_name=result['channel_name'],
-                analysis_result=decision.analysis,
+                analysis_result=analysis,
                 publish=True,
                 strict_delivery=True,
             )
