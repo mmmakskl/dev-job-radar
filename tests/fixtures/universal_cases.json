@@ -1,0 +1,12 @@
+[
+ {"id":"go","expected":true,"text":"Вакансия Go backend developer. Ищем инженера для разработки сервиса."},
+ {"id":"java_go","expected":true,"text":"Hiring Java engineer, Go is a plus. Requirements: Java, SQL."},
+ {"id":"frontend","expected":true,"text":"Ищем frontend developer. Требования: TypeScript и React, отклик по ссылке."},
+ {"id":"qa","expected":true,"text":"Вакансия QA automation engineer. Требуется опыт автоматизации тестирования."},
+ {"id":"devops","expected":true,"text":"Нанимаем DevOps engineer. Kubernetes обязателен, Terraform будет плюсом."},
+ {"id":"hr","expected":true,"text":"Открыта вакансия IT recruiter для подбора разработчиков."},
+ {"id":"english","expected":true,"text":"We are hiring a Data Engineer. Required: Python and SQL. Apply through our careers page."},
+ {"id":"resume","expected":false,"text":"Ищу работу: backend developer, 6 лет опыта. Мой стек: Go, PostgreSQL. Резюме по запросу."},
+ {"id":"course_ad","expected":false,"text":"Записывайтесь на курс QA automation! Вебинар и обучение с нуля, скидка сегодня."},
+ {"id":"ambiguous","expected":false,"text":"Backend engineer: Go, Docker, PostgreSQL. Открыт к предложениям."}
+]

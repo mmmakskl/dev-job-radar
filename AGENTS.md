@@ -28,6 +28,12 @@ Automated tests use `pytest` and live under `tests/`, named `test_<module>.py`. 
 
 Update `README.md` as part of every substantial project change so that the documentation does not fall behind the actual state of the repository. Keep setup instructions, configuration variables, Make targets and run commands, architecture descriptions, and user-visible behavior consistent with the implementation. Treat the documentation update as part of completing the change, not as optional follow-up work. Small internal changes that do not affect documented behavior do not require a README update.
 
+Before implementing Candidate Bot features involving candidate profiles, vacancy
+tracks, source integration, or the shared vacancy registry, read
+`docs/CANDIDATE_BOT_MULTIDIRECTION_PLAN.md` and follow its accepted decisions
+and invariants. Update that plan first if an approved architectural decision
+changes.
+
 ## Commit & Pull Request Guidelines
 
 Git history is unavailable in this checkout, so use short, imperative commit subjects such as `Add retry handling for Mistral`. Keep commits focused. Pull requests should explain the behavior change, list validation performed, note configuration changes, and link an issue when applicable. Include redacted logs or screenshots only when they clarify runtime behavior.

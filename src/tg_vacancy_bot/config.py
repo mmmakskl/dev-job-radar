@@ -95,6 +95,8 @@ HISTORY_DAYS = _MANAGED.telegram.history_days if _MANAGED else 7
 # Префильтр для экономии токенов
 KEYWORD_FILTER = _MANAGED.filters.keywords if _MANAGED else ['go', 'golang']
 EXCLUDE_KEYWORDS = _MANAGED.filters.exclude_keywords if _MANAGED else []
+LEGACY_GO_ANALYSIS = parse_bool_env(os.getenv('LEGACY_GO_ANALYSIS'))
+MISTRAL_DAILY_LIMIT = max(1, int(os.getenv('MISTRAL_DAILY_LIMIT', '1000')))
 
 # Долговременная дедупликация успешно экспортированных вакансий
 STATE_FILE_PATH = resolve_state_path(
@@ -135,6 +137,19 @@ CANDIDATE_BOT_TOKEN = os.getenv('CANDIDATE_BOT_TOKEN', '')
 CANDIDATE_BOT_CHANNEL = parse_telegram_target(os.getenv('CANDIDATE_BOT_CHANNEL'))
 CANDIDATE_BOT_ALLOWED_USER_IDS = parse_telegram_user_ids(
     os.getenv('CANDIDATE_BOT_ALLOWED_USER_IDS')
+)
+# Independent shadow rollout: an existing bot tester is not automatically enrolled.
+CANDIDATE_PROFILE_FEED_ENABLED = parse_bool_env(
+    os.getenv('CANDIDATE_PROFILE_FEED_ENABLED')
+)
+CANDIDATE_PROFILE_ALLOWED_USER_IDS = parse_telegram_user_ids(
+    os.getenv('CANDIDATE_PROFILE_ALLOWED_USER_IDS')
+)
+CANDIDATE_PROFILE_DELIVERY_ENABLED = parse_bool_env(
+    os.getenv('CANDIDATE_PROFILE_DELIVERY_ENABLED')
+)
+CANDIDATE_CATALOG_SEARCH_ENABLED = parse_bool_env(
+    os.getenv('CANDIDATE_CATALOG_SEARCH_ENABLED')
 )
 CANDIDATE_BOT_DB_PATH = resolve_candidate_bot_db_path(
     data_dir=DATA_DIR,

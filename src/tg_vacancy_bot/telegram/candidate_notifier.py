@@ -2,7 +2,6 @@
 
 import logging
 from datetime import datetime
-from urllib.parse import urlparse
 
 from tg_vacancy_bot import config
 from tg_vacancy_bot.models import NOT_SPECIFIED, VacancyAnalysis
@@ -15,36 +14,11 @@ def _known(value: str | None) -> bool:
     return bool(value and value != NOT_SPECIFIED)
 
 
-def _public_url(value: str | None) -> str | None:
-    """Return a Bot API-safe HTTP(S) URL, or no direct destination."""
-    if not _known(value):
-        return None
-    url = value.strip()
-    try:
-        parsed = urlparse(url)
-    except ValueError:
-        return None
-    if parsed.scheme in {'http', 'https'} and parsed.netloc:
-        return url
-    return None
-
-
-def channel_keyboard(
-    callback_key: str, post_link: str, apply_link: str | None = None
-) -> dict[str, list[list[dict]]]:
-    """Build the two actions shown on new shared-channel cards.
-
-    Historic ``v:*`` callbacks remain routable in the candidate bot, but new
-    channel cards deliberately expose only saving and the relevant outbound
-    link. The opaque callback value stays well below Telegram's 64-byte cap.
-    """
-    direct_apply_link = _public_url(apply_link)
-    destination = direct_apply_link or post_link
-    action_label = '🚀 Откликнуться' if direct_apply_link else '🔎 Подробнее'
+def channel_keyboard(callback_key: str) -> dict[str, list[list[dict]]]:
+    """Build the single save action shown on newly published cards."""
     return {
         'inline_keyboard': [
             [
-                {'text': action_label, 'url': destination},
                 {'text': '⭐ Сохранить', 'callback_data': f'v:s:{callback_key}'},
             ]
         ]
@@ -68,7 +42,7 @@ class CandidateVacancyNotifier:
         post_link: str,
         channel_name: str,
         data: VacancyAnalysis,
-        published_at: datetime,
+        published_at: datetime | None,
         strict_delivery: bool = False,
     ) -> bool:
         """Publishes the shared card; failure never interrupts the ingestion pipeline."""
@@ -79,7 +53,7 @@ class CandidateVacancyNotifier:
             summary=data.summary if _known(data.summary) else None,
             post_link=post_link,
             apply_link=data.apply_link if _known(data.apply_link) else None,
-            published_at=published_at.isoformat(),
+            published_at=published_at.isoformat() if published_at else None,
         )
         if not self.store.claim_channel_delivery(vacancy_id):
             logging.info('Карточка вакансии уже была заявлена')
@@ -100,9 +74,7 @@ class CandidateVacancyNotifier:
                 self.target,
                 message,
                 parse_mode='HTML',
-                reply_markup=channel_keyboard(
-                    vacancy.callback_key, post_link, data.apply_link
-                ),
+                reply_markup=channel_keyboard(vacancy.callback_key),
             )
         except Exception:
             if not strict_delivery:

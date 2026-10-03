@@ -41,7 +41,7 @@ def install_routes(
 
     def require_run(run_id):
         run = store.get_run(run_id)
-        if run is None:
+        if run is None or run['owner'].startswith('candidate:'):
             raise HTTPException(404, 'Поиск не найден')
         return run
 
@@ -63,6 +63,7 @@ def install_routes(
                     confidence_threshold=t.confidence_threshold,
                 )
                 for t in TRACKS.values()
+                if t.key != 'catalog'
             ],
         )
 
@@ -82,7 +83,7 @@ def install_routes(
 
     @app.get(prefix + '/runs')
     def runs(limit: int = Query(default=20, ge=1, le=100), _: str = Depends(session)):
-        return dict(items=store.list_runs(limit))
+        return dict(items=store.list_runs(limit, include_private=False))
 
     @app.get(prefix + '/runs/{run_id}')
     def run(run_id: str, _: str = Depends(session)):
@@ -109,6 +110,10 @@ def install_routes(
     @app.post(prefix + '/results/{result_id}/actions', status_code=202)
     def action(result_id: str, body: ResultAction, _: str = Depends(csrf)):
         confirm(body)
+        target = store.get_result(result_id)
+        if target is None:
+            raise HTTPException(404, 'Результат не найден')
+        require_run(target['search_run_id'])
         if body.action == 'publish' and not publisher_configured:
             raise HTTPException(422, 'Candidate publisher не настроен')
         try:

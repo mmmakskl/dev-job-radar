@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "directions": [
+    {"id":"development","synonyms":["разработка","development","software engineering"],"specializations":[
+      {"id":"backend","synonyms":["бэкенд","backend","server-side"],"roles":[
+        {"id":"backend_developer","synonyms":["backend developer","бэкенд-разработчик","server developer"],"stacks":["go","python","java","kotlin","csharp","php","ruby","nodejs","rust","sql"]},
+        {"id":"api_developer","synonyms":["api developer","разработчик api"],"stacks":["go","python","java","nodejs","rust"]}]},
+      {"id":"frontend","synonyms":["фронтенд","frontend","web client"],"roles":[{"id":"frontend_developer","synonyms":["frontend developer","фронтенд-разработчик","web developer"],"stacks":["javascript","typescript","react","vue","angular"]}]},
+      {"id":"mobile","synonyms":["мобильная разработка","mobile"],"roles":[{"id":"mobile_developer","synonyms":["mobile developer","мобильный разработчик"],"stacks":["swift","kotlin","flutter","react_native"]}]},
+      {"id":"embedded","synonyms":["встроенные системы","embedded"],"roles":[{"id":"embedded_developer","synonyms":["embedded developer","embedded engineer","разработчик встраиваемых систем"],"stacks":["c","cpp","rust","embedded_linux"]}]}
+    ]},
+    {"id":"qa","synonyms":["тестирование","qa","quality assurance"],"specializations":[
+      {"id":"manual_qa","synonyms":["ручное тестирование","manual testing"],"roles":[{"id":"manual_qa_engineer","synonyms":["manual qa","тестировщик","инженер ручного тестирования"],"stacks":["web","mobile","api","sql"]}]},
+      {"id":"automation_qa","synonyms":["автоматизация тестирования","test automation"],"roles":[{"id":"automation_qa_engineer","synonyms":["automation qa","qa automation engineer","автотестировщик"],"stacks":["python","java","javascript","typescript","csharp","go"]}]}
+    ]},
+    {"id":"data_ai","synonyms":["данные и ии","data","ai","искусственный интеллект"],"specializations":[
+      {"id":"data_engineering","synonyms":["инженерия данных","data engineering"],"roles":[{"id":"data_engineer","synonyms":["data engineer","инженер данных"],"stacks":["python","sql","spark","kafka","airflow"]}]},
+      {"id":"data_science","synonyms":["наука о данных","data science"],"roles":[{"id":"data_scientist","synonyms":["data scientist","дата-сайентист"],"stacks":["python","r","sql","pytorch","tensorflow"]}]},
+      {"id":"machine_learning","synonyms":["машинное обучение","machine learning"],"roles":[{"id":"ml_engineer","synonyms":["ml engineer","инженер машинного обучения"],"stacks":["python","pytorch","tensorflow","mlops"]}]}
+    ]},
+    {"id":"analytics","synonyms":["аналитика","analytics"],"specializations":[
+      {"id":"product_analytics","synonyms":["продуктовая аналитика","product analytics"],"roles":[{"id":"product_analyst","synonyms":["product analyst","продуктовый аналитик"],"stacks":["sql","python","tableau","power_bi","metabase"]}]},
+      {"id":"business_analytics","synonyms":["бизнес-аналитика","business analysis"],"roles":[{"id":"business_analyst","synonyms":["business analyst","бизнес-аналитик","системный аналитик"],"stacks":["sql","uml","bpmn","api"]}]}
+    ]},
+    {"id":"design","synonyms":["дизайн","design"],"specializations":[
+      {"id":"product_design","synonyms":["продуктовый дизайн","product design","ux/ui"],"roles":[{"id":"product_designer","synonyms":["product designer","ux/ui дизайнер","продуктовый дизайнер"],"stacks":["figma","ux","ui","research"]}]},
+      {"id":"graphic_design","synonyms":["графический дизайн","graphic design"],"roles":[{"id":"graphic_designer","synonyms":["graphic designer","графический дизайнер"],"stacks":["figma","photoshop","illustrator","indesign"]}]}
+    ]},
+    {"id":"devops_admin","synonyms":["devops и администрирование","devops","администрирование"],"specializations":[
+      {"id":"devops","synonyms":["девопс","devops engineering"],"roles":[{"id":"devops_engineer","synonyms":["devops engineer","инженер devops"],"stacks":["linux","docker","kubernetes","terraform","ansible","aws","gcp"]}]},
+      {"id":"systems_admin","synonyms":["системное администрирование","systems administration"],"roles":[{"id":"systems_administrator","synonyms":["system administrator","sysadmin","системный администратор"],"stacks":["linux","windows","networking","postgresql"]}]},
+      {"id":"sre","synonyms":["надежность сервисов","site reliability engineering"],"roles":[{"id":"sre_engineer","synonyms":["sre","site reliability engineer","инженер надежности"],"stacks":["linux","kubernetes","prometheus","grafana","terraform"]}]}
+    ]},
+    {"id":"security","synonyms":["информационная безопасность","security","кибербезопасность"],"specializations":[
+      {"id":"application_security","synonyms":["безопасность приложений","application security","appsec"],"roles":[{"id":"appsec_engineer","synonyms":["appsec engineer","инженер безопасности приложений"],"stacks":["owasp","secure_code","sast","dast"]}]},
+      {"id":"security_operations","synonyms":["операционная безопасность","security operations","soc"],"roles":[{"id":"security_analyst","synonyms":["security analyst","soc analyst","аналитик soc"],"stacks":["siem","linux","incident_response","networking"]}]}
+    ]},
+    {"id":"management","synonyms":["менеджмент","management"],"specializations":[
+      {"id":"product_management","synonyms":["продуктовый менеджмент","product management"],"roles":[{"id":"product_manager","synonyms":["product manager","продакт-менеджер"],"stacks":["roadmaps","analytics","experiments"]}]},
+      {"id":"project_management","synonyms":["управление проектами","project management"],"roles":[{"id":"project_manager","synonyms":["project manager","менеджер проектов"],"stacks":["agile","scrum","kanban","planning"]}]},
+      {"id":"engineering_management","synonyms":["управление разработкой","engineering management"],"roles":[{"id":"engineering_manager","synonyms":["engineering manager","руководитель разработки"],"stacks":["people_management","delivery","architecture"]}]}
+    ]},
+    {"id":"hr_recruiting","synonyms":["hr","рекрутинг","human resources"],"specializations":[
+      {"id":"recruiting","synonyms":["подбор персонала","recruiting","talent acquisition"],"roles":[{"id":"it_recruiter","synonyms":["it recruiter","айти-рекрутер","технический рекрутер"],"stacks":["sourcing","interviewing","ats"]}]},
+      {"id":"hr_management","synonyms":["управление персоналом","hr management"],"roles":[{"id":"hr_manager","synonyms":["hr manager","менеджер по персоналу"],"stacks":["people_ops","performance","hr_analytics"]}]}
+    ]},
+    {"id":"marketing_content","synonyms":["маркетинг и контент","marketing","контент"],"specializations":[
+      {"id":"digital_marketing","synonyms":["digital marketing","цифровой маркетинг"],"roles":[{"id":"digital_marketer","synonyms":["digital marketer","интернет-маркетолог"],"stacks":["seo","sem","analytics","ads"]}]},
+      {"id":"content","synonyms":["контент-маркетинг","content marketing"],"roles":[{"id":"content_manager","synonyms":["content manager","контент-менеджер","редактор"],"stacks":["writing","seo","cms","social_media"]}]}
+    ]}
+  ]
+}

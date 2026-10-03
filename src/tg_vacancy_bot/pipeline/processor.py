@@ -7,14 +7,20 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+from tg_vacancy_bot.llm.universal import (
+    AnalysisUnavailable,
+    UniversalDecision,
+    go_projection_accepted,
+)
 from tg_vacancy_bot.models import VacancyAnalysis
+from tg_vacancy_bot.registry import VacancyRegistry
 from tg_vacancy_bot.pipeline.fingerprints import build_text_hash
 from tg_vacancy_bot.pipeline.prefilter import candidate_profile_reasons
 from tg_vacancy_bot.storage.vacancy_groups import VacancyGroupStore
 from tg_vacancy_bot.telegram.links import build_vacancy_id
 
 KeywordFilter = Callable[[str], bool]
-AnalyzeText = Callable[[str], Awaitable[VacancyAnalysis | None]]
+AnalyzeText = Callable[[str], Awaitable[VacancyAnalysis | UniversalDecision | None]]
 AppendToSheet = Callable[..., Awaitable[bool]]
 NotifyVacancy = Callable[..., Awaitable[bool]]
 
@@ -69,6 +75,7 @@ class VacancyProcessor:
         exclude_keywords: list[str] | None = None,
         event_recorder: EventRecorder | None = None,
         group_store: VacancyGroupStore | None = None,
+        registry: VacancyRegistry | None = None,
     ) -> None:
         self.keyword_filter = keyword_filter
         self.analyze_text = analyze_text
@@ -78,6 +85,7 @@ class VacancyProcessor:
         self.exclude_keywords = [item.casefold() for item in (exclude_keywords or [])]
         self.event_recorder = event_recorder
         self.group_store = group_store
+        self.registry = registry
         self.keyword_matches = 0
         self.saved_matches = 0
         self._persistence_lock = asyncio.Lock()
@@ -87,7 +95,7 @@ class VacancyProcessor:
         text: str,
         raw_text: str,
         post_link: str,
-        published_at: datetime,
+        published_at: datetime | None,
         channel_name: str,
     ) -> bool:
         """Обрабатывает сообщение и возвращает True после успешной записи."""
@@ -143,7 +151,7 @@ class VacancyProcessor:
         text_hash: str,
         vacancy_id: str,
         channel_name: str,
-        published_at: datetime,
+        published_at: datetime | None,
     ) -> bool:
         logging.info("Пропуск: дубликат вакансии")
         reason_getter = getattr(self.dedupe_state, 'duplicate_reason', None)
@@ -154,7 +162,7 @@ class VacancyProcessor:
         ) or 'duplicate_fingerprint'
         self._metric('skipped_duplicate', reason=duplicate_reason)
         self._metric('exact_duplicate')
-        if self.group_store is not None:
+        if self.group_store is not None and published_at is not None:
             self.group_store.record_exact_repost(
                 vacancy_id=vacancy_id,
                 post_link=post_link,
@@ -162,6 +170,25 @@ class VacancyProcessor:
                 published_at=published_at,
                 text_hash=text_hash,
             )
+            canonical_id = self.group_store.canonical_vacancy_id(vacancy_id)
+            if (
+                self.registry is not None
+                and canonical_id
+                and canonical_id != vacancy_id
+            ):
+                canonical = self.registry.get(canonical_id)
+                if canonical is not None:
+                    self.registry.ingest(
+                        vacancy_id=canonical_id,
+                        proven_canonical_id=canonical_id,
+                        external_id=vacancy_id,
+                        post_link=post_link,
+                        decision=canonical.decision,
+                        source_type='telegram',
+                        published_at=published_at,
+                        channel_name=channel_name,
+                        unavailable_reason='legacy_no_analysis',
+                    )
         return False
 
     async def _process_claimed(
@@ -169,7 +196,7 @@ class VacancyProcessor:
         text: str,
         raw_text: str,
         post_link: str,
-        published_at: datetime,
+        published_at: datetime | None,
         channel_name: str,
         text_hash: str,
         vacancy_id: str,
@@ -198,7 +225,37 @@ class VacancyProcessor:
         logging.info("Отправляем на анализ в Mistral...")
 
         await asyncio.sleep(1.5)
-        analysis_result = await self.analyze_text(text)
+        # Saved universal analyses are reusable across restarts/non-Go retries.
+        existing = (
+            self.registry.reusable_decision(vacancy_id, raw_text)
+            if self.registry
+            else None
+        )
+        unavailable_reason = None
+        try:
+            analyzed = (
+                existing if existing is not None else await self.analyze_text(text)
+            )
+        except AnalysisUnavailable as exc:
+            analyzed = None
+            unavailable_reason = str(exc)
+        decision = analyzed if isinstance(analyzed, UniversalDecision) else None
+        analysis_result = decision.analysis if decision else analyzed
+        if self.registry is not None and (
+            analysis_result is None or not analysis_result.is_match
+        ):
+            self.registry.ingest(
+                vacancy_id=vacancy_id,
+                post_link=post_link,
+                decision=decision,
+                raw_text=raw_text,
+                channel_name=channel_name,
+                published_at=published_at,
+                unavailable_reason=unavailable_reason
+                or (
+                    'legacy_no_analysis' if analysis_result else 'analysis_unavailable'
+                ),
+            )
         if analysis_result is None:
             logging.error("[LLM] Не удалось проанализировать вакансию")
             self._metric('processing_error', 'llm', 'llm_error')
@@ -215,6 +272,7 @@ class VacancyProcessor:
             published_at=published_at,
             channel_name=channel_name,
             analysis_result=analysis_result,
+            universal_decision=decision,
             publish=self.notify_vacancy is not None,
         )
         return outcome.saved
@@ -224,19 +282,69 @@ class VacancyProcessor:
         *,
         raw_text: str,
         post_link: str,
-        published_at: datetime,
+        published_at: datetime | None,
         channel_name: str,
         analysis_result: VacancyAnalysis,
         publish: bool = False,
         strict_delivery: bool = False,
         vacancy_id: str | None = None,
+        universal_decision: UniversalDecision | None = None,
+        source_type: str = 'telegram',
     ) -> PersistenceOutcome:
         """Serialize Sheets/group writes across live and Premium; save before publish."""
-        if publish and self.notify_vacancy is None:
-            raise ValueError('publisher_not_configured')
         vacancy_id = vacancy_id or build_vacancy_id(post_link)
         text_hash = build_text_hash(raw_text)
         async with self._persistence_lock:
+            if self.registry is not None:
+                group = (
+                    self.group_store.preview_publication(
+                        vacancy_id=vacancy_id,
+                        data=analysis_result,
+                        published_at=published_at,
+                        fuzzy=strict_delivery,
+                    )
+                    if self.group_store is not None and published_at is not None
+                    else None
+                )
+                registry_id = group.canonical_vacancy_id if group else vacancy_id
+                canonical = (
+                    self.registry.get(registry_id)
+                    if registry_id != vacancy_id
+                    else None
+                )
+                self.registry.ingest(
+                    vacancy_id=registry_id,
+                    proven_canonical_id=(
+                        registry_id if registry_id != vacancy_id else None
+                    ),
+                    external_id=vacancy_id,
+                    post_link=post_link,
+                    decision=(
+                        canonical.decision
+                        if canonical and canonical.decision
+                        else universal_decision
+                    ),
+                    source_type=source_type,
+                    raw_text=raw_text,
+                    channel_name=channel_name,
+                    published_at=published_at,
+                    unavailable_reason=(
+                        'legacy_no_analysis' if universal_decision is None else None
+                    ),
+                )
+            if universal_decision is not None and not go_projection_accepted(
+                universal_decision
+            ):
+                accepted = (
+                    universal_decision.is_vacancy
+                    and not universal_decision.needs_review
+                    and universal_decision.confidence >= 90
+                )
+                return PersistenceOutcome(
+                    'saved' if accepted else 'review', accepted, vacancy_id
+                )
+            if publish and self.notify_vacancy is None:
+                raise ValueError('publisher_not_configured')
             if self.dedupe_state is not None and self.dedupe_state.is_duplicate(
                 post_link, text_hash, vacancy_id
             ):
@@ -250,7 +358,7 @@ class VacancyProcessor:
                         data=analysis_result,
                         published_at=published_at,
                     )
-                    if self.group_store
+                    if self.group_store and published_at is not None
                     else None
                 )
                 exact = post_link in getattr(
@@ -327,6 +435,11 @@ class VacancyProcessor:
                 kwargs['strict_delivery'] = True
             notified = await self.notify_vacancy(**kwargs)
             if notified:
+                if (
+                    self.registry is not None
+                    and self.registry.get(vacancy_id) is not None
+                ):
+                    self.registry.set_projection(vacancy_id, 'go_channel', 'published')
                 return 'published'
         except Exception:
             pass
@@ -347,7 +460,7 @@ class VacancyProcessor:
         vacancy_id = vacancy_id or build_vacancy_id(post_link)
         text_hash = build_text_hash(raw_text)
         group_decision = None
-        if self.group_store is not None:
+        if self.group_store is not None and published_at is not None:
             group_decision = self.group_store.preview_publication(
                 vacancy_id=vacancy_id,
                 data=analysis_result,
@@ -386,12 +499,16 @@ class VacancyProcessor:
             raw_text=raw_text,
             published_at=published_at,
         )
+        if self.registry is not None and self.registry.get(vacancy_id) is not None:
+            self.registry.set_projection(
+                vacancy_id, 'go_sheets', 'exported' if saved else 'failed'
+            )
         if not saved:
             logging.error("[Google Sheets] Не удалось сохранить вакансию")
             self._metric('processing_error', 'google_sheets', 'export_error')
             return PersistenceOutcome('save_failed', False, vacancy_id)
 
-        if self.group_store is not None:
+        if self.group_store is not None and published_at is not None:
             self.group_store.register_publication(
                 vacancy_id=vacancy_id,
                 post_link=post_link,
@@ -402,6 +519,17 @@ class VacancyProcessor:
             )
         if self.dedupe_state is not None:
             self.dedupe_state.mark_exported(post_link, text_hash, vacancy_id)
+        if self.registry is not None:
+            self.registry.candidates.register_vacancy(
+                vacancy_id=vacancy_id,
+                title=analysis_result.title,
+                company=analysis_result.company,
+                summary=analysis_result.summary,
+                post_link=post_link,
+                apply_link=analysis_result.apply_link,
+                published_at=published_at.isoformat() if published_at else None,
+                go_visible=True,
+            )
         self.saved_matches += 1
         self._metric('vacancy_saved', 'google_sheets')
 

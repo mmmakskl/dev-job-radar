@@ -238,10 +238,9 @@ def test_dates_sources_and_entities():
     assert normalize_result(message(date=datetime.now()), channel(), 7)[
         'published_at'
     ].endswith('+00:00')
-    assert (
-        normalize_result(message(date=None), channel(), 7)['decision_reason']
-        == 'invalid_date'
-    )
+    unknown_date = normalize_result(message(date=None), channel(), 7)
+    assert unknown_date['published_at'] is None
+    assert unknown_date['status'] == 'pending'
     assert (
         normalize_result(
             message(date=datetime.now(timezone.utc) - timedelta(days=8)), channel(), 7
@@ -343,7 +342,8 @@ def test_schema_failure_not_retried(tmp_path):
     run = store.create_run(query='Golang')
     asyncio.run(svc.tick())
     assert analyzer.await_count == 1
-    assert store.get_run(run['search_run_id'])['status'] == 'completed_with_errors'
+    assert store.get_run(run['search_run_id'])['status'] == 'completed'
+    assert store.list_results(run['search_run_id'], status='review')['total'] == 1
 
 
 def test_flood_wait_is_persisted_and_cancellable(tmp_path):
@@ -920,6 +920,9 @@ def test_mistral_sdk_retries_disabled(monkeypatch):
     from unittest.mock import Mock
     from tg_vacancy_bot.llm import mistral
     from tg_vacancy_bot.premium_search.analyzer import analyze_premium_text
+    from tg_vacancy_bot import config
+
+    monkeypatch.setattr(config, 'LEGACY_GO_ANALYSIS', True)
 
     create = AsyncMock(
         return_value=SimpleNamespace(

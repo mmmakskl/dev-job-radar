@@ -1,8 +1,11 @@
 # Telegram Vacancy Parser
 
-Умный Telegram-парсер вакансий: отслеживает заданные каналы, предварительно фильтрует сообщения по Go/Golang, отбрасывает резюме/профили кандидатов, анализирует вакансии через Mistral AI и сохраняет подходящие результаты в Google Sheets. В optional private beta новый live-экспорт публикуется одной интерактивной Bot API-карточкой в общий канал. Live-мониторинг принимает сообщения через ограниченную asyncio.Queue и передаёт их последовательному worker, а обработка истории остаётся последовательной. Ответ Mistral проверяется по строгой схеме, а временные API/JSON-ошибки получают не более двух попыток. Двухуровневая дедупликация хранит ссылки бессрочно, а SHA-256 нормализованного текста — 30 дней в append-only JSONL. В state попадают только релевантные вакансии после успешной записи в Google Sheets.
+Умный Telegram-парсер вакансий: отслеживает заданные каналы, предварительно отбирает сообщения по общим признакам найма и ролей из `it_roles.v1.json`, отбрасывает очевидные резюме и рекламу курсов, анализирует вакансии через Mistral и сохраняет подходящие Go-вакансии в Google Sheets; полный анализ других направлений остаётся в общем реестре для shadow-проверки. Универсальный версионируемый анализ включён по умолчанию для live/history, Premium Search и Threads; `LEGACY_GO_ANALYSIS=true` включает совместимый Go-сценарий. Универсальные вызовы Mistral учитываются атомарно в Premium SQLite и ограничены `MISTRAL_DAILY_LIMIT` (по умолчанию 1000 в UTC-день), каждый запрос выполняется без скрытых повторов. Неопределённость, ошибки и превышение лимита не дают положительного экспорта. В optional private beta новый live-экспорт публикуется одной интерактивной Bot API-карточкой в общий канал. Live-мониторинг принимает сообщения через ограниченную asyncio.Queue и передаёт их последовательному worker, а обработка истории остаётся последовательной. Двухуровневая дедупликация хранит ссылки бессрочно, а SHA-256 нормализованного текста — 30 дней в append-only JSONL. В state попадают только вакансии после успешной записи в Google Sheets.
 
-Общий поиск в админ-панели и личном Candidate Bot дополнительно объединяет локальные опубликованные карточки, существующий Telegram Premium Search и опциональный официальный Threads API. Подробности и ограничения — в разделе [общего поиска](#общий-поиск-telegram-premium-и-threads).
+Общий поиск в админ-панели дополнительно объединяет локальные опубликованные карточки, существующий Telegram Premium Search и опциональный официальный Threads API. Подробности и ограничения — в разделе [общего поиска](#общий-поиск-telegram-premium-и-threads).
+
+Каталог IT-специальностей, общий реестр и несколько карьерных профилей
+описаны в [плане Candidate Bot](docs/CANDIDATE_BOT_MULTIDIRECTION_PLAN.md).
 
 ## Стек технологий
 
@@ -53,6 +56,8 @@ SESSION_NAME=my_account
 TARGET_CHANNELS=channel_username,-1001234567890
 TELEGRAM_CHANNELS_FOLDER=Вакансии
 MISTRAL_API_KEY=your_mistral_api_key
+LEGACY_GO_ANALYSIS=false
+MISTRAL_DAILY_LIMIT=1000
 GOOGLE_SHEET_URL=https://docs.google.com/spreadsheets/d/...
 OUTPUT_TIMEZONE=Europe/Moscow
 GOOGLE_SHEET_FULL_TITLE=Вакансии — полные
@@ -307,12 +312,8 @@ Senior Go Backend Engineer — Acme
 Источник: https://t.me/example/123
 ```
 
-Теперь под карточкой остаются только две кнопки в одной строке:
-`🚀 Откликнуться` и `⭐ Сохранить`. Если прямой URL отклика неизвестен, первая
-кнопка ведёт на пост-источник и называется `🔎 Подробнее`. Остальные действия
-не публикуются в общем канале: они доступны разрешённым пользователям в
-личном Candidate Bot — там остаются разделы и действия Applied (отклик), Hide
-(скрыть) и Report (пожаловаться), а также сохранённые вакансии.
+Под новыми карточками остаётся только кнопка `⭐ Сохранить`. Разрешённые
+пользователи открывают личную ленту и архив сохранённых в Candidate Bot.
 
 ### Нативные обсуждения Telegram
 
@@ -337,7 +338,7 @@ Senior Go Backend Engineer — Acme
 Для действий кандидатов используется отдельный Telegram Bot API-бот. Он не
 заменяет Telethon userbot: тот по-прежнему читает источники и экспортирует
 вакансии. Bot API-бот публикует интерактивную карточку в общий beta-канал и
-ведёт личные статусы пользователей в локальном SQLite. Он работает через long
+хранит личные профили и сохранённые вакансии в локальном SQLite. Он работает через long
 polling, поэтому публичный домен и HTTPS не нужны.
 
 Создайте бота через BotFather, добавьте его администратором в отдельный общий
@@ -355,10 +356,8 @@ CANDIDATE_BOT_DB_PATH=data/candidate_bot.sqlite3
 Токен — секрет: храните его только в `.env`, не передавайте в команды и не
 добавляйте в Git. `CANDIDATE_BOT_ALLOWED_USER_IDS` содержит именно числовые
 Telegram ID; при пустом списке beta-доступ не выдаётся. При включённом режиме
-live-процесс отправляет в `CANDIDATE_BOT_CHANNEL` карточки с двумя кнопками:
-«🚀 Откликнуться» (или «🔎 Подробнее», если прямой URL отклика отсутствует) и
-«⭐ Сохранить». Applied, Hide и Report доступны в личном чате beta-бота, а не
-в публичной клавиатуре канала.
+live-процесс отправляет в `CANDIDATE_BOT_CHANNEL` карточки с одной кнопкой
+«⭐ Сохранить».
 Для одного стабильного vacancy ID карточка заявляется в SQLite до отправки и
 публикуется не более одного раза, в том числе после retry или restart.
 
@@ -374,18 +373,170 @@ make candidate-bot
 docker compose --profile candidate up -d candidate-bot
 ```
 
-После `/start` beta-кандидат видит «Новые», «Мои отклики», «Сохранённые»,
-«Скрытые» и «Поиск». Каждый раздел открывает одну редактируемую карточку с индикатором
-например «Новые · 3 из 18» и навигацией «‹ Назад» / «Вперёд ›»; переходы не
-создают новых сообщений. Кнопки в личном чате позволяют менять этап на отклик,
-ответ, интервью, оффер или отказ и оставляют кандидата в текущей позиции.
-Нажатия на сообщение общего канала меняют только строку этого пользователя и
-не редактируют карточку для остальных.
+После `/start` beta-кандидат видит «Новые», «Сохранённые», управление
+профилями и Premium-шаблонами. «Новые» сохраняет Go-ленту. «Для меня» доступно
+только при включённом флаге и попадании пользователя в оба allowlist. Оно
+показывает одну карточку на vacancy ID с именами всех совпавших активных
+профилей. Ошибки, review и классификации ниже порога 90 туда не попадают.
 
-«Пожаловаться» предлагает нейтральные причины: подозрительная вакансия,
-дубликат, неактуальна или другое. Сигнал сохраняется локально для
-администратора и никогда не публикуется другим кандидатам как отзыв о
-компании.
+```dotenv
+CANDIDATE_PROFILE_FEED_ENABLED=false
+CANDIDATE_PROFILE_ALLOWED_USER_IDS=
+CANDIDATE_PROFILE_DELIVERY_ENABLED=false
+CANDIDATE_CATALOG_SEARCH_ENABLED=false
+```
+
+Флаги по умолчанию выключены. Изменения `.env` требуют перезапуска workers.
+Выбор шаблона отдельно сохраняет настройку; «Искать» показывает собранный
+запрос и параметры перед запуском owner-scoped preview через существующий
+SearchStore и live worker. Предусмотрены состояние, результаты и отмена.
+Catalog preview доступен тестовому allowlist и использует снимок профиля;
+Telegram/Premium должен быть включён. Неподдержанные источники недоступны.
+Сохранение результата кандидатом добавляет только личный архив. Общие
+save/publish администратора остаются отдельными действиями.
+
+Общий реестр `registry.py` живёт в `CANDIDATE_BOT_DB_PATH`: источники,
+версионированные полные решения Mistral, классификации, совпадения по версии
+профиля/алгоритма и состояния проекций. Live/history записывают туда результаты
+до Go-проекций; Premium/Threads допускаются только после общего save/publish.
+Новые направления остаются shadow. Для Sheets и общего канала нужны Go в
+обязательном стеке, подтверждённая классификация и прежний Go-порог.
+Экспорт подтверждается только после записи обоих листов. Telegram IDs,
+бессрочные links/IDs, TTL hash и конкурентные claims сохранены.
+
+Изменение профиля пересчитывает matching по сохранённому анализу без Mistral.
+Отключение профиля не удаляет архив или историю. Additive-миграция сохраняет
+карточки, callback keys, версии, черновики, публикации и legacy-таблицы;
+прежние `saved` копируются в архив с исходным временем. Старые карточки без
+классификаций не становятся профильными совпадениями.
+
+### Персональные карточки и устойчивая доставка
+
+`candidate_card_formatter.py` подключён к персональной выдаче и worker
+`candidate_delivery_worker.py`. Последний использует чистый планировщик
+`candidate_delivery.py` и резервирования в той же Candidate SQLite.
+При совпадении нескольких профилей выбирается immediate, затем hourly;
+manual не инициирует и не блокирует отправку. При равенстве используется
+стабильный profile ID, а timezone берётся из выбранного профиля.
+Перед каждой страницей перепроверяются активные профили, совпадения и rollout.
+Успешная страница подтверждает только свои вакансии. Явный отказ Bot API
+возвращает их в очередь; timeout, сбой после отправки и `sending` после restart
+не повторяются автоматически. Для них требуется ручная сверка.
+
+`published_at` берётся из Telegram `message.date` или Threads timestamp;
+`discovered_at` отражает обнаружение, `eligible_at` — готовность. Неизвестная
+дата остаётся неизвестной, повторный импорт не затирает известную дату пустой.
+Планирование использует готовность, карточка показывает публикацию источника.
+Общая карточка не содержит имён личных профилей; для legacy-карточек используются
+только сохранённые поля без выдумывания классификации.
+
+Вход форматтера — неизменяемый `CardInput(vacancy_id, analysis, published_at,
+post_link, matched_profiles)`, где `analysis` — проверенный `VacancyAnalysis`,
+а `matched_profiles` — tuple из `MatchedProfile(profile_id, name)` с уже
+подтверждёнными совпадениями. API:
+
+```python
+format_card(card, *, now, timezone="Europe/Moscow") -> str
+format_hourly_digest(cards, *, window_end, now,
+                     timezone="Europe/Moscow") -> tuple[RenderedMessage, ...]
+delivery_key(recipient_id, vacancy_id) -> str
+plan_deliveries(items, *, recipient_id, mode, now,
+                last_hourly_at=None, delivered_keys=(),
+                reserved_keys=()) -> tuple[DeliveryBatch, ...]
+```
+
+Карточка показывает известные поля, до шести технологий (сначала обязательные),
+описание до 240 символов, уникальные профили и ссылку отклика. Все строки
+экранируются для Telegram HTML. При неверной или слишком длинной HTTP(S) ссылке
+отклика используется допустимый `post_link`, иначе ссылка пропускается.
+Сообщения ограничены 3500 единицами UTF-16, включая HTML. Сводка показывает
+предыдущий час в часовом поясе пользователя и общее число уникальных вакансий;
+backlog может быть старше этого периода. Она разбивается между целыми записями.
+Каждый `RenderedMessage(text, vacancy_ids)` содержит ID только своей страницы.
+
+`published_at` принимает datetime с timezone, ISO 8601 с offset/`Z` или `None`.
+Отсутствующая, повреждённая или naive дата отображается как «Дата публикации не
+указана». Возраст считается по UTC, точная дата — по IANA timezone пользователя
+с UTC offset; будущая дата показывается без возраста. `now` обязателен и должен
+быть timezone-aware, как и `window_end`, `eligible_at` и `last_hourly_at`.
+Naive время управления доставкой и неизвестный IANA timezone вызывают `ValueError`.
+
+`DeliveryItem(card, eligible_at)` содержит время готовности подтверждённого
+совпадения, независимое от даты публикации. `DeliveryBatch(key, mode, window_end,
+items, item_keys)` содержит записи и соответствующие им ключи вакансий.
+Чистый планировщик вызывается для группы одного режима и timezone: `manual` возвращает пустой план,
+`immediate` — отдельную подборку для каждой записи с `eligible_at <= now`,
+`hourly` — одну непустую подборку с `eligible_at <` последней завершённой
+границы часа выбранного timezone, включая backlog, если граница новее `last_hourly_at`.
+Совпадение ровно на границе попадёт в следующий час. Неизвестный режим вызывает
+`ValueError`. Повторы vacancy ID объединяются: поля первой карточки, все
+уникальные profile ID и самое раннее время готовности. Порядок — время готовности,
+затем vacancy ID. Отправленные и зарезервированные ключи вакансий исключаются.
+
+Ключи — версионированный SHA-256 от структурированных данных. `delivery_key`
+зависит только от пользователя и vacancy ID (числовой и строковый recipient ID
+с одинаковым представлением эквивалентны). Смена режима, профилей, текста или
+даты не создаёт новую доставку. Ключ подборки учитывает пользователя, режим,
+UTC-границу часа и упорядоченные ключи вакансий; для immediate граница — `None`.
+
+Самостоятельный пример без внешних API (запуск с `PYTHONPATH=src`):
+
+```python
+from datetime import datetime
+
+from tg_vacancy_bot.models import NOT_SPECIFIED, VacancyAnalysis
+from tg_vacancy_bot.telegram.candidate_card_formatter import (
+    CardInput, MatchedProfile, format_card, format_hourly_digest,
+)
+from tg_vacancy_bot.telegram.candidate_delivery import DeliveryItem, plan_deliveries
+
+analysis = VacancyAnalysis(
+    is_match=True, title="Senior Go Developer", company="Acme",
+    grade_from="Senior", grade_to="Senior", responsibility_level=NOT_SPECIFIED,
+    primary_roles=["Backend"], specializations=[], product_domain=NOT_SPECIFIED,
+    experience_from=None, work_format="Remote", country=NOT_SPECIFIED,
+    city="Москва", hiring_geography=NOT_SPECIFIED, relocation=NOT_SPECIFIED,
+    employment_type=NOT_SPECIFIED, salary_from=None, salary_to=None,
+    currency=NOT_SPECIFIED, salary_period=NOT_SPECIFIED, primary_language="Go",
+    required_stack=["Go", "PostgreSQL"], preferred_stack=["Kubernetes"],
+    vacancy_language="Русский", contact=NOT_SPECIFIED,
+    apply_link="https://example.com/apply",
+    summary="Разработка backend-сервисов и API.",
+    responsibilities=NOT_SPECIFIED, requirements=NOT_SPECIFIED,
+    additional_conditions=NOT_SPECIFIED,
+)
+now = datetime.fromisoformat("2026-10-04T12:30:00+03:00")
+card = CardInput(
+    "telegram:example:1", analysis, "2026-10-04T10:15:00+03:00",
+    "https://t.me/example/1",
+    (MatchedProfile("go", "Go backend"), MatchedProfile("platform", "Platform")),
+)
+print(format_card(card, now=now))
+items = [DeliveryItem(card, datetime.fromisoformat("2026-10-04T11:45:00+03:00"))]
+for batch in plan_deliveries(items, recipient_id="demo", mode="hourly", now=now):
+    pages = format_hourly_digest(
+        [item.card for item in batch.items], window_end=batch.window_end, now=now,
+    )
+    print(pages[0].vacancy_ids, pages[0].text)
+```
+
+Первая карточка из этого примера (HTML-теги показаны как обычный текст):
+
+```html
+<b>Senior Go Developer — Acme</b>
+📍 Москва · Remote
+🎓 Senior
+🛠 Go · PostgreSQL · Kubernetes
+Разработка backend-сервисов и API.
+🎯 Профили: Go backend, Platform
+🕒 Опубликовано 2 часа назад · 04.10.2026 10:15 (UTC+03:00)
+<a href="https://example.com/apply">Откликнуться ↗</a>
+```
+
+Оценка качества и ограниченный runner описаны в
+[offline/shadow отчёте](docs/universal-analysis-eval.md). Mock-тесты подтверждают
+интеграцию, но не живое качество Mistral. Миграция, backup и rollback описаны в
+[руководстве интеграции](docs/candidate-registry-operations.md).
 
 ## Структура проекта
 
@@ -397,6 +548,8 @@ src/
     channel_sync.py           # полное чтение Telegram-папки для SQLite sync
     logging_config.py         # настройка логирования
     models.py                 # модель и нормализация вакансии
+    registry.py               # общий анализ, источники, matching и проекции
+    shadow_evaluation.py      # ограниченная оценка без экспорта и рассылки
     pipeline/
       __init__.py
       processor.py            # общий pipeline обработки вакансии
@@ -410,7 +563,11 @@ src/
       bot_api.py              # минимальный async Telegram Bot API клиент
       candidate_notifier.py   # интерактивные карточки beta-канала
       candidate_bot.py        # long polling и личный workflow кандидата
-      candidate_store.py      # идемпотентная SQLite-схема действий/жалоб
+      candidate_store.py      # профили и архив сохранённых вакансий в SQLite
+      candidate_card_formatter.py # чистое HTML-форматирование персональных карточек
+      candidate_delivery.py   # чистый расчёт доставки и стабильных ключей
+      candidate_delivery_worker.py # транзакционные личные отправки
+      candidate_search.py     # owner-scoped preview по шаблону
     storage/
       sheets.py               # экспорт Google Sheets
       vacancy_groups.py       # строгие группы репостов и источники SQLite
@@ -1145,12 +1302,8 @@ Telegram ID и ссылки не меняются. Новый основной �
 очередь, результаты предпросмотра, курсоры и лимиты находятся в дополнительных
 таблицах существующего `data/admin/admin.sqlite3`.
 
-В личном Candidate Bot доступны кнопка **«Поиск»** и `/search Go backend remote`.
-Запрос использует включённые источники и создаёт только личный предпросмотр:
-без сохранения и публикации. Бот редактирует карточку с прогрессом, позволяет
-листать результаты, открыть оригинал и остановить поиск. В этом режиме
-неуверенные результаты скрыты. Поиск и callbacks привязаны к владельцу и личному
-сообщению; прежние разделы «Новые», «Мои отклики», «Сохранённые», «Скрытые» остаются.
+Личный Candidate Bot предоставляет ограниченный catalog preview по профилю; он также показывает ленту вакансий и
+архив сохранённых. Общий поиск доступен в админ-панели.
 
 ### Доступ к официальному Threads API
 
@@ -1161,7 +1314,7 @@ Telegram ID и ссылки не меняются. Новый основной �
    собственными постами авторизованного пользователя.
 3. Получите пользовательский access token официальным способом. Поместите его
    только в `THREADS_ACCESS_TOKEN` локального `.env`/секретов окружения, включите
-   `THREADS_ENABLED=true` для live bot, admin API и Candidate Bot и перезапустите
+   `THREADS_ENABLED=true` для live bot и admin API и перезапустите
    процессы. Токен не вводится в веб-панели, не коммитится и не выводится в логи.
 4. При необходимости обменяйте краткосрочный токен на долгосрочный. Срок такого
    токена — 60 дней; обновление возможно после первых 24 часов, пока токен ещё

@@ -22,11 +22,12 @@ from tg_vacancy_bot.admin.control import (
 from tg_vacancy_bot.admin.settings import SettingsStore
 from tg_vacancy_bot.channel_sync import fetch_folder_channels
 from tg_vacancy_bot.admin.telemetry import TelemetryStore
-from tg_vacancy_bot.llm.mistral import analyze_text
+from tg_vacancy_bot.llm.universal import analyze_ingestion_text
 from tg_vacancy_bot.logging_config import configure_logging
 from tg_vacancy_bot.pipeline.dedupe_state import JsonlDedupeState
-from tg_vacancy_bot.pipeline.prefilter import contains_keywords
+from tg_vacancy_bot.pipeline.prefilter import contains_keywords, universal_prefilter
 from tg_vacancy_bot.pipeline.processor import VacancyProcessor
+from tg_vacancy_bot.registry import VacancyRegistry
 from tg_vacancy_bot.runtime import (
     install_shutdown_signal_handlers,
     wait_for_disconnect_or_shutdown,
@@ -66,8 +67,13 @@ def build_live_notifier():
 
 
 processor = VacancyProcessor(
-    keyword_filter=lambda text: contains_keywords(text, config.KEYWORD_FILTER),
-    analyze_text=analyze_text,
+    keyword_filter=(
+        (lambda text: contains_keywords(text, config.KEYWORD_FILTER))
+        if config.LEGACY_GO_ANALYSIS
+        else universal_prefilter
+    ),
+    analyze_text=analyze_ingestion_text,
+    registry=VacancyRegistry(config.CANDIDATE_BOT_DB_PATH),
     append_to_sheet=append_to_google_sheet,
     dedupe_state=dedupe_state,
     notify_vacancy=build_live_notifier(),
@@ -350,7 +356,14 @@ async def main():
     logging.info("Система агрегации вакансий из Telegram")
     logging.info("=" * 60)
     logging.info("Отслеживаемых каналов: %d", len(store.active_targets()))
-    logging.info(f"Фильтр ключевых слов: {', '.join(config.KEYWORD_FILTER)}")
+    logging.info(
+        "Режим анализа: %s",
+        (
+            "legacy Go/Golang"
+            if config.LEGACY_GO_ANALYSIS
+            else "универсальный каталог IT-ролей"
+        ),
+    )
     if config.TELEGRAM_NOTIFY_ENABLED:
         logging.info(
             "Telegram notifications: enabled (target: %s)",

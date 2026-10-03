@@ -68,16 +68,9 @@ def test_candidate_notifier_sends_compact_buttons_and_registers_vacancy(
     assert args[0] == '@beta_vacancies'
     buttons = kwargs['reply_markup']['inline_keyboard']
     assert len(buttons) == 1
-    assert buttons[0][0] == {
-        'text': '🚀 Откликнуться',
-        'url': 'https://example.com/apply',
-    }
-    assert buttons[0][1]['text'] == '⭐ Сохранить'
-    assert [button['text'] for row in buttons for button in row] == [
-        '🚀 Откликнуться',
-        '⭐ Сохранить',
-    ]
-    assert len(buttons[0][1]['callback_data']) <= 64
+    assert buttons[0][0]['text'] == '⭐ Сохранить'
+    assert buttons[0][0]['callback_data'].startswith('v:s:')
+    assert len(buttons[0][0]['callback_data']) <= 64
     assert store.list_for_user(1001, 'new')[0].vacancy_id == 'jobs_42'
 
 
@@ -98,8 +91,9 @@ def test_candidate_notifier_uses_post_link_without_apply_link(tmp_path) -> None:
 
     buttons = api.calls[0][1]['reply_markup']['inline_keyboard']
     assert sent is True
-    assert buttons[0][0] == {'text': '🔎 Подробнее', 'url': 'https://t.me/jobs/44'}
-    assert buttons[0][1]['text'] == '⭐ Сохранить'
+    assert buttons == [
+        [{'text': '⭐ Сохранить', 'callback_data': buttons[0][0]['callback_data']}]
+    ]
 
 
 def test_candidate_notifier_falls_back_when_apply_link_is_not_an_http_url(
@@ -120,7 +114,7 @@ def test_candidate_notifier_falls_back_when_apply_link_is_not_an_http_url(
     )
 
     button = api.calls[0][1]['reply_markup']['inline_keyboard'][0][0]
-    assert button == {'text': '🔎 Подробнее', 'url': 'https://t.me/jobs/45'}
+    assert button['text'] == '⭐ Сохранить'
 
 
 def test_candidate_notifier_falls_back_when_apply_link_is_malformed_url(
@@ -141,7 +135,7 @@ def test_candidate_notifier_falls_back_when_apply_link_is_malformed_url(
     )
 
     button = api.calls[0][1]['reply_markup']['inline_keyboard'][0][0]
-    assert button == {'text': '🔎 Подробнее', 'url': 'https://t.me/jobs/46'}
+    assert button['text'] == '⭐ Сохранить'
 
 
 def test_candidate_notifier_releases_failed_delivery_for_retry(tmp_path) -> None:

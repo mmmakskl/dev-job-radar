@@ -1,13 +1,21 @@
-"""Personal candidate workflow driven by Telegram Bot API long polling."""
+"""Personal vacancy feed, profile wizard and Premium templates over Bot API."""
 
 import asyncio
-import html
 import logging
-from dataclasses import dataclass, replace
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
+from tg_vacancy_bot.candidate_catalog import CATALOG, validate_profile_path
+from tg_vacancy_bot.premium_search.templates import compose_query, list_templates
+from tg_vacancy_bot.telegram.candidate_card_formatter import (
+    format_card,
+    format_legacy_card,
+)
+from tg_vacancy_bot.telegram.candidate_delivery_worker import personal_card
+from tg_vacancy_bot.telegram.candidate_search import CandidateSearch
 from tg_vacancy_bot.telegram.candidate_store import (
-    BrowserSession,
+    CandidateProfile,
     CandidateStore,
     CandidateVacancy,
 )
@@ -15,7 +23,6 @@ from tg_vacancy_bot.telegram.candidate_store import (
 
 class CandidateBotApi(Protocol):
     async def get_updates(self, offset: int | None, timeout: int) -> list[dict]: ...
-
     async def send_message(
         self,
         chat_id: int | str,
@@ -25,420 +32,133 @@ class CandidateBotApi(Protocol):
         reply_markup: dict | None = None,
         disable_web_page_preview: bool = True,
     ) -> dict: ...
-
-    async def edit_message_text(
-        self,
-        chat_id: int | str,
-        message_id: int,
-        text: str,
-        *,
-        parse_mode: str | None = None,
-        reply_markup: dict | None = None,
-    ) -> dict: ...
-
     async def answer_callback_query(
         self, callback_query_id: str, text: str
     ) -> None: ...
 
 
 MAIN_KEYBOARD = {
-    'keyboard': [['Новые', 'Мои отклики'], ['Сохранённые', 'Скрытые']],
+    'keyboard': [['Новые', 'Сохранённые'], ['Профили']],
     'resize_keyboard': True,
 }
-BUCKET_LABELS = {
-    'new': 'Новые',
-    'saved': 'Сохранённые',
-    'applications': 'Мои отклики',
-    'hidden': 'Скрытые',
-}
-EMPTY_BUCKET_TEXT = {
-    'new': 'Новых вакансий пока нет.',
-    'saved': 'В сохранённых вакансиях пока ничего нет.',
-    'applications': 'В откликах пока ничего нет.',
-    'hidden': 'В скрытых вакансиях пока ничего нет.',
-}
-STATUS_ACTIONS = {
-    'n': ('new', 'Возвращено в новые'),
-    's': ('saved', 'Сохранено'),
-    'a': ('applied', 'Отклик отмечен'),
-    'p': ('replied', 'Ответ получен'),
-    'i': ('interview', 'Этап: интервью'),
-    'o': ('offer', 'Этап: оффер'),
-    'x': ('rejected', 'Этап: отказ'),
-    'h': ('hidden', 'Скрыто'),
-}
-REPORT_ACTIONS = {
-    's': 'suspicious',
-    'd': 'duplicate',
-    'o': 'outdated',
-    't': 'other',
-}
 
 
-def personal_keyboard(callback_key: str, post_link: str) -> dict[str, list[list[dict]]]:
-    """Keeps direct channel actions separate from the private list browser."""
+PROFILE_STEPS = (
+    'direction_id',
+    'specialization_id',
+    'role_id',
+    'stacks',
+    'seniority',
+    'formats',
+    'geography',
+    'vacancy_languages',
+    'required_skills',
+    'desired_skills',
+    'excluded_skills',
+    'timezone',
+    'delivery_mode',
+    'preview',
+)
+STEP_LABELS = dict(
+    zip(
+        PROFILE_STEPS,
+        (
+            'Направление',
+            'Специализация',
+            'Роль',
+            'Допустимые стеки',
+            'Грейд',
+            'Формат',
+            'География',
+            'Язык вакансий',
+            'Обязательные навыки',
+            'Желаемые навыки',
+            'Исключения',
+            'Часовой пояс',
+            'Режим доставки',
+            'Предпросмотр',
+        ),
+    )
+)
+STEP_LABELS['name'] = 'Имя профиля'
+STEP_LABELS['premium_template_id'] = 'Premium-шаблон'
+
+
+def personal_keyboard(callback_key: str) -> dict:
     return {
         'inline_keyboard': [
             [
-                {'text': 'Открыть', 'url': post_link},
                 {'text': 'Сохранить', 'callback_data': f'v:s:{callback_key}'},
-                {'text': 'Откликнулся', 'callback_data': f'v:a:{callback_key}'},
-            ],
-            [
-                {'text': 'Ответили', 'callback_data': f'v:p:{callback_key}'},
-                {'text': 'Интервью', 'callback_data': f'v:i:{callback_key}'},
-                {'text': 'Оффер', 'callback_data': f'v:o:{callback_key}'},
-            ],
-            [
-                {'text': 'Отказ', 'callback_data': f'v:x:{callback_key}'},
-                {'text': 'В новые', 'callback_data': f'v:n:{callback_key}'},
-                {'text': 'Скрыть', 'callback_data': f'v:h:{callback_key}'},
-            ],
-            [{'text': 'Пожаловаться', 'callback_data': f'v:r:{callback_key}'}],
+            ]
         ]
     }
 
 
-def vacancy_text(vacancy: CandidateVacancy, heading: str | None = None) -> str:
-    """Renders a compact personal view without exposing other users' actions."""
-    lines = [heading] if heading else []
-    lines.append(f'<b>{html.escape(vacancy.title)}</b>')
-    if vacancy.company:
-        lines.append(f'Компания: {html.escape(vacancy.company)}')
-    if vacancy.summary:
-        lines.extend(['', html.escape(vacancy.summary[:500])])
-    lines.extend(['', f'<b>Статус:</b> {html.escape(vacancy.status)}'])
-    return '\n'.join(lines)
-
-
-def direct_report_keyboard(callback_key: str) -> dict[str, list[list[dict]]]:
-    """Keeps complaints from a shared channel private to the reporting user."""
-    return {
-        'inline_keyboard': [
-            [
-                {'text': 'Подозрительная', 'callback_data': f'r:{callback_key}:sus'},
-                {'text': 'Дубликат', 'callback_data': f'r:{callback_key}:dup'},
-            ],
-            [
-                {'text': 'Неактуальна', 'callback_data': f'r:{callback_key}:old'},
-                {'text': 'Другое', 'callback_data': f'r:{callback_key}:oth'},
-            ],
-        ]
-    }
-
-
-@dataclass(frozen=True)
-class BrowserPage:
-    """One current result page resolved from private persisted browser state."""
-
-    session: BrowserSession
-    vacancy: CandidateVacancy
-    position: int
-    total: int
-
-
-class CandidateVacancyBrowser:
-    """Reusable single-card browser for every private vacancy bucket."""
-
-    def __init__(self, api: CandidateBotApi, store: CandidateStore) -> None:
-        self.api = api
-        self.store = store
-
-    async def open(self, chat_id: int, user_id: int, bucket: str) -> None:
-        vacancies = self.store.list_for_user(user_id, bucket)
-        if not vacancies:
-            await self.api.send_message(chat_id, EMPTY_BUCKET_TEXT[bucket])
-            return
-        session = self.store.create_browser_session(user_id, bucket, vacancies)
-        page = self._page(session, vacancies)
-        sent = await self.api.send_message(
-            chat_id,
-            self._text(page),
-            parse_mode='HTML',
-            reply_markup=self._keyboard(page),
-        )
-        message_id = sent.get('message_id') if isinstance(sent, dict) else None
-        if isinstance(message_id, int):
-            self.store.attach_browser_message(
-                session.token, user_id, chat_id, message_id
-            )
-
-    async def handle_callback(
-        self,
-        callback: dict[str, Any],
-        user_id: int,
-        callback_id: str,
-        data: str,
-    ) -> bool:
-        """Handles opaque b:<token>:<operation> callbacks for one private card."""
-        parts = data.split(':')
-        if len(parts) != 3:
-            await self.api.answer_callback_query(callback_id, 'Некорректное действие.')
-            return True
-        _, token, operation = parts
-        session = self.store.get_browser_session(token, user_id)
-        message = callback.get('message') or {}
-        if (
-            session is None
-            or session.chat_id != (message.get('chat') or {}).get('id')
-            or session.message_id != message.get('message_id')
-        ):
-            await self.api.answer_callback_query(
-                callback_id, 'Эта карточка больше неактуальна.'
-            )
-            return True
-        if operation in {'prev', 'next'}:
-            await self._navigate(session, user_id, callback_id, operation)
-            return True
-        if operation == 'report':
-            await self._edit_report_choice(session, user_id, callback_id)
-            return True
-        if operation == 'back':
-            await self._render_current(session, user_id, callback_id)
-            return True
-        if operation.startswith('q') and operation[1:] in REPORT_ACTIONS:
-            await self._save_report(session, user_id, callback_id, operation[1:])
-            return True
-        status_action = STATUS_ACTIONS.get(operation)
-        if status_action is None:
-            await self.api.answer_callback_query(callback_id, 'Некорректное действие.')
-            return True
-        await self._change_status(
-            session, user_id, callback_id, status_action[0], status_action[1]
-        )
-        return True
-
-    async def _navigate(
-        self, session: BrowserSession, user_id: int, callback_id: str, direction: str
-    ) -> None:
-        vacancies = self._session_vacancies(session, user_id)
-        if not vacancies:
-            await self._edit_empty(session, callback_id)
-            return
-        position = min(session.position, len(vacancies) - 1)
-        requested = position - 1 if direction == 'prev' else position + 1
-        if requested < 0 or requested >= len(vacancies):
-            await self.api.answer_callback_query(
-                callback_id,
-                (
-                    'Это первая вакансия.'
-                    if direction == 'prev'
-                    else 'Это последняя вакансия.'
-                ),
-            )
-            return
-        self.store.set_browser_position(session.token, user_id, requested)
-        await self._edit_page(
-            BrowserPage(session, vacancies[requested], requested, len(vacancies)),
-            callback_id,
-        )
-
-    async def _change_status(
-        self,
-        session: BrowserSession,
-        user_id: int,
-        callback_id: str,
-        status: str,
-        confirmation: str,
-    ) -> None:
-        page = self._current_page(session, user_id)
-        if page is None:
-            await self._edit_empty(session, callback_id)
-            return
-        updated = self.store.set_status(user_id, page.vacancy.callback_key, status)
-        if updated is None:
-            await self.api.answer_callback_query(callback_id, 'Вакансия недоступна.')
-            return
-        await self.api.answer_callback_query(callback_id, confirmation)
-        await self._render_current(session, user_id)
-
-    async def _edit_report_choice(
-        self, session: BrowserSession, user_id: int, callback_id: str
-    ) -> None:
-        page = self._current_page(session, user_id)
-        if page is None:
-            await self._edit_empty(session, callback_id)
-            return
-        await self.api.answer_callback_query(callback_id, 'Выберите причину.')
-        await self.api.edit_message_text(
-            session.chat_id or user_id,
-            session.message_id or 0,
-            f'{self._text(page)}\n\n<b>Что не так с вакансией?</b>',
-            parse_mode='HTML',
-            reply_markup=self._report_keyboard(session.token),
-        )
-
-    async def _save_report(
-        self,
-        session: BrowserSession,
-        user_id: int,
-        callback_id: str,
-        reason_code: str,
-    ) -> None:
-        page = self._current_page(session, user_id)
-        if page is None:
-            await self._edit_empty(session, callback_id)
-            return
-        saved = self.store.add_report(
-            user_id, page.vacancy.callback_key, REPORT_ACTIONS[reason_code]
-        )
-        await self.api.answer_callback_query(
-            callback_id,
-            'Спасибо, сигнал сохранён.' if saved else 'Вакансия недоступна.',
-        )
-        await self._render_current(session, user_id)
-
-    async def _render_current(
-        self, session: BrowserSession, user_id: int, callback_id: str | None = None
-    ) -> None:
-        page = self._current_page(session, user_id)
-        if page is None:
-            await self._edit_empty(session, callback_id)
-            return
-        await self._edit_page(page, callback_id)
-
-    async def _edit_page(self, page: BrowserPage, callback_id: str | None) -> None:
-        if callback_id:
-            await self.api.answer_callback_query(callback_id, '')
-        await self.api.edit_message_text(
-            page.session.chat_id or page.session.telegram_user_id,
-            page.session.message_id or 0,
-            self._text(page),
-            parse_mode='HTML',
-            reply_markup=self._keyboard(page),
-        )
-
-    async def _edit_empty(
-        self, session: BrowserSession, callback_id: str | None
-    ) -> None:
-        if callback_id:
-            await self.api.answer_callback_query(callback_id, 'Список пуст.')
-        await self.api.edit_message_text(
-            session.chat_id or session.telegram_user_id,
-            session.message_id or 0,
-            EMPTY_BUCKET_TEXT[session.bucket],
-            reply_markup=None,
-        )
-
-    def _current_page(
-        self, session: BrowserSession, user_id: int
-    ) -> BrowserPage | None:
-        vacancies = self._session_vacancies(session, user_id)
-        if not vacancies:
-            return None
-        position = min(session.position, len(vacancies) - 1)
-        if position != session.position:
-            self.store.set_browser_position(session.token, user_id, position)
-        return BrowserPage(
-            replace(session, position=position),
-            vacancies[position],
-            position,
-            len(vacancies),
-        )
-
-    def _session_vacancies(
-        self, session: BrowserSession, user_id: int
-    ) -> list[CandidateVacancy]:
-        available = {
-            vacancy.vacancy_id: vacancy
-            for vacancy in self.store.list_for_user(user_id, session.bucket)
-        }
-        return [
-            available[vacancy_id]
-            for vacancy_id in session.vacancy_ids
-            if vacancy_id in available
-        ]
-
-    @staticmethod
-    def _page(
-        session: BrowserSession, vacancies: list[CandidateVacancy]
-    ) -> BrowserPage:
-        return BrowserPage(session, vacancies[0], 0, len(vacancies))
-
-    @staticmethod
-    def _text(page: BrowserPage) -> str:
-        label = BUCKET_LABELS[page.session.bucket]
-        return vacancy_text(
-            page.vacancy, f'<b>{label} · {page.position + 1} из {page.total}</b>'
-        )
-
-    @staticmethod
-    def _keyboard(page: BrowserPage) -> dict[str, list[list[dict]]]:
-        token = page.session.token
-        return {
-            'inline_keyboard': [
-                [
-                    {'text': 'Открыть', 'url': page.vacancy.post_link},
-                    {'text': 'Сохранить', 'callback_data': f'b:{token}:s'},
-                    {'text': 'Откликнулся', 'callback_data': f'b:{token}:a'},
-                ],
-                [
-                    {'text': 'Ответили', 'callback_data': f'b:{token}:p'},
-                    {'text': 'Интервью', 'callback_data': f'b:{token}:i'},
-                    {'text': 'Оффер', 'callback_data': f'b:{token}:o'},
-                ],
-                [
-                    {'text': 'Отказ', 'callback_data': f'b:{token}:x'},
-                    {'text': 'В новые', 'callback_data': f'b:{token}:n'},
-                    {'text': 'Скрыть', 'callback_data': f'b:{token}:h'},
-                ],
-                [{'text': 'Пожаловаться', 'callback_data': f'b:{token}:report'}],
-                [
-                    {'text': '‹ Назад', 'callback_data': f'b:{token}:prev'},
-                    {
-                        'text': f'{BUCKET_LABELS[page.session.bucket]} · {page.position + 1}/{page.total}',
-                        'callback_data': f'b:{token}:z',
-                    },
-                    {'text': 'Вперёд ›', 'callback_data': f'b:{token}:next'},
-                ],
-            ]
-        }
-
-    @staticmethod
-    def _report_keyboard(token: str) -> dict[str, list[list[dict]]]:
-        return {
-            'inline_keyboard': [
-                [
-                    {'text': 'Подозрительная', 'callback_data': f'b:{token}:qs'},
-                    {'text': 'Дубликат', 'callback_data': f'b:{token}:qd'},
-                ],
-                [
-                    {'text': 'Неактуальна', 'callback_data': f'b:{token}:qo'},
-                    {'text': 'Другое', 'callback_data': f'b:{token}:qt'},
-                ],
-                [{'text': 'Назад к вакансии', 'callback_data': f'b:{token}:back'}],
-            ]
-        }
+def vacancy_text(vacancy: CandidateVacancy) -> str:
+    return format_legacy_card(vacancy, now=datetime.now(timezone.utc))
 
 
 class CandidateBot:
-    """Routes private commands and callback queries for an explicit beta allowlist."""
+    """Routes personal feed, profiles and templates for an allowlisted user."""
 
     def __init__(
         self,
         api: CandidateBotApi,
         store: CandidateStore,
         allowed_user_ids: set[int],
-        search: Any | None = None,
+        *,
+        registry=None,
+        profile_feed_enabled: bool = False,
+        profile_allowed_user_ids: set[int] | None = None,
+        search: CandidateSearch | None = None,
     ) -> None:
         self.api = api
         self.store = store
         self.allowed_user_ids = allowed_user_ids
-        self.browser = CandidateVacancyBrowser(api, store)
+        self.registry = registry
+        self.profile_feed_enabled = profile_feed_enabled
+        self.profile_allowed_user_ids = profile_allowed_user_ids or set()
         self.search = search
-        self.main_keyboard = (
-            {**MAIN_KEYBOARD, 'keyboard': [*MAIN_KEYBOARD['keyboard'], ['Поиск']]}
-            if search is not None
-            else MAIN_KEYBOARD
-        )
+
+    def _keyboard(self, user_id: int) -> dict:
+        if self.profile_feed_enabled and user_id in self.profile_allowed_user_ids:
+            return {
+                'keyboard': [['Новые', 'Для меня'], ['Сохранённые', 'Профили']],
+                'resize_keyboard': True,
+            }
+        return MAIN_KEYBOARD
+
+    async def _personal_feed(self, user_id: int) -> None:
+        if (
+            not self.profile_feed_enabled
+            or user_id not in self.profile_allowed_user_ids
+            or self.registry is None
+        ):
+            await self.api.send_message(user_id, 'Персональная выдача пока недоступна.')
+            return
+        matches = await asyncio.to_thread(self.registry.list_personal_matches, user_id)
+        if not matches:
+            await self.api.send_message(
+                user_id, 'Подтверждённых совпадений активных профилей пока нет.'
+            )
+        for match in matches:
+            profile = min(match.matched_profiles, key=lambda p: p.profile_id)
+            await self.api.send_message(
+                user_id,
+                format_card(
+                    personal_card(match),
+                    now=datetime.now(timezone.utc),
+                    timezone=profile.preferences.get('timezone', 'Europe/Moscow'),
+                ),
+                parse_mode='HTML',
+                reply_markup=personal_keyboard(match.callback_key),
+            )
 
     async def run(self, shutdown_event: asyncio.Event) -> None:
-        """Runs Bot API long polling. A transient API failure retries safely."""
         offset: int | None = None
         while not shutdown_event.is_set():
             try:
-                updates = await self.api.get_updates(offset, timeout=25)
-                for update in updates:
+                for update in await self.api.get_updates(offset, timeout=25):
                     update_id = update.get('update_id')
                     if isinstance(update_id, int):
                         offset = update_id + 1
@@ -451,127 +171,494 @@ class CandidateBot:
                     continue
 
     async def handle_update(self, update: dict[str, Any]) -> None:
-        """Handles one fakeable Bot API update for unit tests and live polling."""
         if isinstance(update.get('message'), dict):
             await self._handle_message(update['message'])
         elif isinstance(update.get('callback_query'), dict):
             await self._handle_callback(update['callback_query'])
 
     async def _handle_message(self, message: dict[str, Any]) -> None:
-        sender = message.get('from') or {}
-        user_id = sender.get('id')
-        chat_id = (message.get('chat') or {}).get('id')
-        if not isinstance(user_id, int) or not isinstance(chat_id, int):
-            return
-        if (message.get('chat') or {}).get('type') != 'private':
+        sender, chat = message.get('from') or {}, message.get('chat') or {}
+        user_id, chat_id = sender.get('id'), chat.get('id')
+        if (
+            not isinstance(user_id, int)
+            or not isinstance(chat_id, int)
+            or chat.get('type') != 'private'
+        ):
             return
         if user_id not in self.allowed_user_ids:
             await self.api.send_message(chat_id, 'Доступ к beta-боту ограничен.')
             return
         text = (message.get('text') or '').strip()
-        if self.search is not None:
-            if await self.search.handle_message(chat_id, user_id, text):
-                return
         if text in {'/start', '/help'}:
             await self.api.send_message(
                 chat_id,
-                'Выберите подборку вакансий. Статусы видны только вам.',
-                reply_markup=self.main_keyboard,
+                'Лента вакансий и архив сохранённых.',
+                reply_markup=self._keyboard(user_id),
             )
             return
-        buckets = {
+        if text in {'Для меня', '/forme'}:
+            await self._personal_feed(user_id)
+            return
+        if text in {'Профили', '/profiles'}:
+            await self._profiles(user_id)
+            return
+        if self.store.get_profile_draft(user_id) and text not in {
+            'Новые',
+            'Сохранённые',
+            '/new',
+            '/saved',
+        }:
+            await self._draft_text(user_id, text)
+            return
+        bucket = {
             'Новые': 'new',
             'Сохранённые': 'saved',
-            'Мои отклики': 'applications',
-            'Скрытые': 'hidden',
             '/new': 'new',
             '/saved': 'saved',
-            '/applications': 'applications',
-            '/hidden': 'hidden',
-        }
-        if text in buckets:
-            await self.browser.open(chat_id, user_id, buckets[text])
-        else:
+        }.get(text)
+        if bucket is None:
             await self.api.send_message(
                 chat_id,
-                'Используйте кнопки «Новые», «Мои отклики», «Сохранённые» или «Скрытые».',
-                reply_markup=self.main_keyboard,
+                'Используйте «Новые», «Сохранённые» или «Профили».',
+                reply_markup=self._keyboard(user_id),
             )
+            return
+        vacancies = self.store.list_for_user(user_id, bucket)
+        if not vacancies:
+            empty = (
+                'Новых вакансий пока нет.'
+                if bucket == 'new'
+                else 'В сохранённых вакансиях пока ничего нет.'
+            )
+            await self.api.send_message(chat_id, empty)
+            return
+        for vacancy in vacancies:
+            await self.api.send_message(
+                chat_id,
+                vacancy_text(vacancy),
+                parse_mode='HTML',
+                reply_markup=personal_keyboard(vacancy.callback_key),
+            )
+
+    async def _can_save(self, user_id: int, key: str) -> bool:
+        with self.store._connect() as connection:
+            row = connection.execute(
+                'SELECT v.vacancy_id FROM vacancies v WHERE v.callback_key=? AND '
+                '(v.go_visible=1 OR EXISTS(SELECT 1 FROM user_saved_vacancies s '
+                'WHERE s.vacancy_id=v.vacancy_id AND s.telegram_user_id=?))',
+                (key, user_id),
+            ).fetchone()
+        if row:
+            return True
+        if (
+            self.profile_feed_enabled
+            and user_id in self.profile_allowed_user_ids
+            and self.registry is not None
+        ):
+            matches = await asyncio.to_thread(
+                self.registry.list_personal_matches, user_id
+            )
+            return any(match.callback_key == key for match in matches)
+        return False
 
     async def _handle_callback(self, callback: dict[str, Any]) -> None:
         sender = callback.get('from') or {}
-        user_id = sender.get('id')
-        callback_id = callback.get('id')
+        user_id, callback_id = sender.get('id'), callback.get('id')
         if not isinstance(user_id, int) or not isinstance(callback_id, str):
             return
         if user_id not in self.allowed_user_ids:
             await self.api.answer_callback_query(callback_id, 'Доступ ограничен.')
             return
         data = callback.get('data') or ''
-        if data.startswith('q:') and self.search is not None:
-            await self.search.handle_callback(callback, user_id, callback_id, data)
-        elif data.startswith('b:'):
-            await self.browser.handle_callback(callback, user_id, callback_id, data)
-        elif data.startswith('v:'):
-            await self._handle_vacancy_callback(callback_id, user_id, data)
-        elif data.startswith('r:'):
-            await self._handle_report_callback(callback_id, user_id, data)
-        else:
-            await self.api.answer_callback_query(callback_id, 'Неизвестное действие.')
-
-    async def _handle_vacancy_callback(
-        self, callback_id: str, user_id: int, data: str
-    ) -> None:
-        parts = data.split(':')
-        if len(parts) != 3:
-            await self.api.answer_callback_query(callback_id, 'Некорректное действие.')
+        if not isinstance(data, str):
             return
-        _, action, callback_key = parts
-        if action == 'r':
-            vacancy = self.store.get_vacancy(callback_key)
-            if vacancy is None:
-                await self.api.answer_callback_query(
-                    callback_id, 'Вакансия недоступна.'
-                )
-                return
+        parts = data.split(':')
+        if parts[0] == 'cs' and self.search is not None:
+            valid = await self.search.callback(user_id, parts)
             await self.api.answer_callback_query(
-                callback_id, 'Выберите причину в личном чате.'
+                callback_id, 'Готово.' if valid else 'Кнопка устарела или недоступна.'
             )
+            return
+        if parts[0] in {'p', 'w'}:
             try:
-                await self.api.send_message(
-                    user_id,
-                    'Что не так с этой вакансией? Сигнал увидит только администратор.',
-                    reply_markup=direct_report_keyboard(callback_key),
-                )
-            except Exception:
-                logging.info('Нельзя отправить пользователю форму жалобы до /start')
+                valid = await self._profile_callback(user_id, parts)
+            except (ValueError, KeyError, TypeError):
+                valid = False
+            await self.api.answer_callback_query(
+                callback_id, 'Готово.' if valid else 'Кнопка устарела или недоступна.'
+            )
             return
-        status_action = STATUS_ACTIONS.get(action)
-        if status_action is None:
-            await self.api.answer_callback_query(callback_id, 'Некорректное действие.')
+        # Legacy status, search, and complaint callback payloads are deliberately
+        # unsupported and can never write to personal data.
+        if len(parts) == 3 and parts[0] == 'v' and parts[1] == 's':
+            saved = await self._can_save(user_id, parts[2]) and self.store.save_vacancy(
+                user_id, parts[2]
+            )
+            await self.api.answer_callback_query(
+                callback_id, 'Сохранено.' if saved else 'Вакансия недоступна.'
+            )
             return
-        status, confirmation = status_action
-        vacancy = self.store.set_status(user_id, callback_key, status)
         await self.api.answer_callback_query(
-            callback_id, confirmation if vacancy else 'Вакансия недоступна.'
+            callback_id, 'Это действие больше не поддерживается.'
         )
 
-    async def _handle_report_callback(
-        self, callback_id: str, user_id: int, data: str
-    ) -> None:
-        parts = data.split(':')
-        if len(parts) != 3 or parts[2] not in {'sus', 'dup', 'old', 'oth'}:
-            await self.api.answer_callback_query(callback_id, 'Некорректная причина.')
-            return
-        _, callback_key, reason_code = parts
-        reason = {
-            'sus': 'suspicious',
-            'dup': 'duplicate',
-            'old': 'outdated',
-            'oth': 'other',
-        }[reason_code]
-        saved = self.store.add_report(user_id, callback_key, reason)
-        await self.api.answer_callback_query(
-            callback_id,
-            'Спасибо, сигнал сохранён.' if saved else 'Вакансия недоступна.',
+    def _choices(self, draft: dict) -> list[tuple[str, str]]:
+        step, values = draft['step'], draft['values']
+        directions = CATALOG['directions']
+        if step == 'direction_id':
+            items = directions
+        elif step == 'specialization_id':
+            items = next(d for d in directions if d['id'] == values['direction_id'])[
+                'specializations'
+            ]
+        elif step in {'role_id', 'stacks'}:
+            specs = next(d for d in directions if d['id'] == values['direction_id'])[
+                'specializations'
+            ]
+            roles = next(s for s in specs if s['id'] == values['specialization_id'])[
+                'roles'
+            ]
+            if step == 'stacks':
+                return [
+                    (x, x)
+                    for x in next(r for r in roles if r['id'] == values['role_id'])[
+                        'stacks'
+                    ]
+                ]
+            items = roles
+        else:
+            return [
+                (x, x)
+                for x in {
+                    'seniority': ['intern', 'junior', 'middle', 'senior', 'lead'],
+                    'formats': ['remote', 'hybrid', 'office'],
+                    'vacancy_languages': ['ru', 'en'],
+                    'delivery_mode': ['manual', 'immediate', 'hourly'],
+                }.get(step, [])
+            ]
+        return [(x['id'], x['synonyms'][0]) for x in items]
+
+    @staticmethod
+    def _profile_text(values: dict) -> str:
+        lines = [
+            values['name'],
+            ' → '.join(values.get(k, '—') for k in PROFILE_STEPS[:3]),
+        ]
+        lines.extend(
+            f'{STEP_LABELS.get(k, k)}: {", ".join(v) if isinstance(v, list) else v}'
+            for k, v in values['preferences'].items()
         )
+        return '\n'.join(lines)[:3500]
+
+    async def _profiles(self, user_id: int) -> None:
+        rows = [
+            [
+                {
+                    'text': f'{"✓" if p.is_active else "○"} {p.name}',
+                    'callback_data': f'p:view:{p.profile_id}:{p.version}',
+                }
+            ]
+            for p in self.store.list_profiles(user_id)
+        ]
+        rows.append([{'text': 'Создать профиль', 'callback_data': 'p:new'}])
+        if self.store.get_profile_draft(user_id):
+            rows.append([{'text': 'Продолжить черновик', 'callback_data': 'p:resume'}])
+        await self.api.send_message(
+            user_id, 'Профили', reply_markup={'inline_keyboard': rows}
+        )
+
+    async def _show_profile(self, user_id: int, profile: CandidateProfile) -> None:
+        rows = [
+            [
+                {
+                    'text': label,
+                    'callback_data': f'p:{action}:{profile.profile_id}:{profile.version}',
+                }
+            ]
+            for action, label in [
+                ('edit', 'Редактировать'),
+                ('toggle', 'Выключить' if profile.is_active else 'Включить'),
+                ('templates', 'Premium-шаблоны'),
+                ('search', 'Искать'),
+            ]
+        ]
+        await self.api.send_message(
+            user_id,
+            self._profile_text(vars(profile)),
+            reply_markup={'inline_keyboard': rows},
+        )
+
+    async def _start_draft(
+        self, user_id: int, profile: CandidateProfile | None = None
+    ) -> None:
+        if not self.store.get_profile_draft(user_id):
+            values = (
+                {
+                    k: getattr(profile, k)
+                    for k in (
+                        'name',
+                        'direction_id',
+                        'specialization_id',
+                        'role_id',
+                        'preferences',
+                        'is_active',
+                    )
+                }
+                if profile
+                else {
+                    'name': '',
+                    'preferences': {
+                        'delivery_mode': 'manual',
+                        'timezone': 'Europe/Moscow',
+                    },
+                    'is_active': True,
+                }
+            )
+            self.store.put_profile_draft(
+                user_id,
+                {
+                    'token': uuid.uuid4().hex[:12],
+                    'revision': 0,
+                    'step': PROFILE_STEPS[0],
+                    'values': values,
+                    'profile_id': profile.profile_id if profile else None,
+                    'profile_version': profile.version if profile else None,
+                },
+            )
+        await self._show_draft(user_id)
+
+    async def _show_draft(self, user_id: int) -> None:
+        draft = self.store.get_profile_draft(user_id)
+        if draft is None:
+            await self._profiles(user_id)
+            return
+        step = draft['step']
+        prefix = f'w:{draft["token"]}:{draft["revision"]}:'
+
+        def button(label, action):
+            return {'text': label, 'callback_data': prefix + action}
+
+        rows = []
+        if step == 'preview':
+            text = 'Предпросмотр\n' + self._profile_text(draft['values'])
+            rows = [
+                [button('Сохранить профиль', 'save')],
+                [button('Изменить имя', 'name')],
+            ]
+        else:
+            text = STEP_LABELS[step]
+            choices = self._choices(draft)
+            selected = draft['values']['preferences'].get(step, [])
+            rows = [
+                [button(('✓ ' if key in selected else '') + label, f'choose:{i}')]
+                for i, (key, label) in enumerate(choices)
+            ]
+            if step not in PROFILE_STEPS[:3]:
+                text += (
+                    '\nВыберите значения или введите через запятую. Можно пропустить.'
+                )
+                if step in {'timezone', 'name'}:
+                    text = STEP_LABELS[step] + '\nВведите значение текстом.'
+                rows.append([button('Далее', 'next')])
+                if step != 'name':
+                    rows.append([button('Пропустить', 'skip')])
+            if selected:
+                text += f'\nСейчас: {selected}'
+        if step != PROFILE_STEPS[0]:
+            rows.append([button('Назад', 'back')])
+        rows.append([button('Отмена', 'cancel')])
+        await self.api.send_message(
+            user_id, text, reply_markup={'inline_keyboard': rows}
+        )
+
+    def _set_draft_value(self, draft: dict, value: str | list[str]) -> None:
+        step, values = draft['step'], draft['values']
+        if step in PROFILE_STEPS[:3]:
+            if values.get(step) != value:
+                index = PROFILE_STEPS.index(step)
+                for key in PROFILE_STEPS[index + 1 : 3]:
+                    values.pop(key, None)
+                values['preferences']['stacks'] = []
+                values['preferences'].pop('premium_template_id', None)
+                values['name'] = ''
+            values[step] = value
+            if step == 'role_id' and not values['name']:
+                values['name'] = dict(self._choices(draft))[value]
+        elif step == 'name':
+            if not value or not str(value).strip():
+                raise ValueError('Имя не может быть пустым.')
+            values['name'] = value
+        else:
+            preferences = {**values['preferences'], step: value}
+            if step == 'stacks':
+                validate_profile_path(
+                    values['direction_id'],
+                    values['specialization_id'],
+                    values['role_id'],
+                    value,
+                )
+                self.store._clear_invalid_template(values['role_id'], preferences)
+            values['preferences'] = self.store._validate_preferences(preferences)
+
+    @staticmethod
+    def _advance(draft: dict) -> None:
+        step = draft['step']
+        draft['step'] = (
+            'preview'
+            if step == 'name'
+            else PROFILE_STEPS[PROFILE_STEPS.index(step) + 1]
+        )
+
+    async def _draft_text(self, user_id: int, text: str) -> None:
+        draft = self.store.get_profile_draft(user_id)
+        step = draft['step']
+        try:
+            if step in PROFILE_STEPS[:3] or step == 'preview':
+                raise ValueError('Используйте кнопки текущего шага.')
+            value = (
+                text
+                if step in {'name', 'timezone', 'delivery_mode'}
+                else [x.strip() for x in text.split(',') if x.strip()]
+            )
+            self._set_draft_value(draft, value)
+            self._advance(draft)
+            revision = draft['revision']
+            draft['revision'] += 1
+            self.store.put_profile_draft(user_id, draft, revision)
+        except ValueError as error:
+            await self.api.send_message(user_id, str(error))
+        await self._show_draft(user_id)
+
+    async def _profile_callback(self, user_id: int, parts: list[str]) -> bool:
+        if parts == ['p', 'new']:
+            await self._start_draft(user_id)
+            return True
+        if parts == ['p', 'resume']:
+            await self._show_draft(user_id)
+            return True
+        if parts[0] == 'w':
+            draft = self.store.get_profile_draft(user_id)
+            if (
+                len(parts) < 4
+                or draft is None
+                or parts[1] != draft['token']
+                or parts[2] != str(draft['revision'])
+            ):
+                return False
+            action, step = parts[3], draft['step']
+            revision = draft['revision']
+            if action in {'cancel', 'save'} and len(parts) == 4:
+                result = self.store.finish_profile_draft(
+                    user_id, parts[1], revision, save=action == 'save'
+                )
+                if not result:
+                    return False
+                await self._profiles(user_id)
+                return True
+            if action == 'choose' and len(parts) == 5:
+                choices = self._choices(draft)
+                index = int(parts[4])
+                if index < 0 or index >= len(choices):
+                    return False
+                value = choices[index][0]
+                if step in PROFILE_STEPS[:3] or step == 'delivery_mode':
+                    self._set_draft_value(draft, value)
+                    self._advance(draft)
+                else:
+                    selected = list(draft['values']['preferences'].get(step, []))
+                    if value in selected:
+                        selected.remove(value)
+                    else:
+                        selected.append(value)
+                    self._set_draft_value(draft, selected)
+            elif len(parts) != 4:
+                return False
+            elif action == 'back' and step != PROFILE_STEPS[0]:
+                draft['step'] = (
+                    'preview'
+                    if step == 'name'
+                    else PROFILE_STEPS[PROFILE_STEPS.index(step) - 1]
+                )
+            elif action == 'name' and step == 'preview':
+                draft['step'] = 'name'
+            elif action in {'skip', 'next'} and step not in (
+                *PROFILE_STEPS[:3],
+                'preview',
+            ):
+                if action == 'skip':
+                    self._set_draft_value(
+                        draft,
+                        {'timezone': 'Europe/Moscow', 'delivery_mode': 'manual'}.get(
+                            step, []
+                        ),
+                    )
+                self._advance(draft)
+            else:
+                return False
+            draft['revision'] += 1
+            if not self.store.put_profile_draft(user_id, draft, revision):
+                return False
+            await self._show_draft(user_id)
+            return True
+        if len(parts) not in {4, 5}:
+            return False
+        profile = self.store.get_profile(user_id, parts[2])
+        if profile is None or parts[3] != str(profile.version):
+            return False
+        action = parts[1]
+        if action == 'template' and len(parts) == 5:
+            templates = list_templates(profile)
+            index = int(parts[4])
+            if index < 0 or index >= len(templates):
+                return False
+            template = templates[index]
+            query = compose_query(template.id, profile)
+            profile = self.store.update_profile(
+                user_id,
+                profile.profile_id,
+                expected_version=profile.version,
+                preferences={**profile.preferences, 'premium_template_id': template.id},
+            )
+            if profile is None:
+                return False
+            await self.api.send_message(user_id, f'Шаблон сохранён. Запрос:\n{query}')
+            await self._show_profile(user_id, profile)
+        elif len(parts) != 4:
+            return False
+        elif action == 'view':
+            await self._show_profile(user_id, profile)
+        elif action == 'edit':
+            await self._start_draft(user_id, profile)
+        elif action == 'toggle':
+            profile = self.store.update_profile(
+                user_id,
+                profile.profile_id,
+                expected_version=profile.version,
+                is_active=not profile.is_active,
+            )
+            if profile is None:
+                return False
+            await self._show_profile(user_id, profile)
+        elif action == 'search':
+            if self.search is None:
+                await self.api.send_message(user_id, 'Premium-поиск недоступен.')
+            else:
+                await self.search.preview(user_id, profile)
+        elif action == 'templates':
+            rows = [
+                [
+                    {
+                        'text': t.label,
+                        'callback_data': f'p:template:{profile.profile_id}:{profile.version}:{i}',
+                    }
+                ]
+                for i, t in enumerate(list_templates(profile))
+            ]
+            await self.api.send_message(
+                user_id,
+                'Выберите Premium-шаблон. Поиск не запускается.',
+                reply_markup={'inline_keyboard': rows},
+            )
+        else:
+            return False
+        return True

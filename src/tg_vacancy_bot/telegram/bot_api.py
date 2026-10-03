@@ -11,6 +11,10 @@ class BotApiError(RuntimeError):
     """A Telegram Bot API request did not complete successfully."""
 
 
+class BotApiRejected(BotApiError):
+    """Telegram explicitly rejected the request before creating a message."""
+
+
 class TelegramBotApi:
     """Uses Bot API HTTPS requests without introducing a second SDK dependency."""
 
@@ -95,8 +99,12 @@ class TelegramBotApi:
         try:
             with urlopen(request, timeout=timeout) as response:
                 body = json.loads(response.read().decode('utf-8'))
-        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        except HTTPError as exc:
+            if exc.code in {400, 401, 403, 404, 429}:
+                raise BotApiRejected(f'Bot API request {method} was rejected') from exc
+            raise BotApiError(f'Bot API request {method} failed') from exc
+        except (URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise BotApiError(f'Bot API request {method} failed') from exc
         if not body.get('ok'):
-            raise BotApiError(f'Bot API request {method} was rejected')
+            raise BotApiRejected(f'Bot API request {method} was rejected')
         return body.get('result')

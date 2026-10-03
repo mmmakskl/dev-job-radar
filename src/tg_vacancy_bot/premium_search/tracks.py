@@ -6,7 +6,10 @@ import re
 from dataclasses import dataclass
 from typing import Callable
 
-from tg_vacancy_bot.pipeline.prefilter import candidate_profile_reasons
+from tg_vacancy_bot.pipeline.prefilter import (
+    candidate_profile_reasons,
+    universal_prefilter,
+)
 
 _GO = re.compile(r'\b(?:golang|go[ -]?lang|go)\b', re.I)
 _ROLE = re.compile(
@@ -91,7 +94,15 @@ TRACKS = {
         go_prefilter,
         'Accept only hiring posts where Go is a primary or significant working language. '
         'Optional/nice-to-have Go, resumes, courses, events and promotion must be rejected.',
-    )
+    ),
+    'catalog': TrackDefinition(
+        'catalog',
+        'Каталог профилей',
+        (),
+        (),
+        lambda text: None if universal_prefilter(text) else 'missing_hiring_context',
+        'Classify catalog roles and match the immutable candidate profile snapshot.',
+    ),
 }
 
 

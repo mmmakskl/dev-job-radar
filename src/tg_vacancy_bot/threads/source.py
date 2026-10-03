@@ -26,7 +26,7 @@ class ThreadsPost:
     text: str
     username: str | None
     permalink: str | None
-    timestamp: datetime
+    timestamp: datetime | None
     raw_data: dict
     source: str = 'threads'
 
@@ -195,10 +195,12 @@ class ThreadsSource:
                     or not isinstance(item.get('text'), str)
                 ):
                     raise ValueError
-                timestamp = datetime.fromisoformat(
-                    item['timestamp'].replace('Z', '+00:00')
+                timestamp = (
+                    datetime.fromisoformat(item['timestamp'].replace('Z', '+00:00'))
+                    if item.get('timestamp')
+                    else None
                 )
-                if timestamp.tzinfo is None:
+                if timestamp is not None and timestamp.tzinfo is None:
                     raise ValueError
                 username = item.get('username')
                 posts.append(

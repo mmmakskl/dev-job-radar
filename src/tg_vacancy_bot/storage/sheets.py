@@ -105,8 +105,10 @@ _GOOGLE_MAX_ATTEMPTS = 3
 _RETRYABLE_GOOGLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
-def _format_datetime(value: datetime) -> str:
+def _format_datetime(value: datetime | None) -> str:
     """Форматирует дату в OUTPUT_TIMEZONE; naive-дату считает UTC."""
+    if value is None:
+        return ''
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(ZoneInfo(config.OUTPUT_TIMEZONE)).strftime("%Y-%m-%d %H:%M")

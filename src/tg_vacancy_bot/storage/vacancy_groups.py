@@ -234,6 +234,17 @@ class VacancyGroupStore:
             self._refresh_group_times(connection, source['group_id'], now)
             return True
 
+    def canonical_vacancy_id(self, vacancy_id: str) -> str | None:
+        """Read a canonical identity already proven by the existing group rules."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT g.canonical_vacancy_id
+                FROM group_publications p JOIN vacancy_groups g ON g.group_id=p.group_id
+                WHERE p.vacancy_id=?""",
+                (vacancy_id,),
+            ).fetchone()
+        return row['canonical_vacancy_id'] if row else None
+
     def list_groups(self, limit: int = 50) -> list[dict]:
         with self._connect() as connection:
             rows = connection.execute(

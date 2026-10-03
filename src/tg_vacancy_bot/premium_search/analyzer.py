@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Awaitable, Callable
 
 from tg_vacancy_bot.llm.schemas import (
@@ -68,6 +68,7 @@ class PremiumAnalysis:
     decision_reason: str
     language: str
     analysis: VacancyAnalysis
+    universal_decision: dict | None = None
 
     def as_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False)
@@ -92,6 +93,9 @@ class PremiumAnalysis:
 def parse_premium_analysis(payload: dict) -> PremiumAnalysis:
     """Reject invalid structure before the shared validator can log payload fragments."""
     payload = _coerce_numeric_analysis_fields(payload)
+    if isinstance(payload, dict):
+        payload = dict(payload)
+        payload.setdefault('universal_decision', None)
     expected = set(PremiumAnalysis.__dataclass_fields__)
     valid = isinstance(payload, dict) and set(payload) == expected
     if valid:
@@ -140,10 +144,27 @@ def parse_premium_analysis(payload: dict) -> PremiumAnalysis:
         if not ok:
             raise InvalidAnalysisResultError('invalid_premium_analysis')
     normalized = validate_analysis_result(analysis)
+    if payload['universal_decision'] is not None:
+        from tg_vacancy_bot.llm.universal import decision_from_dict
+
+        decision_from_dict(payload['universal_decision'])
     return PremiumAnalysis(**{**payload, 'analysis': normalized})
 
 
 async def analyze_premium_text(text: str) -> PremiumAnalysis:
+    from tg_vacancy_bot import config
+
+    if not config.LEGACY_GO_ANALYSIS:
+        from tg_vacancy_bot.llm.universal import (
+            AnalysisUnavailable,
+            analyze_universal_text,
+        )
+
+        try:
+            decision = await analyze_universal_text(text)
+        except AnalysisUnavailable:
+            raise
+        return adapt_universal(decision)
     from tg_vacancy_bot import config
     from tg_vacancy_bot.llm.mistral import _get_client
 
@@ -194,3 +215,47 @@ async def analyze_premium_text(text: str) -> PremiumAnalysis:
 
 
 PremiumAnalyzer = Callable[[str], Awaitable[PremiumAnalysis]]
+
+
+def adapt_universal(decision, profile_snapshot: dict | None = None) -> PremiumAnalysis:
+    """Keep the complete decision while applying the destination's acceptance rules."""
+    from tg_vacancy_bot.llm.universal import decision_to_dict, go_projection_accepted
+
+    matched = go_projection_accepted(decision)
+    review = decision.needs_review
+    required_go = any(
+        re.sub(r'[\s_-]+', '', item.casefold()) in {'go', 'golang', 'golanguage'}
+        for item in decision.analysis.required_stack
+    )
+    strength = 'primary' if required_go else 'absent'
+    if profile_snapshot is not None:
+        from tg_vacancy_bot.profile_matcher import match_profile
+        from tg_vacancy_bot.telegram.candidate_store import CandidateProfile
+
+        profile = CandidateProfile(**profile_snapshot)
+        result = match_profile(decision, profile)
+        matched = result.status == 'match' and profile.is_active
+        role_confidence = next(
+            (
+                item['confidence']
+                for item in decision.classifications
+                if (item['direction_id'], item['specialization_id'], item['role_id'])
+                == (profile.direction_id, profile.specialization_id, profile.role_id)
+            ),
+            0,
+        )
+        review = (
+            review or result.status == 'review' or (matched and role_confidence < 90)
+        )
+        strength = 'primary' if result.status != 'no_match' else 'absent'
+    return PremiumAnalysis(
+        is_vacancy=decision.is_vacancy,
+        is_track_match=matched,
+        go_role_strength=strength,
+        confidence=decision.confidence,
+        needs_review=review,
+        decision_reason=decision.reason_code,
+        language=decision.analysis.vacancy_language,
+        analysis=replace(decision.analysis, is_match=matched),
+        universal_decision=decision_to_dict(decision),
+    )

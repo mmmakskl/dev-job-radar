@@ -1,6 +1,6 @@
 # Текущее состояние продукта
 
-Документ фиксирует фактическое состояние репозитория на 17 августа 2026 года.
+Документ фиксирует фактическое состояние репозитория на 4 октября 2026 года (интеграция в feature-ветке, без production-релиза).
 Источник истины — исходный код и тесты. Секретные и пользовательские файлы
 (`.env`, credentials, Telegram session, state и экспортированные данные) не
 анализировались.
@@ -172,7 +172,7 @@ Telegram-карточку, но его источник сохраняется �
 | `JsonlDedupeState.is_duplicate(...)` | Проверка ссылки, ID и хэша текста |
 | `JsonlDedupeState.mark_exported(...)` | Фиксация успешного экспорта |
 | `VacancyGroupStore` | Каноническая вакансия, связанные публикации, источники, причина и даты группы |
-| `CandidateStore`, `CandidateVacancyBrowser` | Личные статусы, idempotent delivery карточек и private single-card browser |
+| `CandidateStore` | Idempotent delivery карточек, сохранённые вакансии и версионируемые профили |
 | `ManagedSource`, `AdminSettings` и вложенные модели | Версионируемые managed-настройки |
 | `FolderChannel`, `ChannelSyncResult` | Контракты синхронизации папки Telegram |
 | `TelemetryStore` | Heartbeat, операции, метрики с причинами, ошибки, очищенные логи |
@@ -180,6 +180,15 @@ Telegram-карточку, но его источник сохраняется �
 `VacancyAnalysis` нормализует стек (`golang → Go`, `postgres → PostgreSQL`,
 `k8s → Kubernetes`), грейды и фиксированные категории. Неизвестные категории
 становятся `Не указано` или `Другое`; `summary` ограничен 250 символами.
+
+Candidate Bot сохраняет Go-ленту и архив, предоставляет редактор нескольких
+профилей и отдельный выбор Premium-шаблона. «Для меня», catalog preview и
+автоматическая доставка закрыты независимыми flags и тестовым allowlist.
+Общий реестр в Candidate SQLite хранит полный анализ и исходные даты;
+matching переиспользует его по версии профиля. Миграции additive: прежние
+таблицы, callback keys, архив и delivery states сохраняются. Preview личный;
+только общие save/publish допускают Premium/Threads к другим пользователям.
+Подробнее: [эксплуатация и откат](candidate-registry-operations.md).
 Источники: `models.py`, `llm/schemas.py`.
 
 ### Внешние контракты
@@ -259,7 +268,7 @@ Google Sheets остаются пользовательским представ
 | `make auth` | QR-авторизация | Telegram API | Создаёт/использует session |
 | `make auth-force` | Повторная авторизация | Telegram API | Удаляет session |
 | `make run` / `make live` | Live-мониторинг | Telegram, Mistral, Sheets | Пишет Sheets/state/telemetry; при beta-режиме — карточки Bot API |
-| `make candidate-bot` | Личный Bot API long polling | `CANDIDATE_BOT_*` | Пишет личные статусы/жалобы и редактирует одну карточку списка в SQLite |
+| `make candidate-bot` | Личный Bot API long polling | `CANDIDATE_BOT_*` | Показывает ленту/архив и сохраняет вакансии; мигрирует профили и сохранённое в Candidate SQLite |
 | `make history` | Исторический проход | Те же | Обрабатывает старые посты |
 | `make discover` | Поиск диалогов | Telegram session | Создаёт JSON и upsert-ит discovery sources |
 | `make sync-channels` | Sync папки | Telegram session, data volume | Transactional write в admin SQLite |
