@@ -11,6 +11,8 @@ def main() -> None:
     parser.add_argument('--candidate-db', required=True)
     parser.add_argument('--premium-db')
     parser.add_argument('--search-db')
+    parser.add_argument('--state-jsonl', help='Append-only exported dedupe state')
+    parser.add_argument('--text-hash-ttl-days', type=int, default=30)
     parser.add_argument(
         '--apply', action='store_true', help='Apply; default is dry-run'
     )
@@ -26,6 +28,8 @@ def main() -> None:
                 args.candidate_db,
                 premium_path=args.premium_db,
                 search_path=args.search_db,
+                state_path=args.state_jsonl,
+                text_hash_ttl_days=args.text_hash_ttl_days,
                 dry_run=not args.apply,
             ),
             indent=2,

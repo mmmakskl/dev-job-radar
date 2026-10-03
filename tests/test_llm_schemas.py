@@ -130,6 +130,8 @@ def test_invalid_field_error_includes_actual_type_and_preview() -> None:
 
 
 def test_garbage_json_does_not_crash_analyzer(monkeypatch) -> None:
+    from tg_vacancy_bot.llm import universal
+
     class FakeCompletions:
         def __init__(self) -> None:
             self.calls = 0
@@ -142,12 +144,14 @@ def test_garbage_json_does_not_crash_analyzer(monkeypatch) -> None:
 
     completions = FakeCompletions()
     fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    fake_client.with_options = lambda **_kwargs: fake_client
     delays = []
 
     async def fake_sleep(delay: int) -> None:
         delays.append(delay)
 
     monkeypatch.setattr(mistral, "client", fake_client)
+    monkeypatch.setattr(universal, '_claim_daily_call', lambda _limit: True)
     monkeypatch.setattr(mistral.asyncio, "sleep", fake_sleep)
 
     result = asyncio.run(mistral.analyze_text("Go vacancy"))
@@ -158,6 +162,8 @@ def test_garbage_json_does_not_crash_analyzer(monkeypatch) -> None:
 
 
 def test_invalid_json_schema_uses_bounded_retry(monkeypatch) -> None:
+    from tg_vacancy_bot.llm import universal
+
     class FakeCompletions:
         def __init__(self) -> None:
             self.calls = 0
@@ -173,11 +179,10 @@ def test_invalid_json_schema_uses_bounded_retry(monkeypatch) -> None:
             )
 
     completions = FakeCompletions()
-    monkeypatch.setattr(
-        mistral,
-        "client",
-        SimpleNamespace(chat=SimpleNamespace(completions=completions)),
-    )
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    fake_client.with_options = lambda **_kwargs: fake_client
+    monkeypatch.setattr(mistral, "client", fake_client)
+    monkeypatch.setattr(universal, '_claim_daily_call', lambda _limit: True)
 
     async def no_delay(_delay: int) -> None:
         return None
@@ -186,3 +191,28 @@ def test_invalid_json_schema_uses_bounded_retry(monkeypatch) -> None:
 
     assert asyncio.run(mistral.analyze_text("Go vacancy")) is None
     assert completions.calls == 2
+
+
+def test_legacy_analysis_respects_shared_daily_quota(monkeypatch) -> None:
+    from tg_vacancy_bot.llm import universal
+
+    class FakeCompletions:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def create(self, **_kwargs):
+            self.calls += 1
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content='{}'))]
+            )
+
+    completions = FakeCompletions()
+    monkeypatch.setattr(
+        mistral,
+        'client',
+        SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+    )
+    monkeypatch.setattr(universal, '_claim_daily_call', lambda _limit: False)
+
+    assert asyncio.run(mistral.analyze_text('Go vacancy')) is None
+    assert completions.calls == 0

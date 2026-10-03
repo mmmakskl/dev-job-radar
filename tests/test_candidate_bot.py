@@ -9,6 +9,7 @@ class FakeBotApi:
     def __init__(self):
         self.messages = []
         self.answers = []
+        self.edits = []
 
     async def get_updates(self, _offset, _timeout):
         return []
@@ -19,6 +20,10 @@ class FakeBotApi:
 
     async def answer_callback_query(self, callback_query_id, text):
         self.answers.append((callback_query_id, text))
+
+    async def edit_message_text(self, chat_id, message_id, text, **kwargs):
+        self.edits.append((chat_id, message_id, text, kwargs))
+        return {'message_id': message_id}
 
 
 def make_store(tmp_path, count=1):
@@ -59,7 +64,7 @@ def test_feed_saves_and_archive_is_private(tmp_path):
     api, bot = FakeBotApi(), CandidateBot(FakeBotApi(), store, {1, 2})
     bot.api = api
     asyncio.run(bot.handle_update(message(1, 'Новые')))
-    assert len(api.messages) == 2
+    assert len(api.messages) == 1
     keyboard = api.messages[0][2]['reply_markup']['inline_keyboard']
     assert [button['text'] for button in keyboard[0]] == ['Сохранить']
     asyncio.run(bot.handle_update(callback(1, f'v:s:{items[0].callback_key}')))
@@ -67,6 +72,38 @@ def test_feed_saves_and_archive_is_private(tmp_path):
     assert [v.vacancy_id for v in store.list_for_user(1, 'saved')] == ['jobs_1']
     assert len(store.list_for_user(2, 'saved')) == 0
     assert [v.vacancy_id for v in store.list_for_user(1, 'new')] == ['jobs_2']
+
+
+def test_feed_navigation_edits_one_private_card_and_checks_owner(tmp_path):
+    store, _ = make_store(tmp_path, 3)
+    api = FakeBotApi()
+    bot = CandidateBot(api, store, {1, 2})
+    asyncio.run(bot.handle_update(message(1, 'Новые')))
+    assert len(api.messages) == 1
+    assert 'Go 3' in api.messages[0][1]
+    buttons = api.messages[0][2]['reply_markup']['inline_keyboard']
+    next_data = next(
+        button['callback_data']
+        for row in buttons
+        for button in row
+        if button['text'] == 'Далее'
+    )
+    assert len(next_data.encode()) <= 64
+    navigation = callback(1, next_data)
+    navigation['callback_query']['message'] = {
+        'message_id': 1,
+        'chat': {'id': 1, 'type': 'private'},
+    }
+    asyncio.run(bot.handle_update(navigation))
+    assert len(api.messages) == 1
+    assert api.edits[-1][0:2] == (1, 1)
+    assert 'Go 2' in api.edits[-1][2]
+
+    forged = callback(2, next_data)
+    forged['callback_query']['message'] = navigation['callback_query']['message']
+    asyncio.run(bot.handle_update(forged))
+    assert len(api.edits) == 1
+    assert 'устарела' in api.answers[-1][1]
 
 
 def test_legacy_callbacks_are_ignored_without_writes_and_search_removed(tmp_path):

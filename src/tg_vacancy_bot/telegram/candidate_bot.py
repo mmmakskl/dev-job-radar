@@ -35,6 +35,15 @@ class CandidateBotApi(Protocol):
     async def answer_callback_query(
         self, callback_query_id: str, text: str
     ) -> None: ...
+    async def edit_message_text(
+        self,
+        chat_id: int | str,
+        message_id: int,
+        text: str,
+        *,
+        parse_mode: str | None = None,
+        reply_markup: dict | None = None,
+    ) -> dict: ...
 
 
 MAIN_KEYBOARD = {
@@ -129,30 +138,86 @@ class CandidateBot:
         return MAIN_KEYBOARD
 
     async def _personal_feed(self, user_id: int) -> None:
-        if (
+        await self._show_browser(user_id, 'for_me')
+
+    async def _show_browser(
+        self, user_id: int, bucket: str, index: int = 0, message_id: int | None = None
+    ) -> bool:
+        """Show one current card; navigation edits only the owner's private message."""
+        if bucket == 'for_me' and (
             not self.profile_feed_enabled
             or user_id not in self.profile_allowed_user_ids
             or self.registry is None
         ):
-            await self.api.send_message(user_id, 'Персональная выдача пока недоступна.')
-            return
-        matches = await asyncio.to_thread(self.registry.list_personal_matches, user_id)
-        if not matches:
-            await self.api.send_message(
-                user_id, 'Подтверждённых совпадений активных профилей пока нет.'
+            if message_id is None:
+                await self.api.send_message(
+                    user_id, 'Персональная выдача пока недоступна.'
+                )
+            return False
+        if bucket == 'for_me':
+            matches = await asyncio.to_thread(
+                self.registry.list_personal_matches, user_id
             )
-        for match in matches:
-            profile = min(match.matched_profiles, key=lambda p: p.profile_id)
+            cards = [
+                (
+                    format_card(
+                        personal_card(match),
+                        now=datetime.now(timezone.utc),
+                        timezone=min(
+                            match.matched_profiles, key=lambda p: p.profile_id
+                        ).preferences.get('timezone', 'Europe/Moscow'),
+                    ),
+                    match.callback_key,
+                )
+                for match in matches
+            ]
+        elif bucket in {'new', 'saved'}:
+            cards = [
+                (vacancy_text(vacancy), vacancy.callback_key)
+                for vacancy in self.store.list_for_user(user_id, bucket)
+            ]
+        else:
+            return False
+        if not cards:
+            if message_id is not None:
+                return False
             await self.api.send_message(
                 user_id,
-                format_card(
-                    personal_card(match),
-                    now=datetime.now(timezone.utc),
-                    timezone=profile.preferences.get('timezone', 'Europe/Moscow'),
+                (
+                    'Подтверждённых совпадений активных профилей пока нет.'
+                    if bucket == 'for_me'
+                    else (
+                        'Новых вакансий пока нет.'
+                        if bucket == 'new'
+                        else 'В сохранённых вакансиях пока ничего нет.'
+                    )
                 ),
-                parse_mode='HTML',
-                reply_markup=personal_keyboard(match.callback_key),
             )
+            return True
+        if index < 0 or index >= len(cards):
+            return False
+        content, callback_key = cards[index]
+        keyboard = personal_keyboard(callback_key)
+        if len(cards) > 1:
+            controls = []
+            if index > 0:
+                controls.append(
+                    {'text': 'Назад', 'callback_data': f'b:{bucket}:{index - 1}'}
+                )
+            if index + 1 < len(cards):
+                controls.append(
+                    {'text': 'Далее', 'callback_data': f'b:{bucket}:{index + 1}'}
+                )
+            keyboard['inline_keyboard'].append(controls)
+        if message_id is None:
+            await self.api.send_message(
+                user_id, content, parse_mode='HTML', reply_markup=keyboard
+            )
+        else:
+            await self.api.edit_message_text(
+                user_id, message_id, content, parse_mode='HTML', reply_markup=keyboard
+            )
+        return True
 
     async def run(self, shutdown_event: asyncio.Event) -> None:
         offset: int | None = None
@@ -223,22 +288,7 @@ class CandidateBot:
                 reply_markup=self._keyboard(user_id),
             )
             return
-        vacancies = self.store.list_for_user(user_id, bucket)
-        if not vacancies:
-            empty = (
-                'Новых вакансий пока нет.'
-                if bucket == 'new'
-                else 'В сохранённых вакансиях пока ничего нет.'
-            )
-            await self.api.send_message(chat_id, empty)
-            return
-        for vacancy in vacancies:
-            await self.api.send_message(
-                chat_id,
-                vacancy_text(vacancy),
-                parse_mode='HTML',
-                reply_markup=personal_keyboard(vacancy.callback_key),
-            )
+        await self._show_browser(user_id, bucket)
 
     async def _can_save(self, user_id: int, key: str) -> bool:
         with self.store._connect() as connection:
@@ -273,6 +323,25 @@ class CandidateBot:
         if not isinstance(data, str):
             return
         parts = data.split(':')
+        if len(parts) == 3 and parts[0] == 'b':
+            source = callback.get('message') or {}
+            chat = source.get('chat') or {}
+            try:
+                index = int(parts[2])
+            except ValueError:
+                index = -1
+            valid = (
+                chat.get('type') == 'private'
+                and chat.get('id') == user_id
+                and isinstance(source.get('message_id'), int)
+                and await self._show_browser(
+                    user_id, parts[1], index, source['message_id']
+                )
+            )
+            await self.api.answer_callback_query(
+                callback_id, 'Готово.' if valid else 'Кнопка устарела или недоступна.'
+            )
+            return
         if parts[0] == 'cs' and self.search is not None:
             valid = await self.search.callback(user_id, parts)
             await self.api.answer_callback_query(

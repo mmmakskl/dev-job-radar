@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from tg_vacancy_bot.registry import VacancyRegistry, decision_from_payload
@@ -46,11 +47,73 @@ def _decision(raw: str | None):
     return None
 
 
+def _import_dedupe_keys(
+    registry: VacancyRegistry, state_path: str, ttl_days: int
+) -> int:
+    """Copy exported JSONL keys without changing the active JSONL authority."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=ttl_days)
+    with registry._connect() as connection:
+        connection.execute('BEGIN IMMEDIATE')
+        with Path(state_path).open(encoding='utf-8') as state_file:
+            for line in state_file:
+                try:
+                    event = json.loads(line)
+                    if not isinstance(event, dict) or event.get('event') != 'exported':
+                        continue
+                    link, digest = event['post_link'], event['text_hash']
+                    created = datetime.fromisoformat(
+                        event['created_at'].replace('Z', '+00:00')
+                    )
+                    if (
+                        not isinstance(link, str)
+                        or not link
+                        or not isinstance(digest, str)
+                        or not digest
+                        or created.utcoffset() is None
+                    ):
+                        continue
+                except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+                    continue
+                stamp = created.astimezone(timezone.utc).isoformat()
+                exact = [('link', link)]
+                try:
+                    exact.append(('id', build_vacancy_id(link)))
+                except ValueError:
+                    pass
+                for kind, key in exact:
+                    connection.execute(
+                        '''INSERT INTO registry_dedupe_keys VALUES (?,?,?,NULL)
+                        ON CONFLICT(kind,key) DO UPDATE SET
+                        created_at=MIN(created_at,excluded.created_at)''',
+                        (kind, key, stamp),
+                    )
+                if created.astimezone(timezone.utc) >= cutoff:
+                    connection.execute(
+                        '''INSERT INTO registry_dedupe_keys VALUES (?,?,?,?)
+                        ON CONFLICT(kind,key) DO UPDATE SET
+                        created_at=MAX(created_at,excluded.created_at),
+                        expires_at=MAX(expires_at,excluded.expires_at)''',
+                        (
+                            'hash',
+                            digest,
+                            stamp,
+                            (created + timedelta(days=ttl_days))
+                            .astimezone(timezone.utc)
+                            .isoformat(),
+                        ),
+                    )
+        return connection.execute(
+            'SELECT COUNT(*) FROM registry_dedupe_keys'
+        ).fetchone()[0]
+
+
 def import_legacy(
     candidate_path: str,
     *,
     premium_path: str | None = None,
     search_path: str | None = None,
+    state_path: str | None = None,
+    text_hash_ttl_days: int = 30,
     dry_run: bool = True,
 ) -> dict:
     """Import only admitted data; dry-run migrates an isolated SQLite snapshot."""
@@ -82,7 +145,14 @@ def import_legacy(
             "WHERE publication_status IN ('saved','published')",
         )
         search = [item for item in search if item.get('scope', 'shared') == 'shared']
+        if text_hash_ttl_days < 1:
+            raise ValueError('text_hash_ttl_days must be positive')
         registry = VacancyRegistry(target)
+        dedupe_keys = (
+            _import_dedupe_keys(registry, state_path, text_hash_ttl_days)
+            if state_path is not None
+            else None
+        )
         before = len(registry.list_vacancies(eligible_only=False))
         admitted_cards = 0
         for card in cards:
@@ -166,6 +236,7 @@ def import_legacy(
             'candidate_admitted': admitted_cards,
             'premium_admitted': len(premium),
             'search_admitted': len(search),
+            'dedupe_keys': dedupe_keys,
             'new_registry_vacancies': counts['registry_vacancies'] - before,
             'counts': counts,
             'integrity_check': integrity,

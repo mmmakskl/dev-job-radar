@@ -167,6 +167,13 @@ class VacancyRegistry:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY(vacancy_id,projection)
                 );
+                CREATE TABLE IF NOT EXISTS registry_dedupe_keys (
+                    kind TEXT NOT NULL CHECK(kind IN ('link','id','hash')),
+                    key TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT,
+                    PRIMARY KEY(kind,key)
+                );
             ''')
             c.execute(
                 'INSERT OR IGNORE INTO registry_schema_versions VALUES (?,?)',

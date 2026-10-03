@@ -125,6 +125,10 @@ def parse_classification(payload: object) -> Classification:
 async def classify_text(text: str) -> Classification:
     from tg_vacancy_bot import config
     from tg_vacancy_bot.llm.mistral import _get_client
+    from tg_vacancy_bot.llm.universal import _claim_daily_call
+
+    if not _claim_daily_call(config.MISTRAL_DAILY_LIMIT):
+        raise ClassificationError('daily_limit')
 
     try:
         response = (
