@@ -1,7 +1,7 @@
 """Telegram notification entry points backed by the channel-card formatter."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from tg_vacancy_bot.models import VacancyAnalysis
@@ -23,14 +23,31 @@ def format_vacancy_notification(
     post_link: str,
     channel_name: str,
     data: VacancyAnalysis,
-    published_at: datetime,
+    published_at: datetime | None,
 ) -> str:
     """Format a shared-channel card while preserving the public call signature."""
-    del vacancy_id, channel_name, published_at
-    return VacancyChannelFormatter().format(
+    del vacancy_id, channel_name
+    message = VacancyChannelFormatter().format(
         data=data,
         source=SourcePresentation(label="Telegram", url=post_link),
     )
+    stamp = (
+        published_at.astimezone(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
+        if published_at is not None and published_at.utcoffset() is not None
+        else "Дата публикации не указана"
+    )
+    message += "\n🕒 " + stamp
+    if len(message.encode("utf-16-le")) // 2 > MAX_MESSAGE_LENGTH:
+        from tg_vacancy_bot.telegram.candidate_card_formatter import (
+            CardInput,
+            format_card,
+        )
+
+        return format_card(
+            CardInput("", data, published_at, post_link, ()),
+            now=datetime.now(timezone.utc),
+        )
+    return message
 
 
 async def send_vacancy_notification(
@@ -41,7 +58,7 @@ async def send_vacancy_notification(
     post_link: str,
     channel_name: str,
     data: VacancyAnalysis,
-    published_at: datetime,
+    published_at: datetime | None,
 ) -> bool:
     """Send a formatted card without propagating errors to the main pipeline."""
     message = format_vacancy_notification(

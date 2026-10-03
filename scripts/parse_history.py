@@ -15,11 +15,12 @@ from telethon import TelegramClient
 from tg_vacancy_bot import config
 from tg_vacancy_bot.admin.telemetry import TelemetryStore
 from tg_vacancy_bot.admin.control import finish_action
-from tg_vacancy_bot.llm.mistral import analyze_text
+from tg_vacancy_bot.llm.universal import analyze_ingestion_text
 from tg_vacancy_bot.logging_config import configure_logging
 from tg_vacancy_bot.pipeline.dedupe_state import JsonlDedupeState
-from tg_vacancy_bot.pipeline.prefilter import contains_keywords
+from tg_vacancy_bot.pipeline.prefilter import contains_keywords, universal_prefilter
 from tg_vacancy_bot.pipeline.processor import VacancyProcessor
+from tg_vacancy_bot.registry import VacancyRegistry
 from tg_vacancy_bot.storage.sheets import (
     append_to_google_sheet,
     get_existing_links,
@@ -55,8 +56,13 @@ async def parse_history() -> dict[str, int]:
     )
     dedupe_state.exported_links.update(await get_existing_links())
     processor = VacancyProcessor(
-        keyword_filter=lambda text: contains_keywords(text, config.KEYWORD_FILTER),
-        analyze_text=analyze_text,
+        keyword_filter=(
+            (lambda text: contains_keywords(text, config.KEYWORD_FILTER))
+            if config.LEGACY_GO_ANALYSIS
+            else universal_prefilter
+        ),
+        analyze_text=analyze_ingestion_text,
+        registry=VacancyRegistry(config.CANDIDATE_BOT_DB_PATH),
         append_to_sheet=append_to_google_sheet,
         dedupe_state=dedupe_state,
         notify_vacancy=build_candidate_notifier(),

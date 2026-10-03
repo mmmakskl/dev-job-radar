@@ -66,10 +66,10 @@ async def analyze_text(vacancy_text: str) -> VacancyAnalysis | None:
 
         except (APIError, json.JSONDecodeError, InvalidAnalysisResultError) as exc:
             logging.warning(
-                "[MISTRAL] Ошибка попытки %d/%d: %s",
+                "[MISTRAL] Ошибка попытки %d/%d (%s)",
                 attempt + 1,
                 max_attempts,
-                exc,
+                type(exc).__name__,
             )
             if attempt + 1 >= max_attempts:
                 logging.error("[MISTRAL] Исчерпаны попытки анализа")

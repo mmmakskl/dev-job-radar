@@ -208,10 +208,28 @@ class SearchService:
             )
 
     async def _premium(self) -> None:
+        if self.premium_store is not None:
+            with self.store.connect() as c:
+                cancelled = c.execute(
+                    "SELECT t.child_id,t.run_id,r.owner FROM search_tasks t JOIN search_runs r ON r.id=t.run_id WHERE t.source='premium' AND t.status='cancelled'"
+                ).fetchall()
+            for row in cancelled:
+                child_id = row['child_id']
+                if not child_id:
+                    child = self.premium_store.find_request(
+                        row['owner'], 'search:' + row['run_id']
+                    )
+                    child_id = child['search_run_id'] if child else None
+                if child_id:
+                    self.premium_store.cancel(child_id)
         task = self.store.claim_task('premium')
         if task:
             run = self.store.get_run(task['run_id'])
-            if self.premium_store is None:
+            from tg_vacancy_bot.premium_search.settings import catalog_search_allowed
+
+            if self.premium_store is None or (
+                run['track'] == 'catalog' and not catalog_search_allowed(run['owner'])
+            ):
                 self.store.update_task(
                     run['id'], 'premium', status='unavailable', reason='disabled'
                 )
@@ -224,10 +242,16 @@ class SearchService:
                         result_limit=run['result_limit'],
                         period_days=run['period_days'],
                         include_review=True,
+                        owner=run['owner'],
+                        client_request_id='search:' + run['id'],
+                        profile_snapshot=run['profile_snapshot'],
                     )
                     child_id = child['search_run_id']
-                except ActiveRunError as error:
-                    child_id = error.run_id
+                except ActiveRunError:
+                    self.store.update_task(
+                        run['id'], 'premium', status='queued', reason='premium_busy'
+                    )
+                    return
                 self.store.update_task(
                     run['id'], 'premium', status='running', child_id=child_id
                 )
@@ -254,24 +278,29 @@ class SearchService:
                     for preview in page['items']:
                         result = self.premium_store.get_result(preview['result_id'])
                         published = result.get('published_at')
-                        if not result.get('vacancy_id') or not published:
+                        if not result.get('vacancy_id'):
                             continue
-                        if datetime.fromisoformat(published) < datetime.now(
-                            timezone.utc
-                        ) - timedelta(days=run['period_days']):
+                        if published and datetime.fromisoformat(
+                            published
+                        ) < datetime.now(timezone.utc) - timedelta(
+                            days=run['period_days']
+                        ):
                             continue
                         self.store.retain(
                             run['id'],
                             source='premium',
                             external_id=result['vacancy_id'],
                             text=result.get('raw_text') or '',
-                            timestamp=published,
+                            timestamp=published or '',
                             permalink=result['post_link'],
                             username=result['channel_username'],
                             title=result['title'],
                             company=result['company'],
                             summary=result['summary'],
                             classification=(
+                                'review' if status == 'review' else 'accepted'
+                            ),
+                            classification_override=(
                                 'review' if status == 'review' else 'accepted'
                             ),
                             confidence=(
@@ -361,7 +390,9 @@ class SearchService:
                     for post in page.posts:
                         if self.store.get_run(run_id)['status'] == 'cancelled':
                             return
-                        if post.timestamp < since or post.timestamp > until:
+                        if post.timestamp is not None and (
+                            post.timestamp < since or post.timestamp > until
+                        ):
                             continue
                         cached = self.store.find_item('threads', post.external_id)
                         if post.external_id not in seen_posts:
@@ -402,7 +433,11 @@ class SearchService:
                                         source='threads',
                                         external_id=post.external_id,
                                         text=post.text,
-                                        timestamp=post.timestamp.isoformat(),
+                                        timestamp=(
+                                            post.timestamp.isoformat()
+                                            if post.timestamp
+                                            else ''
+                                        ),
                                         permalink=post.permalink,
                                         username=post.username,
                                         raw_data=post.raw_data,
@@ -437,7 +472,9 @@ class SearchService:
                             source='threads',
                             external_id=post.external_id,
                             text=post.text,
-                            timestamp=post.timestamp.isoformat(),
+                            timestamp=(
+                                post.timestamp.isoformat() if post.timestamp else ''
+                            ),
                             permalink=post.permalink,
                             username=post.username,
                             raw_data=post.raw_data,
@@ -546,25 +583,68 @@ class SearchService:
                     action_state='idle',
                 )
                 return
+            if item.get('scope', 'shared') != 'shared':
+                raise ValueError('private_preview')
             if item['source'] == 'premium':
                 if self.premium_store is None:
                     raise ValueError('premium_unavailable')
                 self.premium_store.request_action(item['premium_result_id'], action)
                 return  # Existing Premium worker owns persistence and its delivery state.
-            if self.analyzer is None:
-                from tg_vacancy_bot.llm.mistral import analyze_text
+            decision = None
+            if item.get('universal_decision'):
+                from tg_vacancy_bot.llm.universal import decision_from_dict
 
-                self.analyzer = analyze_text
+                decision = decision_from_dict(item['universal_decision'])
             if item['analysis']:
                 analysis = validate_analysis_result(item['analysis'])
             else:
-                analysis = await asyncio.wait_for(self.analyzer(item['text']), 60)
+                if self.analyzer is None:
+                    from tg_vacancy_bot import config
+                    from tg_vacancy_bot.llm.universal import analyze_universal_text
+
+                    if not config.LEGACY_GO_ANALYSIS:
+                        try:
+                            decision = await asyncio.wait_for(
+                                analyze_universal_text(item['text']), 60
+                            )
+                        except Exception:
+                            self.store.update_item(
+                                item_id,
+                                classification='review',
+                                reason='analysis_unavailable',
+                                action_state='idle',
+                                action_error=None,
+                            )
+                            return
+                        if decision.needs_review:
+                            self.store.update_item(
+                                item_id,
+                                classification='review',
+                                reason=decision.reason_code,
+                                action_state='idle',
+                                action_error=None,
+                            )
+                            return
+                        analysis = decision.analysis
+                    else:
+                        from tg_vacancy_bot.llm.mistral import analyze_text
+
+                        analysis = await asyncio.wait_for(
+                            analyze_text(item['text']), 60
+                        )
+                else:
+                    analysis = await asyncio.wait_for(self.analyzer(item['text']), 60)
             if analysis is None or not analysis.is_match:
                 raise ValueError('analysis_not_accepted')
             if self.store.get_item(item_id)['text'] != item['text']:
                 raise ValueError('post_changed')
+            from tg_vacancy_bot.llm.universal import decision_to_dict
+
             self.store.update_item(
                 item_id,
+                universal_decision_json=(
+                    json.dumps(decision_to_dict(decision)) if decision else None
+                ),
                 analysis_json=json.dumps(asdict(analysis), ensure_ascii=False),
                 title=analysis.title,
                 company=analysis.company,
@@ -573,9 +653,18 @@ class SearchService:
             outcome = await self.processor.persist_analyzed_message(
                 raw_text=item['text'],
                 post_link=item['permalink'],
-                published_at=datetime.fromisoformat(item['timestamp']),
+                published_at=(
+                    datetime.fromisoformat(item['timestamp'])
+                    if item['timestamp']
+                    else None
+                ),
                 channel_name='Threads · ' + (item['username'] or 'автор не указан'),
                 analysis_result=analysis,
+                **(
+                    {'universal_decision': decision, 'source_type': 'threads'}
+                    if decision
+                    else {}
+                ),
                 publish=action == 'publish',
                 strict_delivery=True,
                 vacancy_id=item['vacancy_id'],

@@ -112,7 +112,15 @@ def _invalid(
 
     detail_text = "; ".join(details)
     log_message = f"{message}; {detail_text}" if detail_text else message
-    logging.warning("[MISTRAL] Невалидная схема ответа: %s", log_message)
+    safe_details = []
+    if field:
+        safe_details.append(f"field={field}")
+    if expected:
+        safe_details.append(f"expected={expected}")
+    if actual is not _MISSING:
+        safe_details.append(f"actual_type={_type_name(actual)}")
+    safe_message = f"{message}; {'; '.join(safe_details)}" if safe_details else message
+    logging.warning("[MISTRAL] Невалидная схема ответа: %s", safe_message)
     raise InvalidAnalysisResultError(log_message)
 
 

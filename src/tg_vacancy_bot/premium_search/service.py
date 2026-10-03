@@ -20,7 +20,9 @@ from tg_vacancy_bot.pipeline.fingerprints import (
 )
 from tg_vacancy_bot.premium_search.analyzer import (
     PremiumAnalyzer,
+    PremiumAnalysis,
     analyze_premium_text,
+    adapt_universal,
     parse_premium_analysis,
 )
 from tg_vacancy_bot.premium_search.store import PremiumSearchStore, now
@@ -92,6 +94,7 @@ def normalize_result(
         status='pending',
         decision_reason='pending',
         apply_urls_json='[]',
+        published_at=None,
     )
     date = getattr(message, 'date', None)
     if isinstance(date, datetime):
@@ -138,11 +141,13 @@ def normalize_result(
         telegram_message_id=message_id,
         vacancy_id=build_vacancy_id(link),
     )
-    if not isinstance(date, datetime):
+    if date is not None and not isinstance(date, datetime):
         return dict(values, status='rejected', decision_reason='invalid_date')
     if not text:
         return dict(values, status='rejected', decision_reason='empty_text')
-    if date < datetime.now(timezone.utc) - timedelta(days=period_days):
+    if date is not None and date < datetime.now(timezone.utc) - timedelta(
+        days=period_days
+    ):
         return dict(values, status='rejected', decision_reason='old_content')
     values['apply_urls_json'] = json.dumps(
         extract_apply_urls(text, getattr(message, 'entities', None))
@@ -253,6 +258,19 @@ class PremiumSearchService:
     async def _run(self, run: dict) -> None:
         run_id = run['search_run_id']
         try:
+            if run['track'] == 'catalog':
+                from tg_vacancy_bot.premium_search.settings import (
+                    catalog_search_allowed,
+                )
+
+                if not catalog_search_allowed(run['owner']):
+                    self.store.update_run(
+                        run_id,
+                        status='failed',
+                        error_reason='catalog_unavailable',
+                        finished_at=now(),
+                    )
+                    return
             await self._priority(run_id)
             if run['mode'] == 'save_publish' and not self.processor.notify_vacancy:
                 self.store.update_run(
@@ -405,9 +423,23 @@ class PremiumSearchService:
             offset_peer = utils.get_input_peer(channel)
             offset_rate, offset_id = next_rate, last.id
 
+    async def _analyze(self, text: str, run: dict) -> PremiumAnalysis:
+        if run['track'] == 'catalog':
+            from tg_vacancy_bot.llm.universal import analyze_universal_text
+
+            return adapt_universal(
+                await analyze_universal_text(text), run['profile_snapshot']
+            )
+        return await self.analyzer(text)
+
     async def _evaluate(self, run: dict, result: dict) -> None:
         rid = result['result_id']
-        group_store = self.processor.group_store
+        private_preview = run['owner'].startswith('candidate:')
+        group_store = (
+            None
+            if private_preview or not result['published_at']
+            else self.processor.group_store
+        )
         group = (
             group_store.known_duplicate(
                 post_link=result['post_link'],
@@ -417,9 +449,10 @@ class PremiumSearchService:
             if group_store
             else None
         )
-        duplicate = self.store.duplicate(result)
+        duplicate = None if private_preview else self.store.duplicate(result)
         exact = (
-            self.processor.dedupe_state
+            not private_preview
+            and self.processor.dedupe_state
             and self.processor.dedupe_state.is_duplicate(
                 result['post_link'], result['text_hash'], result['vacancy_id']
             )
@@ -440,7 +473,11 @@ class PremiumSearchService:
                     result['text_hash'],
                     result['vacancy_id'],
                     result['channel_name'],
-                    datetime.fromisoformat(result['published_at']),
+                    (
+                        datetime.fromisoformat(result['published_at'])
+                        if result['published_at']
+                        else None
+                    ),
                 )
             self.store.update_result(
                 rid,
@@ -450,7 +487,20 @@ class PremiumSearchService:
             )
             return
         decision = None
-        for attempt in range(3):
+        from tg_vacancy_bot import config
+
+        if run['track'] == 'catalog':
+            cached = self.store.cached_universal(
+                result['post_link'], result['raw_text']
+            )
+            if cached is not None:
+                from tg_vacancy_bot.llm.universal import decision_from_dict
+
+                decision = adapt_universal(
+                    decision_from_dict(cached), run['profile_snapshot']
+                )
+        attempts = 0 if decision is not None else 3
+        for attempt in range(attempts):
             await self._priority(run['search_run_id'])
             if not self.store.consume_llm_call(
                 run['search_run_id'], self.max_llm_calls
@@ -461,7 +511,7 @@ class PremiumSearchService:
                 return
             try:
                 candidate = await asyncio.wait_for(
-                    self.analyzer(result['raw_text']), timeout=60
+                    self._analyze(result['raw_text'], run), timeout=60
                 )
                 # Also validate injected analyzers and persisted shape consistently.
                 decision = parse_premium_analysis(json.loads(candidate.as_json()))
@@ -480,7 +530,7 @@ class PremiumSearchService:
                     or error.status_code >= 500
                 )
                 self._error('mistral_unavailable')
-                if not temporary or attempt == 2:
+                if not temporary or attempt + 1 >= attempts:
                     break
                 delay = 2**attempt + random.uniform(0, 0.5)
                 self.store.update_run(
@@ -498,7 +548,13 @@ class PremiumSearchService:
                 self._error('mistral_schema_failure')
                 break
         if decision is None:
-            self.store.update_result(rid, status='error', decision_reason='llm_failed')
+            self.store.update_result(
+                rid,
+                status='review' if not config.LEGACY_GO_ANALYSIS else 'error',
+                decision_reason=(
+                    'llm_unavailable' if not config.LEGACY_GO_ANALYSIS else 'llm_failed'
+                ),
+            )
             return
         self._check_cancel(run['search_run_id'])
         status = decision.status(run['track'])
@@ -507,7 +563,11 @@ class PremiumSearchService:
             group = group_store.preview_publication(
                 vacancy_id=result['vacancy_id'],
                 data=decision.analysis,
-                published_at=datetime.fromisoformat(result['published_at']),
+                published_at=(
+                    datetime.fromisoformat(result['published_at'])
+                    if result['published_at']
+                    else None
+                ),
                 fuzzy=True,
             )
             if not group.is_canonical:
@@ -515,7 +575,7 @@ class PremiumSearchService:
                     data=decision.analysis, fuzzy=True, **self._source(result)
                 )
                 group_id, status = group.group_id, 'duplicate'
-        if status in {'accepted', 'review'}:
+        if status in {'accepted', 'review'} and not private_preview:
             previous = self._structured_duplicate(result, decision)
             if previous:
                 status, group_id = 'duplicate', previous['group_id']
@@ -539,9 +599,13 @@ class PremiumSearchService:
         )
 
     def _structured_duplicate(self, result: dict, decision) -> dict | None:
+        if not result['published_at']:
+            return None
         keys = VacancyGroupStore._keys(decision.analysis)
         fuzzy = {}
         for previous in self.store.analyzed_results(result['result_id']):
+            if not previous['published_at']:
+                continue
             if (
                 abs(
                     (
@@ -567,7 +631,11 @@ class PremiumSearchService:
             vacancy_id=result['vacancy_id'],
             post_link=result['post_link'],
             channel_name=result['channel_name'],
-            published_at=datetime.fromisoformat(result['published_at']),
+            published_at=(
+                datetime.fromisoformat(result['published_at'])
+                if result['published_at']
+                else None
+            ),
             text_hash=result['text_hash'],
         )
 
@@ -641,7 +709,12 @@ class PremiumSearchService:
     async def _manual_analysis(self, result: dict) -> dict:
         """Create the structured card needed to publish an admin-approved post."""
         try:
-            candidate = await asyncio.wait_for(self.analyzer(result['raw_text']), 60)
+            candidate = await asyncio.wait_for(
+                self._analyze(
+                    result['raw_text'], self.store.get_run(result['search_run_id'])
+                ),
+                60,
+            )
             decision = parse_premium_analysis(json.loads(candidate.as_json()))
         except Exception as error:
             self._error('manual_analysis_failed')
@@ -662,9 +735,24 @@ class PremiumSearchService:
 
     async def _save(self, result: dict, publish: bool) -> None:
         rid = result['result_id']
+        if self.store.get_run(result['search_run_id'])['owner'].startswith(
+            'candidate:'
+        ):
+            raise ValueError('private_preview')
+        decision = parse_premium_analysis(result['analysis'])
+        from tg_vacancy_bot.llm.universal import decision_from_dict
+
+        universal = (
+            decision_from_dict(decision.universal_decision)
+            if decision.universal_decision
+            else None
+        )
+        from tg_vacancy_bot.llm.universal import go_projection_accepted
+
+        if universal is not None and not go_projection_accepted(universal):
+            publish = False
         if publish and not self.processor.notify_vacancy:
             raise ValueError('publisher_not_configured')
-        decision = parse_premium_analysis(result['analysis'])
         analysis = decision.analysis
         # An explicit manual publish action is an operator approval.  Keep the
         # extracted fields, but allow the shared persistence path to save and
@@ -674,9 +762,18 @@ class PremiumSearchService:
         saved = await self.processor.persist_analyzed_message(
             raw_text=result['raw_text'],
             post_link=result['post_link'],
-            published_at=datetime.fromisoformat(result['published_at']),
+            published_at=(
+                datetime.fromisoformat(result['published_at'])
+                if result['published_at']
+                else None
+            ),
             channel_name=result['channel_name'],
             analysis_result=analysis,
+            **(
+                {'universal_decision': universal, 'source_type': 'premium'}
+                if universal
+                else {}
+            ),
             publish=False,
             strict_delivery=True,
         )
@@ -697,9 +794,18 @@ class PremiumSearchService:
             saved = await self.processor.persist_analyzed_message(
                 raw_text=result['raw_text'],
                 post_link=result['post_link'],
-                published_at=datetime.fromisoformat(result['published_at']),
+                published_at=(
+                    datetime.fromisoformat(result['published_at'])
+                    if result['published_at']
+                    else None
+                ),
                 channel_name=result['channel_name'],
                 analysis_result=analysis,
+                **(
+                    {'universal_decision': universal, 'source_type': 'premium'}
+                    if universal
+                    else {}
+                ),
                 publish=True,
                 strict_delivery=True,
             )

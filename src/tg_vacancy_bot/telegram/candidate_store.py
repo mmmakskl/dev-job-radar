@@ -1,25 +1,29 @@
-"""SQLite persistence for personal candidate actions and neutral reports."""
+"""SQLite persistence for candidate profiles, feed cards and saved vacancies."""
 
 import hashlib
 import json
-import secrets
 import sqlite3
+import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-STATUSES = (
-    'new',
-    'saved',
-    'applied',
-    'replied',
-    'interview',
-    'offer',
-    'rejected',
-    'hidden',
-)
-APPLICATION_STATUSES = ('applied', 'replied', 'interview', 'offer', 'rejected')
-REPORT_REASONS = ('suspicious', 'duplicate', 'outdated', 'other')
+from tg_vacancy_bot.candidate_catalog import CATALOG_VERSION, validate_profile_path
+
+
+@dataclass(frozen=True)
+class CandidateProfile:
+    profile_id: str
+    telegram_user_id: int
+    name: str
+    direction_id: str
+    specialization_id: str
+    role_id: str
+    preferences: dict
+    is_active: bool
+    version: int
 
 
 @dataclass(frozen=True)
@@ -34,20 +38,6 @@ class CandidateVacancy:
     post_link: str
     apply_link: str | None
     published_at: str | None
-    status: str = 'new'
-
-
-@dataclass(frozen=True)
-class BrowserSession:
-    """Private, server-side state for one user's single-message vacancy browser."""
-
-    token: str
-    telegram_user_id: int
-    bucket: str
-    position: int
-    chat_id: int | None
-    message_id: int | None
-    vacancy_ids: tuple[str, ...]
 
 
 def callback_key_for(vacancy_id: str) -> str:
@@ -71,6 +61,7 @@ class CandidateStore:
         connection = sqlite3.connect(self.path, timeout=10)
         connection.row_factory = sqlite3.Row
         connection.execute('PRAGMA busy_timeout = 10000')
+        connection.execute('PRAGMA foreign_keys = ON')
         return connection
 
     def _migrate(self) -> None:
@@ -91,41 +82,6 @@ class CandidateStore:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
-                CREATE TABLE IF NOT EXISTS user_vacancy_actions (
-                    telegram_user_id INTEGER NOT NULL,
-                    vacancy_id TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    personal_note TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY (telegram_user_id, vacancy_id),
-                    FOREIGN KEY (vacancy_id) REFERENCES vacancies(vacancy_id)
-                );
-                CREATE TABLE IF NOT EXISTS vacancy_reports (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    telegram_user_id INTEGER NOT NULL,
-                    vacancy_id TEXT NOT NULL,
-                    reason TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY (vacancy_id) REFERENCES vacancies(vacancy_id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_actions_user_status
-                    ON user_vacancy_actions (telegram_user_id, status, updated_at);
-                CREATE INDEX IF NOT EXISTS idx_reports_vacancy
-                    ON vacancy_reports (vacancy_id, created_at);
-                CREATE TABLE IF NOT EXISTS candidate_browser_sessions (
-                    token TEXT PRIMARY KEY,
-                    telegram_user_id INTEGER NOT NULL,
-                    bucket TEXT NOT NULL,
-                    position INTEGER NOT NULL DEFAULT 0,
-                    chat_id INTEGER,
-                    message_id INTEGER,
-                    vacancy_ids_json TEXT NOT NULL DEFAULT '[]',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_browser_sessions_user
-                    ON candidate_browser_sessions (telegram_user_id, updated_at);
                 ''')
             self._add_column_if_missing(
                 connection,
@@ -136,12 +92,401 @@ class CandidateStore:
             self._add_column_if_missing(
                 connection, 'vacancies', 'channel_message_id', 'INTEGER'
             )
+            connection.executescript('''
+                CREATE TABLE IF NOT EXISTS user_saved_vacancies (
+                    telegram_user_id INTEGER NOT NULL,
+                    vacancy_id TEXT NOT NULL,
+                    saved_at TEXT NOT NULL,
+                    PRIMARY KEY (telegram_user_id, vacancy_id),
+                    FOREIGN KEY (vacancy_id) REFERENCES vacancies(vacancy_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_saved_user_time
+                    ON user_saved_vacancies (telegram_user_id, saved_at DESC);
+                CREATE TABLE IF NOT EXISTS candidate_profiles (
+                    profile_id TEXT PRIMARY KEY,
+                    telegram_user_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    direction_id TEXT NOT NULL,
+                    specialization_id TEXT NOT NULL,
+                    role_id TEXT NOT NULL,
+                    preferences_json TEXT NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    current_version INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_profiles_user
+                    ON candidate_profiles (telegram_user_id, created_at);
+                CREATE TABLE IF NOT EXISTS candidate_profile_versions (
+                    profile_id TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    snapshot_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (profile_id, version),
+                    FOREIGN KEY (profile_id) REFERENCES candidate_profiles(profile_id)
+                        ON DELETE CASCADE
+                );
+            ''')
+            connection.execute("""CREATE TABLE IF NOT EXISTS candidate_profile_drafts (
+                telegram_user_id INTEGER PRIMARY KEY,
+                draft_json TEXT NOT NULL
+            )""")
             self._add_column_if_missing(
-                connection,
-                'candidate_browser_sessions',
-                'vacancy_ids_json',
-                "TEXT NOT NULL DEFAULT '[]'",
+                connection, 'vacancies', 'go_visible', 'INTEGER NOT NULL DEFAULT 1'
             )
+            # Additive migration: archive saved actions and preserve legacy tables.
+            tables = {
+                row['name']
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            if 'user_vacancy_actions' in tables:
+                connection.execute('''
+                    INSERT OR IGNORE INTO user_saved_vacancies
+                        (telegram_user_id, vacancy_id, saved_at)
+                    SELECT a.telegram_user_id, a.vacancy_id, a.updated_at
+                    FROM user_vacancy_actions a
+                    JOIN vacancies v ON v.vacancy_id = a.vacancy_id
+                    WHERE a.status='saved'
+                ''')
+            connection.execute('PRAGMA user_version = 3')
+
+    def _profile_from_row(self, row: sqlite3.Row) -> CandidateProfile:
+        return CandidateProfile(
+            row['profile_id'],
+            row['telegram_user_id'],
+            row['name'],
+            row['direction_id'],
+            row['specialization_id'],
+            row['role_id'],
+            {'delivery_mode': 'manual', **json.loads(row['preferences_json'])},
+            bool(row['is_active']),
+            row['current_version'],
+        )
+
+    @staticmethod
+    def _validate_preferences(preferences: dict | None) -> dict:
+        values = dict(preferences or {})
+        list_fields = {
+            'stacks',
+            'seniority',
+            'formats',
+            'geography',
+            'vacancy_languages',
+            'required_skills',
+            'desired_skills',
+            'excluded_skills',
+        }
+        unknown = (
+            set(values)
+            - list_fields
+            - {'timezone', 'delivery_mode', 'premium_template_id'}
+        )
+        if unknown:
+            raise ValueError(f'Unsupported profile fields: {sorted(unknown)}')
+        for field in list_fields:
+            value = values.get(field, [])
+            if not isinstance(value, list) or any(
+                not isinstance(x, str) or not x.strip() for x in value
+            ):
+                raise ValueError(f'{field} must be a list of non-empty strings')
+            values[field] = list(dict.fromkeys(x.strip() for x in value))
+        timezone_name = values.get('timezone', 'Europe/Moscow')
+        try:
+            ZoneInfo(timezone_name)
+        except (ZoneInfoNotFoundError, TypeError, ValueError):
+            raise ValueError('timezone must be a valid IANA timezone') from None
+        mode = values.get('delivery_mode', 'manual')
+        if mode not in {'manual', 'immediate', 'hourly'}:
+            raise ValueError('Invalid delivery mode')
+        values['delivery_mode'] = mode
+        template = values.get('premium_template_id')
+        if template is not None and not isinstance(template, str):
+            raise ValueError('Invalid Premium template ID')
+        values['timezone'] = timezone_name
+        return values
+
+    def create_profile(
+        self,
+        telegram_user_id: int,
+        *,
+        name: str,
+        direction_id: str,
+        specialization_id: str,
+        role_id: str,
+        preferences: dict | None = None,
+        is_active: bool = True,
+        _connection: sqlite3.Connection | None = None,
+    ) -> CandidateProfile:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError('Profile name must not be empty')
+        if not isinstance(is_active, bool):
+            raise ValueError('is_active must be a boolean')
+        preferences = self._validate_preferences(preferences)
+        validate_profile_path(
+            direction_id,
+            specialization_id,
+            role_id,
+            preferences['stacks'],
+        )
+        self._clear_invalid_template(role_id, preferences)
+        name = name.strip()
+        profile_id, now = uuid.uuid4().hex, utc_now()
+        snapshot = {
+            'name': name,
+            'direction_id': direction_id,
+            'specialization_id': specialization_id,
+            'role_id': role_id,
+            'preferences': preferences,
+            'is_active': bool(is_active),
+            'catalog_version': CATALOG_VERSION,
+        }
+        with (
+            nullcontext(_connection) if _connection is not None else self._connect()
+        ) as connection:
+            connection.execute(
+                '''INSERT INTO candidate_profiles VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)''',
+                (
+                    profile_id,
+                    telegram_user_id,
+                    name,
+                    direction_id,
+                    specialization_id,
+                    role_id,
+                    json.dumps(preferences, ensure_ascii=False),
+                    int(is_active),
+                    now,
+                    now,
+                ),
+            )
+            connection.execute(
+                'INSERT INTO candidate_profile_versions VALUES (?, 1, ?, ?)',
+                (profile_id, json.dumps(snapshot, ensure_ascii=False), now),
+            )
+            row = connection.execute(
+                'SELECT * FROM candidate_profiles WHERE profile_id=?', (profile_id,)
+            ).fetchone()
+        return self._profile_from_row(row)
+
+    def update_profile(
+        self,
+        telegram_user_id: int,
+        profile_id: str,
+        *,
+        expected_version: int | None = None,
+        _connection: sqlite3.Connection | None = None,
+        **changes,
+    ) -> CandidateProfile | None:
+        allowed = {
+            'name',
+            'direction_id',
+            'specialization_id',
+            'role_id',
+            'preferences',
+            'is_active',
+        }
+        if set(changes) - allowed:
+            raise ValueError(
+                f'Unsupported profile fields: {sorted(set(changes) - allowed)}'
+            )
+        with (
+            nullcontext(_connection) if _connection is not None else self._connect()
+        ) as connection:
+            if _connection is None:
+                connection.execute('BEGIN IMMEDIATE')
+            row = connection.execute(
+                'SELECT * FROM candidate_profiles WHERE profile_id=? AND telegram_user_id=?',
+                (profile_id, telegram_user_id),
+            ).fetchone()
+            if row is None:
+                return None
+            current = self._profile_from_row(row)
+            if expected_version is not None and current.version != expected_version:
+                return None
+            values = {
+                'name': current.name,
+                'direction_id': current.direction_id,
+                'specialization_id': current.specialization_id,
+                'role_id': current.role_id,
+                'preferences': current.preferences,
+                'is_active': current.is_active,
+            }
+            values.update(changes)
+            if not isinstance(values['name'], str) or not values['name'].strip():
+                raise ValueError('Profile name must not be empty')
+            if not isinstance(values['is_active'], bool):
+                raise ValueError('is_active must be a boolean')
+            values['name'] = values['name'].strip()
+            values['preferences'] = self._validate_preferences(values['preferences'])
+            validate_profile_path(
+                values['direction_id'],
+                values['specialization_id'],
+                values['role_id'],
+                values['preferences'].get('stacks', []),
+            )
+            self._clear_invalid_template(values['role_id'], values['preferences'])
+            version, now = current.version + 1, utc_now()
+            snapshot = {**values, 'catalog_version': CATALOG_VERSION}
+            connection.execute(
+                '''UPDATE candidate_profiles SET name=?, direction_id=?,
+                specialization_id=?, role_id=?, preferences_json=?, is_active=?,
+                current_version=?, updated_at=? WHERE profile_id=? AND telegram_user_id=?''',
+                (
+                    values['name'],
+                    values['direction_id'],
+                    values['specialization_id'],
+                    values['role_id'],
+                    json.dumps(values['preferences'], ensure_ascii=False),
+                    int(values['is_active']),
+                    version,
+                    now,
+                    profile_id,
+                    telegram_user_id,
+                ),
+            )
+            connection.execute(
+                'INSERT INTO candidate_profile_versions VALUES (?, ?, ?, ?)',
+                (profile_id, version, json.dumps(snapshot, ensure_ascii=False), now),
+            )
+            return self._profile_from_row(
+                connection.execute(
+                    'SELECT * FROM candidate_profiles WHERE profile_id=?', (profile_id,)
+                ).fetchone()
+            )
+
+    @staticmethod
+    def _clear_invalid_template(role_id: str, preferences: dict) -> None:
+        from tg_vacancy_bot.premium_search.templates import list_templates
+
+        if preferences.get('premium_template_id') not in {
+            t.id
+            for t in list_templates({'role_id': role_id, 'preferences': preferences})
+        }:
+            preferences.pop('premium_template_id', None)
+
+    def get_profile(
+        self, telegram_user_id: int, profile_id: str
+    ) -> CandidateProfile | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                'SELECT * FROM candidate_profiles WHERE telegram_user_id=? AND profile_id=?',
+                (telegram_user_id, profile_id),
+            ).fetchone()
+        return self._profile_from_row(row) if row else None
+
+    def get_profile_draft(self, telegram_user_id: int) -> dict | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                'SELECT draft_json FROM candidate_profile_drafts WHERE telegram_user_id=?',
+                (telegram_user_id,),
+            ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def put_profile_draft(
+        self, telegram_user_id: int, draft: dict, expected_revision: int | None = None
+    ) -> bool:
+        """Persist a draft with compare-and-swap protection against repeated actions."""
+        with self._connect() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            row = connection.execute(
+                'SELECT draft_json FROM candidate_profile_drafts WHERE telegram_user_id=?',
+                (telegram_user_id,),
+            ).fetchone()
+            if expected_revision is not None and (
+                row is None
+                or json.loads(row[0])['revision'] != expected_revision
+                or json.loads(row[0])['token'] != draft['token']
+            ):
+                return False
+            if expected_revision is None and row is not None:
+                return False
+            connection.execute(
+                'INSERT OR REPLACE INTO candidate_profile_drafts VALUES (?, ?)',
+                (telegram_user_id, json.dumps(draft, ensure_ascii=False)),
+            )
+        return True
+
+    def finish_profile_draft(
+        self, telegram_user_id: int, token: str, revision: int, *, save: bool
+    ) -> CandidateProfile | bool | None:
+        """Save one version and remove its draft in the same transaction, or cancel."""
+        with self._connect() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            row = connection.execute(
+                'SELECT draft_json FROM candidate_profile_drafts WHERE telegram_user_id=?',
+                (telegram_user_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            draft = json.loads(row[0])
+            if draft['token'] != token or draft['revision'] != revision:
+                return None
+            result = True
+            if save:
+                if draft['step'] != 'preview':
+                    return None
+                values = draft['values']
+                if draft.get('profile_id'):
+                    result = self.update_profile(
+                        telegram_user_id,
+                        draft['profile_id'],
+                        expected_version=draft['profile_version'],
+                        _connection=connection,
+                        **values,
+                    )
+                    if result is None:
+                        return None
+                else:
+                    result = self.create_profile(
+                        telegram_user_id, _connection=connection, **values
+                    )
+            connection.execute(
+                'DELETE FROM candidate_profile_drafts WHERE telegram_user_id=?',
+                (telegram_user_id,),
+            )
+        return result
+
+    def list_profiles(self, telegram_user_id: int) -> list[CandidateProfile]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                'SELECT * FROM candidate_profiles WHERE telegram_user_id=? ORDER BY created_at',
+                (telegram_user_id,),
+            ).fetchall()
+        return [self._profile_from_row(row) for row in rows]
+
+    def get_profile_versions(
+        self, telegram_user_id: int, profile_id: str
+    ) -> list[dict]:
+        with self._connect() as connection:
+            owned = connection.execute(
+                'SELECT 1 FROM candidate_profiles WHERE profile_id=? AND telegram_user_id=?',
+                (profile_id, telegram_user_id),
+            ).fetchone()
+            if not owned:
+                return []
+            rows = connection.execute(
+                'SELECT version, snapshot_json, created_at FROM candidate_profile_versions WHERE profile_id=? ORDER BY version',
+                (profile_id,),
+            ).fetchall()
+        return [
+            {
+                'version': row['version'],
+                'snapshot': json.loads(row['snapshot_json']),
+                'created_at': row['created_at'],
+            }
+            for row in rows
+        ]
+
+    def delete_profile(self, telegram_user_id: int, profile_id: str) -> bool:
+        with self._connect() as connection:
+            connection.execute('PRAGMA foreign_keys=ON')
+            result = connection.execute(
+                'DELETE FROM candidate_profiles WHERE profile_id=? AND telegram_user_id=?',
+                (profile_id, telegram_user_id),
+            )
+        return result.rowcount == 1
 
     @staticmethod
     def _add_column_if_missing(
@@ -166,8 +511,10 @@ class CandidateStore:
         post_link: str,
         apply_link: str | None,
         published_at: str | None,
+        go_visible: bool = True,
+        update_existing: bool = True,
     ) -> CandidateVacancy:
-        """Upserts a shared-channel vacancy without touching any personal action."""
+        """Register a card; private archives can atomically preserve existing fields."""
         now = utc_now()
         callback_key = callback_key_for(vacancy_id)
         with self._connect() as connection:
@@ -175,13 +522,16 @@ class CandidateStore:
                 '''
                 INSERT INTO vacancies (
                     vacancy_id, callback_key, title, company, summary, post_link,
-                    apply_link, published_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    apply_link, published_at, created_at, updated_at, go_visible
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vacancy_id) DO UPDATE SET
                     title=excluded.title, company=excluded.company,
                     summary=excluded.summary, post_link=excluded.post_link,
-                    apply_link=excluded.apply_link, published_at=excluded.published_at,
+                    apply_link=excluded.apply_link,
+                    published_at=COALESCE(excluded.published_at,vacancies.published_at),
+                    go_visible=MAX(vacancies.go_visible,excluded.go_visible),
                     updated_at=excluded.updated_at
+                WHERE ?
                 ''',
                 (
                     vacancy_id,
@@ -194,18 +544,15 @@ class CandidateStore:
                     published_at,
                     now,
                     now,
+                    int(go_visible),
+                    int(update_existing),
                 ),
             )
-        return CandidateVacancy(
-            vacancy_id=vacancy_id,
-            callback_key=callback_key,
-            title=title,
-            company=company,
-            summary=summary,
-            post_link=post_link,
-            apply_link=apply_link,
-            published_at=published_at,
-        )
+        with self._connect() as connection:
+            row = connection.execute(
+                'SELECT * FROM vacancies WHERE vacancy_id=?', (vacancy_id,)
+            ).fetchone()
+        return self._vacancy_from_row(row)
 
     def channel_delivery_state(self, vacancy_id: str) -> str | None:
         with self._connect() as connection:
@@ -250,47 +597,6 @@ class CandidateStore:
                 (utc_now(), vacancy_id),
             )
 
-    def set_status(
-        self, telegram_user_id: int, callback_key: str, status: str
-    ) -> CandidateVacancy | None:
-        """Sets one user's status while leaving the shared channel message intact."""
-        if status not in STATUSES:
-            raise ValueError(f'Unsupported vacancy status: {status}')
-        vacancy = self.get_vacancy(callback_key)
-        if vacancy is None:
-            return None
-        now = utc_now()
-        with self._connect() as connection:
-            connection.execute(
-                '''
-                INSERT INTO user_vacancy_actions (
-                    telegram_user_id, vacancy_id, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(telegram_user_id, vacancy_id) DO UPDATE SET
-                    status=excluded.status, updated_at=excluded.updated_at
-                ''',
-                (telegram_user_id, vacancy.vacancy_id, status, now, now),
-            )
-        return CandidateVacancy(**{**vacancy.__dict__, 'status': status})
-
-    def add_report(self, telegram_user_id: int, callback_key: str, reason: str) -> bool:
-        """Stores a private moderation signal; it is never broadcast to candidates."""
-        if reason not in REPORT_REASONS:
-            raise ValueError(f'Unsupported report reason: {reason}')
-        vacancy = self.get_vacancy(callback_key)
-        if vacancy is None:
-            return False
-        with self._connect() as connection:
-            connection.execute(
-                '''
-                INSERT INTO vacancy_reports (
-                    telegram_user_id, vacancy_id, reason, created_at
-                ) VALUES (?, ?, ?, ?)
-                ''',
-                (telegram_user_id, vacancy.vacancy_id, reason, utc_now()),
-            )
-        return True
-
     def get_vacancy(self, callback_key: str) -> CandidateVacancy | None:
         with self._connect() as connection:
             row = connection.execute(
@@ -298,131 +604,35 @@ class CandidateStore:
             ).fetchone()
         return self._vacancy_from_row(row) if row else None
 
-    def list_for_user(
-        self, telegram_user_id: int, bucket: str, limit: int | None = None
-    ) -> list[CandidateVacancy]:
-        """Lists a beta user's private view, including unclaimed shared vacancies."""
-        filters = {
-            'new': "(a.status IS NULL OR a.status = 'new')",
-            'saved': "a.status = 'saved'",
-            'applications': "a.status IN ('applied', 'replied', 'interview', 'offer', 'rejected')",
-            'hidden': "a.status = 'hidden'",
-        }
-        if bucket not in filters:
-            raise ValueError(f'Unsupported vacancy bucket: {bucket}')
-        order_by = (
-            'COALESCE(v.published_at, v.created_at) DESC'
-            if bucket == 'new'
-            else 'a.updated_at DESC'
-        )
-        limit_clause = 'LIMIT ?' if limit is not None else ''
-        parameters: tuple[int, ...] = (
-            (telegram_user_id, limit) if limit is not None else (telegram_user_id,)
-        )
-        with self._connect() as connection:
-            rows = connection.execute(
-                f'''
-                SELECT v.*, COALESCE(a.status, 'new') AS status
-                FROM vacancies v
-                LEFT JOIN user_vacancy_actions a
-                    ON a.vacancy_id = v.vacancy_id AND a.telegram_user_id = ?
-                WHERE {filters[bucket]}
-                ORDER BY {order_by}
-                {limit_clause}
-                ''',
-                parameters,
-            ).fetchall()
-        return [self._vacancy_from_row(row) for row in rows]
-
-    def create_browser_session(
-        self,
-        telegram_user_id: int,
-        bucket: str,
-        vacancies: list[CandidateVacancy],
-    ) -> BrowserSession:
-        """Creates opaque state; callback payloads never expose vacancy/user IDs."""
-        if bucket not in {'new', 'saved', 'applications', 'hidden'}:
-            raise ValueError(f'Unsupported vacancy bucket: {bucket}')
-        token = secrets.token_hex(8)
-        now = utc_now()
+    def save_vacancy(self, telegram_user_id: int, callback_key: str) -> bool:
+        vacancy = self.get_vacancy(callback_key)
+        if vacancy is None:
+            return False
         with self._connect() as connection:
             connection.execute(
-                '''
-                INSERT INTO candidate_browser_sessions (
-                    token, telegram_user_id, bucket, position, created_at, updated_at
-                    , vacancy_ids_json
-                ) VALUES (?, ?, ?, 0, ?, ?, ?)
-                ''',
-                (
-                    token,
-                    telegram_user_id,
-                    bucket,
-                    now,
-                    now,
-                    json.dumps([item.vacancy_id for item in vacancies]),
-                ),
+                '''INSERT OR IGNORE INTO user_saved_vacancies
+                (telegram_user_id, vacancy_id, saved_at) VALUES (?, ?, ?)''',
+                (telegram_user_id, vacancy.vacancy_id, utc_now()),
             )
-        return BrowserSession(
-            token,
-            telegram_user_id,
-            bucket,
-            0,
-            None,
-            None,
-            tuple(item.vacancy_id for item in vacancies),
-        )
+        return True
 
-    def attach_browser_message(
-        self, token: str, telegram_user_id: int, chat_id: int, message_id: int
-    ) -> bool:
+    def list_for_user(
+        self, telegram_user_id: int, bucket: str
+    ) -> list[CandidateVacancy]:
+        if bucket not in {'new', 'saved'}:
+            raise ValueError(f'Unsupported vacancy bucket: {bucket}')
+        if bucket == 'new':
+            query = '''SELECT v.* FROM vacancies v
+                WHERE v.go_visible=1 AND NOT EXISTS (SELECT 1 FROM user_saved_vacancies s
+                    WHERE s.vacancy_id=v.vacancy_id AND s.telegram_user_id=?)
+                ORDER BY COALESCE(v.published_at, v.created_at) DESC'''
+        else:
+            query = '''SELECT v.* FROM vacancies v
+                JOIN user_saved_vacancies s ON s.vacancy_id=v.vacancy_id
+                WHERE s.telegram_user_id=? ORDER BY s.saved_at DESC'''
         with self._connect() as connection:
-            result = connection.execute(
-                '''
-                UPDATE candidate_browser_sessions
-                SET chat_id = ?, message_id = ?, updated_at = ?
-                WHERE token = ? AND telegram_user_id = ?
-                ''',
-                (chat_id, message_id, utc_now(), token, telegram_user_id),
-            )
-        return result.rowcount == 1
-
-    def get_browser_session(
-        self, token: str, telegram_user_id: int
-    ) -> BrowserSession | None:
-        with self._connect() as connection:
-            row = connection.execute(
-                '''
-                SELECT token, telegram_user_id, bucket, position, chat_id, message_id,
-                       vacancy_ids_json
-                FROM candidate_browser_sessions
-                WHERE token = ? AND telegram_user_id = ?
-                ''',
-                (token, telegram_user_id),
-            ).fetchone()
-        if row is None:
-            return None
-        return BrowserSession(
-            row['token'],
-            row['telegram_user_id'],
-            row['bucket'],
-            row['position'],
-            row['chat_id'],
-            row['message_id'],
-            tuple(json.loads(row['vacancy_ids_json'])),
-        )
-
-    def set_browser_position(
-        self, token: str, telegram_user_id: int, position: int
-    ) -> bool:
-        with self._connect() as connection:
-            result = connection.execute(
-                '''
-                UPDATE candidate_browser_sessions SET position = ?, updated_at = ?
-                WHERE token = ? AND telegram_user_id = ?
-                ''',
-                (max(0, position), utc_now(), token, telegram_user_id),
-            )
-        return result.rowcount == 1
+            rows = connection.execute(query, (telegram_user_id,)).fetchall()
+        return [self._vacancy_from_row(row) for row in rows]
 
     @staticmethod
     def _vacancy_from_row(row: sqlite3.Row) -> CandidateVacancy:
@@ -435,5 +645,4 @@ class CandidateStore:
             post_link=row['post_link'],
             apply_link=row['apply_link'],
             published_at=row['published_at'],
-            status=row['status'] if 'status' in row.keys() else 'new',
         )

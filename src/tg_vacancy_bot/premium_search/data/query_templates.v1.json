@@ -1,0 +1,2285 @@
+{
+  "version": 1,
+  "catalog_version": 1,
+  "templates": [
+    {
+      "id": "role:backend_developer",
+      "kind": "role",
+      "role_id": "backend_developer",
+      "label": "Backend Developer",
+      "main": "\"backend developer\" вакансии",
+      "ru": "\"бэкенд-разработчик\" вакансии",
+      "en": "\"backend developer\" jobs",
+      "synonyms": [
+        "backend developer",
+        "бэкенд-разработчик",
+        "server developer"
+      ]
+    },
+    {
+      "id": "stack:backend_developer:go",
+      "kind": "stack",
+      "role_id": "backend_developer",
+      "stack_id": "go",
+      "label": "Backend Developer · Go",
+      "main": "\"backend developer\" Go вакансии",
+      "ru": "\"бэкенд-разработчик\" Go вакансии",
+      "en": "\"backend developer\" Go jobs",
+      "synonyms": [
+        "backend developer",
+        "бэкенд-разработчик",
+        "server developer",
+        "go",
+        "Go"
+      ]
+    },
+    {
+      "id": "stack:backend_developer:python",
+      "kind": "stack",
+      "role_id": "backend_developer",
+      "stack_id": "python",
+      "label": "Backend Developer · Python",
+      "main": "\"backend developer\" Python вакансии",
+      "ru": "\"бэкенд-разработчик\" Python вакансии",
+      "en": "\"backend developer\" Python jobs",
+      "synonyms": [
+        "backend developer",
+        "бэкенд-разработчик",
+        "server developer",
+        "python",
+        "Python"
+      ]
+    },
+    {
+      "id": "stack:backend_developer:java",
+      "kind": "stack",
+      "role_id": "backend_developer",
+      "stack_id": "java",
+      "label": "Backend Developer · Java",
+      "main": "\"backend developer\" Java вакансии",
+      "ru": "\"бэкенд-разработчик\" Java вакансии",
+      "en": "\"backend developer\" Java jobs",
+      "synonyms": [
+        "backend developer",
+        "бэкенд-разработчик",
+        "server developer",
+        "java",
+        "Java"
+      ]
+    },
+    {
+      "id": "stack:backend_developer:kotlin",
+      "kind": "stack",
+      "role_id": "backend_developer",
+      "stack_id": "kotlin",
+      "label": "Backend Developer · Kotlin",
+      "main": "\"backend developer\" Kotlin вакансии",
+      "ru": "\"бэкенд-разработчик\" Kotlin вакансии",
+      "en": "\"backend developer\" Kotlin jobs",
+      "synonyms": [
+        "backend developer",
+        "бэкенд-разработчик",
+        "server developer",
+        "kotlin",
+        "Kotlin"
+      ]
+    },
+    {
+      "id": "stack:backend_developer:csharp",
+      "kind": "stack",
+      "role_id": "backend_developer",
+      "stack_id": "csharp",
+      "label": "Backend Developer · Csharp",
+      "main": "\"backend developer\" Csharp вакансии",
+      "ru": "\"бэкенд-разработчик\" Csharp вакансии",
+      "en": "\"backend developer\" Csharp jobs",
+      "synonyms": [
+        "backend developer",
+        "бэкенд-разработчик",
+        "server developer",
+        "csharp",
+        "Csharp"
+      ]
+    },
+    {
+      "id": "stack:backend_developer:php",
+      "kind": "stack",
+      "role_id": "backend_developer",
+      "stack_id": "php",
+      "label": "Backend Developer · Php",
+      "main": "\"backend developer\" Php вакансии",
+      "ru": "\"бэкенд-разработчик\" Php вакансии",
+      "en": "\"backend developer\" Php jobs",
+      "synonyms": [
+        "backend developer",
+        "бэкенд-разработчик",
+        "server developer",
+        "php",
+        "Php"
+      ]
+    },
+    {
+      "id": "stack:backend_developer:ruby",
+      "kind": "stack",
+      "role_id": "backend_developer",
+      "stack_id": "ruby",
+      "label": "Backend Developer · Ruby",
+      "main": "\"backend developer\" Ruby вакансии",
+      "ru": "\"бэкенд-разработчик\" Ruby вакансии",
+      "en": "\"backend developer\" Ruby jobs",
+      "synonyms": [
+        "backend developer",
+        "бэкенд-разработчик",
+        "server developer",
+        "ruby",
+        "Ruby"
+      ]
+    },
+    {
+      "id": "stack:backend_developer:nodejs",
+      "kind": "stack",
+      "role_id": "backend_developer",
+      "stack_id": "nodejs",
+      "label": "Backend Developer · Nodejs",
+      "main": "\"backend developer\" Nodejs вакансии",
+      "ru": "\"бэкенд-разработчик\" Nodejs вакансии",
+      "en": "\"backend developer\" Nodejs jobs",
+      "synonyms": [
+        "backend developer",
+        "бэкенд-разработчик",
+        "server developer",
+        "nodejs",
+        "Nodejs"
+      ]
+    },
+    {
+      "id": "stack:backend_developer:rust",
+      "kind": "stack",
+      "role_id": "backend_developer",
+      "stack_id": "rust",
+      "label": "Backend Developer · Rust",
+      "main": "\"backend developer\" Rust вакансии",
+      "ru": "\"бэкенд-разработчик\" Rust вакансии",
+      "en": "\"backend developer\" Rust jobs",
+      "synonyms": [
+        "backend developer",
+        "бэкенд-разработчик",
+        "server developer",
+        "rust",
+        "Rust"
+      ]
+    },
+    {
+      "id": "stack:backend_developer:sql",
+      "kind": "stack",
+      "role_id": "backend_developer",
+      "stack_id": "sql",
+      "label": "Backend Developer · Sql",
+      "main": "\"backend developer\" Sql вакансии",
+      "ru": "\"бэкенд-разработчик\" Sql вакансии",
+      "en": "\"backend developer\" Sql jobs",
+      "synonyms": [
+        "backend developer",
+        "бэкенд-разработчик",
+        "server developer",
+        "sql",
+        "Sql"
+      ]
+    },
+    {
+      "id": "role:api_developer",
+      "kind": "role",
+      "role_id": "api_developer",
+      "label": "Api Developer",
+      "main": "\"api developer\" вакансии",
+      "ru": "\"разработчик api\" вакансии",
+      "en": "\"api developer\" jobs",
+      "synonyms": [
+        "api developer",
+        "разработчик api"
+      ]
+    },
+    {
+      "id": "stack:api_developer:go",
+      "kind": "stack",
+      "role_id": "api_developer",
+      "stack_id": "go",
+      "label": "Api Developer · Go",
+      "main": "\"api developer\" Go вакансии",
+      "ru": "\"разработчик api\" Go вакансии",
+      "en": "\"api developer\" Go jobs",
+      "synonyms": [
+        "api developer",
+        "разработчик api",
+        "go",
+        "Go"
+      ]
+    },
+    {
+      "id": "stack:api_developer:python",
+      "kind": "stack",
+      "role_id": "api_developer",
+      "stack_id": "python",
+      "label": "Api Developer · Python",
+      "main": "\"api developer\" Python вакансии",
+      "ru": "\"разработчик api\" Python вакансии",
+      "en": "\"api developer\" Python jobs",
+      "synonyms": [
+        "api developer",
+        "разработчик api",
+        "python",
+        "Python"
+      ]
+    },
+    {
+      "id": "stack:api_developer:java",
+      "kind": "stack",
+      "role_id": "api_developer",
+      "stack_id": "java",
+      "label": "Api Developer · Java",
+      "main": "\"api developer\" Java вакансии",
+      "ru": "\"разработчик api\" Java вакансии",
+      "en": "\"api developer\" Java jobs",
+      "synonyms": [
+        "api developer",
+        "разработчик api",
+        "java",
+        "Java"
+      ]
+    },
+    {
+      "id": "stack:api_developer:nodejs",
+      "kind": "stack",
+      "role_id": "api_developer",
+      "stack_id": "nodejs",
+      "label": "Api Developer · Nodejs",
+      "main": "\"api developer\" Nodejs вакансии",
+      "ru": "\"разработчик api\" Nodejs вакансии",
+      "en": "\"api developer\" Nodejs jobs",
+      "synonyms": [
+        "api developer",
+        "разработчик api",
+        "nodejs",
+        "Nodejs"
+      ]
+    },
+    {
+      "id": "stack:api_developer:rust",
+      "kind": "stack",
+      "role_id": "api_developer",
+      "stack_id": "rust",
+      "label": "Api Developer · Rust",
+      "main": "\"api developer\" Rust вакансии",
+      "ru": "\"разработчик api\" Rust вакансии",
+      "en": "\"api developer\" Rust jobs",
+      "synonyms": [
+        "api developer",
+        "разработчик api",
+        "rust",
+        "Rust"
+      ]
+    },
+    {
+      "id": "role:frontend_developer",
+      "kind": "role",
+      "role_id": "frontend_developer",
+      "label": "Frontend Developer",
+      "main": "\"frontend developer\" вакансии",
+      "ru": "\"фронтенд-разработчик\" вакансии",
+      "en": "\"frontend developer\" jobs",
+      "synonyms": [
+        "frontend developer",
+        "фронтенд-разработчик",
+        "web developer"
+      ]
+    },
+    {
+      "id": "stack:frontend_developer:javascript",
+      "kind": "stack",
+      "role_id": "frontend_developer",
+      "stack_id": "javascript",
+      "label": "Frontend Developer · Javascript",
+      "main": "\"frontend developer\" Javascript вакансии",
+      "ru": "\"фронтенд-разработчик\" Javascript вакансии",
+      "en": "\"frontend developer\" Javascript jobs",
+      "synonyms": [
+        "frontend developer",
+        "фронтенд-разработчик",
+        "web developer",
+        "javascript",
+        "Javascript"
+      ]
+    },
+    {
+      "id": "stack:frontend_developer:typescript",
+      "kind": "stack",
+      "role_id": "frontend_developer",
+      "stack_id": "typescript",
+      "label": "Frontend Developer · Typescript",
+      "main": "\"frontend developer\" Typescript вакансии",
+      "ru": "\"фронтенд-разработчик\" Typescript вакансии",
+      "en": "\"frontend developer\" Typescript jobs",
+      "synonyms": [
+        "frontend developer",
+        "фронтенд-разработчик",
+        "web developer",
+        "typescript",
+        "Typescript"
+      ]
+    },
+    {
+      "id": "stack:frontend_developer:react",
+      "kind": "stack",
+      "role_id": "frontend_developer",
+      "stack_id": "react",
+      "label": "Frontend Developer · React",
+      "main": "\"frontend developer\" React вакансии",
+      "ru": "\"фронтенд-разработчик\" React вакансии",
+      "en": "\"frontend developer\" React jobs",
+      "synonyms": [
+        "frontend developer",
+        "фронтенд-разработчик",
+        "web developer",
+        "react",
+        "React"
+      ]
+    },
+    {
+      "id": "stack:frontend_developer:vue",
+      "kind": "stack",
+      "role_id": "frontend_developer",
+      "stack_id": "vue",
+      "label": "Frontend Developer · Vue",
+      "main": "\"frontend developer\" Vue вакансии",
+      "ru": "\"фронтенд-разработчик\" Vue вакансии",
+      "en": "\"frontend developer\" Vue jobs",
+      "synonyms": [
+        "frontend developer",
+        "фронтенд-разработчик",
+        "web developer",
+        "vue",
+        "Vue"
+      ]
+    },
+    {
+      "id": "stack:frontend_developer:angular",
+      "kind": "stack",
+      "role_id": "frontend_developer",
+      "stack_id": "angular",
+      "label": "Frontend Developer · Angular",
+      "main": "\"frontend developer\" Angular вакансии",
+      "ru": "\"фронтенд-разработчик\" Angular вакансии",
+      "en": "\"frontend developer\" Angular jobs",
+      "synonyms": [
+        "frontend developer",
+        "фронтенд-разработчик",
+        "web developer",
+        "angular",
+        "Angular"
+      ]
+    },
+    {
+      "id": "role:mobile_developer",
+      "kind": "role",
+      "role_id": "mobile_developer",
+      "label": "Mobile Developer",
+      "main": "\"mobile developer\" вакансии",
+      "ru": "\"мобильный разработчик\" вакансии",
+      "en": "\"mobile developer\" jobs",
+      "synonyms": [
+        "mobile developer",
+        "мобильный разработчик"
+      ]
+    },
+    {
+      "id": "stack:mobile_developer:swift",
+      "kind": "stack",
+      "role_id": "mobile_developer",
+      "stack_id": "swift",
+      "label": "Mobile Developer · Swift",
+      "main": "\"mobile developer\" Swift вакансии",
+      "ru": "\"мобильный разработчик\" Swift вакансии",
+      "en": "\"mobile developer\" Swift jobs",
+      "synonyms": [
+        "mobile developer",
+        "мобильный разработчик",
+        "swift",
+        "Swift"
+      ]
+    },
+    {
+      "id": "stack:mobile_developer:kotlin",
+      "kind": "stack",
+      "role_id": "mobile_developer",
+      "stack_id": "kotlin",
+      "label": "Mobile Developer · Kotlin",
+      "main": "\"mobile developer\" Kotlin вакансии",
+      "ru": "\"мобильный разработчик\" Kotlin вакансии",
+      "en": "\"mobile developer\" Kotlin jobs",
+      "synonyms": [
+        "mobile developer",
+        "мобильный разработчик",
+        "kotlin",
+        "Kotlin"
+      ]
+    },
+    {
+      "id": "stack:mobile_developer:flutter",
+      "kind": "stack",
+      "role_id": "mobile_developer",
+      "stack_id": "flutter",
+      "label": "Mobile Developer · Flutter",
+      "main": "\"mobile developer\" Flutter вакансии",
+      "ru": "\"мобильный разработчик\" Flutter вакансии",
+      "en": "\"mobile developer\" Flutter jobs",
+      "synonyms": [
+        "mobile developer",
+        "мобильный разработчик",
+        "flutter",
+        "Flutter"
+      ]
+    },
+    {
+      "id": "stack:mobile_developer:react_native",
+      "kind": "stack",
+      "role_id": "mobile_developer",
+      "stack_id": "react_native",
+      "label": "Mobile Developer · React Native",
+      "main": "\"mobile developer\" React Native вакансии",
+      "ru": "\"мобильный разработчик\" React Native вакансии",
+      "en": "\"mobile developer\" React Native jobs",
+      "synonyms": [
+        "mobile developer",
+        "мобильный разработчик",
+        "react_native",
+        "React Native"
+      ]
+    },
+    {
+      "id": "role:embedded_developer",
+      "kind": "role",
+      "role_id": "embedded_developer",
+      "label": "Embedded Developer",
+      "main": "\"embedded developer\" вакансии",
+      "ru": "\"разработчик встраиваемых систем\" вакансии",
+      "en": "\"embedded developer\" jobs",
+      "synonyms": [
+        "embedded developer",
+        "embedded engineer",
+        "разработчик встраиваемых систем"
+      ]
+    },
+    {
+      "id": "stack:embedded_developer:c",
+      "kind": "stack",
+      "role_id": "embedded_developer",
+      "stack_id": "c",
+      "label": "Embedded Developer · C",
+      "main": "\"embedded developer\" C вакансии",
+      "ru": "\"разработчик встраиваемых систем\" C вакансии",
+      "en": "\"embedded developer\" C jobs",
+      "synonyms": [
+        "embedded developer",
+        "embedded engineer",
+        "разработчик встраиваемых систем",
+        "c",
+        "C"
+      ]
+    },
+    {
+      "id": "stack:embedded_developer:cpp",
+      "kind": "stack",
+      "role_id": "embedded_developer",
+      "stack_id": "cpp",
+      "label": "Embedded Developer · Cpp",
+      "main": "\"embedded developer\" Cpp вакансии",
+      "ru": "\"разработчик встраиваемых систем\" Cpp вакансии",
+      "en": "\"embedded developer\" Cpp jobs",
+      "synonyms": [
+        "embedded developer",
+        "embedded engineer",
+        "разработчик встраиваемых систем",
+        "cpp",
+        "Cpp"
+      ]
+    },
+    {
+      "id": "stack:embedded_developer:rust",
+      "kind": "stack",
+      "role_id": "embedded_developer",
+      "stack_id": "rust",
+      "label": "Embedded Developer · Rust",
+      "main": "\"embedded developer\" Rust вакансии",
+      "ru": "\"разработчик встраиваемых систем\" Rust вакансии",
+      "en": "\"embedded developer\" Rust jobs",
+      "synonyms": [
+        "embedded developer",
+        "embedded engineer",
+        "разработчик встраиваемых систем",
+        "rust",
+        "Rust"
+      ]
+    },
+    {
+      "id": "stack:embedded_developer:embedded_linux",
+      "kind": "stack",
+      "role_id": "embedded_developer",
+      "stack_id": "embedded_linux",
+      "label": "Embedded Developer · Embedded Linux",
+      "main": "\"embedded developer\" Embedded Linux вакансии",
+      "ru": "\"разработчик встраиваемых систем\" Embedded Linux вакансии",
+      "en": "\"embedded developer\" Embedded Linux jobs",
+      "synonyms": [
+        "embedded developer",
+        "embedded engineer",
+        "разработчик встраиваемых систем",
+        "embedded_linux",
+        "Embedded Linux"
+      ]
+    },
+    {
+      "id": "role:manual_qa_engineer",
+      "kind": "role",
+      "role_id": "manual_qa_engineer",
+      "label": "Manual Qa",
+      "main": "\"manual qa\" вакансии",
+      "ru": "\"тестировщик\" вакансии",
+      "en": "\"manual qa\" jobs",
+      "synonyms": [
+        "manual qa",
+        "тестировщик",
+        "инженер ручного тестирования"
+      ]
+    },
+    {
+      "id": "stack:manual_qa_engineer:web",
+      "kind": "stack",
+      "role_id": "manual_qa_engineer",
+      "stack_id": "web",
+      "label": "Manual Qa · Web",
+      "main": "\"manual qa\" Web вакансии",
+      "ru": "\"тестировщик\" Web вакансии",
+      "en": "\"manual qa\" Web jobs",
+      "synonyms": [
+        "manual qa",
+        "тестировщик",
+        "инженер ручного тестирования",
+        "web",
+        "Web"
+      ]
+    },
+    {
+      "id": "stack:manual_qa_engineer:mobile",
+      "kind": "stack",
+      "role_id": "manual_qa_engineer",
+      "stack_id": "mobile",
+      "label": "Manual Qa · Mobile",
+      "main": "\"manual qa\" Mobile вакансии",
+      "ru": "\"тестировщик\" Mobile вакансии",
+      "en": "\"manual qa\" Mobile jobs",
+      "synonyms": [
+        "manual qa",
+        "тестировщик",
+        "инженер ручного тестирования",
+        "mobile",
+        "Mobile"
+      ]
+    },
+    {
+      "id": "stack:manual_qa_engineer:api",
+      "kind": "stack",
+      "role_id": "manual_qa_engineer",
+      "stack_id": "api",
+      "label": "Manual Qa · Api",
+      "main": "\"manual qa\" Api вакансии",
+      "ru": "\"тестировщик\" Api вакансии",
+      "en": "\"manual qa\" Api jobs",
+      "synonyms": [
+        "manual qa",
+        "тестировщик",
+        "инженер ручного тестирования",
+        "api",
+        "Api"
+      ]
+    },
+    {
+      "id": "stack:manual_qa_engineer:sql",
+      "kind": "stack",
+      "role_id": "manual_qa_engineer",
+      "stack_id": "sql",
+      "label": "Manual Qa · Sql",
+      "main": "\"manual qa\" Sql вакансии",
+      "ru": "\"тестировщик\" Sql вакансии",
+      "en": "\"manual qa\" Sql jobs",
+      "synonyms": [
+        "manual qa",
+        "тестировщик",
+        "инженер ручного тестирования",
+        "sql",
+        "Sql"
+      ]
+    },
+    {
+      "id": "role:automation_qa_engineer",
+      "kind": "role",
+      "role_id": "automation_qa_engineer",
+      "label": "Automation Qa",
+      "main": "\"automation qa\" вакансии",
+      "ru": "\"автотестировщик\" вакансии",
+      "en": "\"automation qa\" jobs",
+      "synonyms": [
+        "automation qa",
+        "qa automation engineer",
+        "автотестировщик"
+      ]
+    },
+    {
+      "id": "stack:automation_qa_engineer:python",
+      "kind": "stack",
+      "role_id": "automation_qa_engineer",
+      "stack_id": "python",
+      "label": "Automation Qa · Python",
+      "main": "\"automation qa\" Python вакансии",
+      "ru": "\"автотестировщик\" Python вакансии",
+      "en": "\"automation qa\" Python jobs",
+      "synonyms": [
+        "automation qa",
+        "qa automation engineer",
+        "автотестировщик",
+        "python",
+        "Python"
+      ]
+    },
+    {
+      "id": "stack:automation_qa_engineer:java",
+      "kind": "stack",
+      "role_id": "automation_qa_engineer",
+      "stack_id": "java",
+      "label": "Automation Qa · Java",
+      "main": "\"automation qa\" Java вакансии",
+      "ru": "\"автотестировщик\" Java вакансии",
+      "en": "\"automation qa\" Java jobs",
+      "synonyms": [
+        "automation qa",
+        "qa automation engineer",
+        "автотестировщик",
+        "java",
+        "Java"
+      ]
+    },
+    {
+      "id": "stack:automation_qa_engineer:javascript",
+      "kind": "stack",
+      "role_id": "automation_qa_engineer",
+      "stack_id": "javascript",
+      "label": "Automation Qa · Javascript",
+      "main": "\"automation qa\" Javascript вакансии",
+      "ru": "\"автотестировщик\" Javascript вакансии",
+      "en": "\"automation qa\" Javascript jobs",
+      "synonyms": [
+        "automation qa",
+        "qa automation engineer",
+        "автотестировщик",
+        "javascript",
+        "Javascript"
+      ]
+    },
+    {
+      "id": "stack:automation_qa_engineer:typescript",
+      "kind": "stack",
+      "role_id": "automation_qa_engineer",
+      "stack_id": "typescript",
+      "label": "Automation Qa · Typescript",
+      "main": "\"automation qa\" Typescript вакансии",
+      "ru": "\"автотестировщик\" Typescript вакансии",
+      "en": "\"automation qa\" Typescript jobs",
+      "synonyms": [
+        "automation qa",
+        "qa automation engineer",
+        "автотестировщик",
+        "typescript",
+        "Typescript"
+      ]
+    },
+    {
+      "id": "stack:automation_qa_engineer:csharp",
+      "kind": "stack",
+      "role_id": "automation_qa_engineer",
+      "stack_id": "csharp",
+      "label": "Automation Qa · Csharp",
+      "main": "\"automation qa\" Csharp вакансии",
+      "ru": "\"автотестировщик\" Csharp вакансии",
+      "en": "\"automation qa\" Csharp jobs",
+      "synonyms": [
+        "automation qa",
+        "qa automation engineer",
+        "автотестировщик",
+        "csharp",
+        "Csharp"
+      ]
+    },
+    {
+      "id": "stack:automation_qa_engineer:go",
+      "kind": "stack",
+      "role_id": "automation_qa_engineer",
+      "stack_id": "go",
+      "label": "Automation Qa · Go",
+      "main": "\"automation qa\" Go вакансии",
+      "ru": "\"автотестировщик\" Go вакансии",
+      "en": "\"automation qa\" Go jobs",
+      "synonyms": [
+        "automation qa",
+        "qa automation engineer",
+        "автотестировщик",
+        "go",
+        "Go"
+      ]
+    },
+    {
+      "id": "role:data_engineer",
+      "kind": "role",
+      "role_id": "data_engineer",
+      "label": "Data Engineer",
+      "main": "\"data engineer\" вакансии",
+      "ru": "\"инженер данных\" вакансии",
+      "en": "\"data engineer\" jobs",
+      "synonyms": [
+        "data engineer",
+        "инженер данных"
+      ]
+    },
+    {
+      "id": "stack:data_engineer:python",
+      "kind": "stack",
+      "role_id": "data_engineer",
+      "stack_id": "python",
+      "label": "Data Engineer · Python",
+      "main": "\"data engineer\" Python вакансии",
+      "ru": "\"инженер данных\" Python вакансии",
+      "en": "\"data engineer\" Python jobs",
+      "synonyms": [
+        "data engineer",
+        "инженер данных",
+        "python",
+        "Python"
+      ]
+    },
+    {
+      "id": "stack:data_engineer:sql",
+      "kind": "stack",
+      "role_id": "data_engineer",
+      "stack_id": "sql",
+      "label": "Data Engineer · Sql",
+      "main": "\"data engineer\" Sql вакансии",
+      "ru": "\"инженер данных\" Sql вакансии",
+      "en": "\"data engineer\" Sql jobs",
+      "synonyms": [
+        "data engineer",
+        "инженер данных",
+        "sql",
+        "Sql"
+      ]
+    },
+    {
+      "id": "stack:data_engineer:spark",
+      "kind": "stack",
+      "role_id": "data_engineer",
+      "stack_id": "spark",
+      "label": "Data Engineer · Spark",
+      "main": "\"data engineer\" Spark вакансии",
+      "ru": "\"инженер данных\" Spark вакансии",
+      "en": "\"data engineer\" Spark jobs",
+      "synonyms": [
+        "data engineer",
+        "инженер данных",
+        "spark",
+        "Spark"
+      ]
+    },
+    {
+      "id": "stack:data_engineer:kafka",
+      "kind": "stack",
+      "role_id": "data_engineer",
+      "stack_id": "kafka",
+      "label": "Data Engineer · Kafka",
+      "main": "\"data engineer\" Kafka вакансии",
+      "ru": "\"инженер данных\" Kafka вакансии",
+      "en": "\"data engineer\" Kafka jobs",
+      "synonyms": [
+        "data engineer",
+        "инженер данных",
+        "kafka",
+        "Kafka"
+      ]
+    },
+    {
+      "id": "stack:data_engineer:airflow",
+      "kind": "stack",
+      "role_id": "data_engineer",
+      "stack_id": "airflow",
+      "label": "Data Engineer · Airflow",
+      "main": "\"data engineer\" Airflow вакансии",
+      "ru": "\"инженер данных\" Airflow вакансии",
+      "en": "\"data engineer\" Airflow jobs",
+      "synonyms": [
+        "data engineer",
+        "инженер данных",
+        "airflow",
+        "Airflow"
+      ]
+    },
+    {
+      "id": "role:data_scientist",
+      "kind": "role",
+      "role_id": "data_scientist",
+      "label": "Data Scientist",
+      "main": "\"data scientist\" вакансии",
+      "ru": "\"дата-сайентист\" вакансии",
+      "en": "\"data scientist\" jobs",
+      "synonyms": [
+        "data scientist",
+        "дата-сайентист"
+      ]
+    },
+    {
+      "id": "stack:data_scientist:python",
+      "kind": "stack",
+      "role_id": "data_scientist",
+      "stack_id": "python",
+      "label": "Data Scientist · Python",
+      "main": "\"data scientist\" Python вакансии",
+      "ru": "\"дата-сайентист\" Python вакансии",
+      "en": "\"data scientist\" Python jobs",
+      "synonyms": [
+        "data scientist",
+        "дата-сайентист",
+        "python",
+        "Python"
+      ]
+    },
+    {
+      "id": "stack:data_scientist:r",
+      "kind": "stack",
+      "role_id": "data_scientist",
+      "stack_id": "r",
+      "label": "Data Scientist · R",
+      "main": "\"data scientist\" R вакансии",
+      "ru": "\"дата-сайентист\" R вакансии",
+      "en": "\"data scientist\" R jobs",
+      "synonyms": [
+        "data scientist",
+        "дата-сайентист",
+        "r",
+        "R"
+      ]
+    },
+    {
+      "id": "stack:data_scientist:sql",
+      "kind": "stack",
+      "role_id": "data_scientist",
+      "stack_id": "sql",
+      "label": "Data Scientist · Sql",
+      "main": "\"data scientist\" Sql вакансии",
+      "ru": "\"дата-сайентист\" Sql вакансии",
+      "en": "\"data scientist\" Sql jobs",
+      "synonyms": [
+        "data scientist",
+        "дата-сайентист",
+        "sql",
+        "Sql"
+      ]
+    },
+    {
+      "id": "stack:data_scientist:pytorch",
+      "kind": "stack",
+      "role_id": "data_scientist",
+      "stack_id": "pytorch",
+      "label": "Data Scientist · Pytorch",
+      "main": "\"data scientist\" Pytorch вакансии",
+      "ru": "\"дата-сайентист\" Pytorch вакансии",
+      "en": "\"data scientist\" Pytorch jobs",
+      "synonyms": [
+        "data scientist",
+        "дата-сайентист",
+        "pytorch",
+        "Pytorch"
+      ]
+    },
+    {
+      "id": "stack:data_scientist:tensorflow",
+      "kind": "stack",
+      "role_id": "data_scientist",
+      "stack_id": "tensorflow",
+      "label": "Data Scientist · Tensorflow",
+      "main": "\"data scientist\" Tensorflow вакансии",
+      "ru": "\"дата-сайентист\" Tensorflow вакансии",
+      "en": "\"data scientist\" Tensorflow jobs",
+      "synonyms": [
+        "data scientist",
+        "дата-сайентист",
+        "tensorflow",
+        "Tensorflow"
+      ]
+    },
+    {
+      "id": "role:ml_engineer",
+      "kind": "role",
+      "role_id": "ml_engineer",
+      "label": "Ml Engineer",
+      "main": "\"ml engineer\" вакансии",
+      "ru": "\"инженер машинного обучения\" вакансии",
+      "en": "\"ml engineer\" jobs",
+      "synonyms": [
+        "ml engineer",
+        "инженер машинного обучения"
+      ]
+    },
+    {
+      "id": "stack:ml_engineer:python",
+      "kind": "stack",
+      "role_id": "ml_engineer",
+      "stack_id": "python",
+      "label": "Ml Engineer · Python",
+      "main": "\"ml engineer\" Python вакансии",
+      "ru": "\"инженер машинного обучения\" Python вакансии",
+      "en": "\"ml engineer\" Python jobs",
+      "synonyms": [
+        "ml engineer",
+        "инженер машинного обучения",
+        "python",
+        "Python"
+      ]
+    },
+    {
+      "id": "stack:ml_engineer:pytorch",
+      "kind": "stack",
+      "role_id": "ml_engineer",
+      "stack_id": "pytorch",
+      "label": "Ml Engineer · Pytorch",
+      "main": "\"ml engineer\" Pytorch вакансии",
+      "ru": "\"инженер машинного обучения\" Pytorch вакансии",
+      "en": "\"ml engineer\" Pytorch jobs",
+      "synonyms": [
+        "ml engineer",
+        "инженер машинного обучения",
+        "pytorch",
+        "Pytorch"
+      ]
+    },
+    {
+      "id": "stack:ml_engineer:tensorflow",
+      "kind": "stack",
+      "role_id": "ml_engineer",
+      "stack_id": "tensorflow",
+      "label": "Ml Engineer · Tensorflow",
+      "main": "\"ml engineer\" Tensorflow вакансии",
+      "ru": "\"инженер машинного обучения\" Tensorflow вакансии",
+      "en": "\"ml engineer\" Tensorflow jobs",
+      "synonyms": [
+        "ml engineer",
+        "инженер машинного обучения",
+        "tensorflow",
+        "Tensorflow"
+      ]
+    },
+    {
+      "id": "stack:ml_engineer:mlops",
+      "kind": "stack",
+      "role_id": "ml_engineer",
+      "stack_id": "mlops",
+      "label": "Ml Engineer · Mlops",
+      "main": "\"ml engineer\" Mlops вакансии",
+      "ru": "\"инженер машинного обучения\" Mlops вакансии",
+      "en": "\"ml engineer\" Mlops jobs",
+      "synonyms": [
+        "ml engineer",
+        "инженер машинного обучения",
+        "mlops",
+        "Mlops"
+      ]
+    },
+    {
+      "id": "role:product_analyst",
+      "kind": "role",
+      "role_id": "product_analyst",
+      "label": "Product Analyst",
+      "main": "\"product analyst\" вакансии",
+      "ru": "\"продуктовый аналитик\" вакансии",
+      "en": "\"product analyst\" jobs",
+      "synonyms": [
+        "product analyst",
+        "продуктовый аналитик"
+      ]
+    },
+    {
+      "id": "stack:product_analyst:sql",
+      "kind": "stack",
+      "role_id": "product_analyst",
+      "stack_id": "sql",
+      "label": "Product Analyst · Sql",
+      "main": "\"product analyst\" Sql вакансии",
+      "ru": "\"продуктовый аналитик\" Sql вакансии",
+      "en": "\"product analyst\" Sql jobs",
+      "synonyms": [
+        "product analyst",
+        "продуктовый аналитик",
+        "sql",
+        "Sql"
+      ]
+    },
+    {
+      "id": "stack:product_analyst:python",
+      "kind": "stack",
+      "role_id": "product_analyst",
+      "stack_id": "python",
+      "label": "Product Analyst · Python",
+      "main": "\"product analyst\" Python вакансии",
+      "ru": "\"продуктовый аналитик\" Python вакансии",
+      "en": "\"product analyst\" Python jobs",
+      "synonyms": [
+        "product analyst",
+        "продуктовый аналитик",
+        "python",
+        "Python"
+      ]
+    },
+    {
+      "id": "stack:product_analyst:tableau",
+      "kind": "stack",
+      "role_id": "product_analyst",
+      "stack_id": "tableau",
+      "label": "Product Analyst · Tableau",
+      "main": "\"product analyst\" Tableau вакансии",
+      "ru": "\"продуктовый аналитик\" Tableau вакансии",
+      "en": "\"product analyst\" Tableau jobs",
+      "synonyms": [
+        "product analyst",
+        "продуктовый аналитик",
+        "tableau",
+        "Tableau"
+      ]
+    },
+    {
+      "id": "stack:product_analyst:power_bi",
+      "kind": "stack",
+      "role_id": "product_analyst",
+      "stack_id": "power_bi",
+      "label": "Product Analyst · Power Bi",
+      "main": "\"product analyst\" Power Bi вакансии",
+      "ru": "\"продуктовый аналитик\" Power Bi вакансии",
+      "en": "\"product analyst\" Power Bi jobs",
+      "synonyms": [
+        "product analyst",
+        "продуктовый аналитик",
+        "power_bi",
+        "Power Bi"
+      ]
+    },
+    {
+      "id": "stack:product_analyst:metabase",
+      "kind": "stack",
+      "role_id": "product_analyst",
+      "stack_id": "metabase",
+      "label": "Product Analyst · Metabase",
+      "main": "\"product analyst\" Metabase вакансии",
+      "ru": "\"продуктовый аналитик\" Metabase вакансии",
+      "en": "\"product analyst\" Metabase jobs",
+      "synonyms": [
+        "product analyst",
+        "продуктовый аналитик",
+        "metabase",
+        "Metabase"
+      ]
+    },
+    {
+      "id": "role:business_analyst",
+      "kind": "role",
+      "role_id": "business_analyst",
+      "label": "Business Analyst",
+      "main": "\"business analyst\" вакансии",
+      "ru": "\"бизнес-аналитик\" вакансии",
+      "en": "\"business analyst\" jobs",
+      "synonyms": [
+        "business analyst",
+        "бизнес-аналитик",
+        "системный аналитик"
+      ]
+    },
+    {
+      "id": "stack:business_analyst:sql",
+      "kind": "stack",
+      "role_id": "business_analyst",
+      "stack_id": "sql",
+      "label": "Business Analyst · Sql",
+      "main": "\"business analyst\" Sql вакансии",
+      "ru": "\"бизнес-аналитик\" Sql вакансии",
+      "en": "\"business analyst\" Sql jobs",
+      "synonyms": [
+        "business analyst",
+        "бизнес-аналитик",
+        "системный аналитик",
+        "sql",
+        "Sql"
+      ]
+    },
+    {
+      "id": "stack:business_analyst:uml",
+      "kind": "stack",
+      "role_id": "business_analyst",
+      "stack_id": "uml",
+      "label": "Business Analyst · Uml",
+      "main": "\"business analyst\" Uml вакансии",
+      "ru": "\"бизнес-аналитик\" Uml вакансии",
+      "en": "\"business analyst\" Uml jobs",
+      "synonyms": [
+        "business analyst",
+        "бизнес-аналитик",
+        "системный аналитик",
+        "uml",
+        "Uml"
+      ]
+    },
+    {
+      "id": "stack:business_analyst:bpmn",
+      "kind": "stack",
+      "role_id": "business_analyst",
+      "stack_id": "bpmn",
+      "label": "Business Analyst · Bpmn",
+      "main": "\"business analyst\" Bpmn вакансии",
+      "ru": "\"бизнес-аналитик\" Bpmn вакансии",
+      "en": "\"business analyst\" Bpmn jobs",
+      "synonyms": [
+        "business analyst",
+        "бизнес-аналитик",
+        "системный аналитик",
+        "bpmn",
+        "Bpmn"
+      ]
+    },
+    {
+      "id": "stack:business_analyst:api",
+      "kind": "stack",
+      "role_id": "business_analyst",
+      "stack_id": "api",
+      "label": "Business Analyst · Api",
+      "main": "\"business analyst\" Api вакансии",
+      "ru": "\"бизнес-аналитик\" Api вакансии",
+      "en": "\"business analyst\" Api jobs",
+      "synonyms": [
+        "business analyst",
+        "бизнес-аналитик",
+        "системный аналитик",
+        "api",
+        "Api"
+      ]
+    },
+    {
+      "id": "role:product_designer",
+      "kind": "role",
+      "role_id": "product_designer",
+      "label": "Product Designer",
+      "main": "\"product designer\" вакансии",
+      "ru": "\"ux/ui дизайнер\" вакансии",
+      "en": "\"product designer\" jobs",
+      "synonyms": [
+        "product designer",
+        "ux/ui дизайнер",
+        "продуктовый дизайнер"
+      ]
+    },
+    {
+      "id": "stack:product_designer:figma",
+      "kind": "stack",
+      "role_id": "product_designer",
+      "stack_id": "figma",
+      "label": "Product Designer · Figma",
+      "main": "\"product designer\" Figma вакансии",
+      "ru": "\"ux/ui дизайнер\" Figma вакансии",
+      "en": "\"product designer\" Figma jobs",
+      "synonyms": [
+        "product designer",
+        "ux/ui дизайнер",
+        "продуктовый дизайнер",
+        "figma",
+        "Figma"
+      ]
+    },
+    {
+      "id": "stack:product_designer:ux",
+      "kind": "stack",
+      "role_id": "product_designer",
+      "stack_id": "ux",
+      "label": "Product Designer · Ux",
+      "main": "\"product designer\" Ux вакансии",
+      "ru": "\"ux/ui дизайнер\" Ux вакансии",
+      "en": "\"product designer\" Ux jobs",
+      "synonyms": [
+        "product designer",
+        "ux/ui дизайнер",
+        "продуктовый дизайнер",
+        "ux",
+        "Ux"
+      ]
+    },
+    {
+      "id": "stack:product_designer:ui",
+      "kind": "stack",
+      "role_id": "product_designer",
+      "stack_id": "ui",
+      "label": "Product Designer · Ui",
+      "main": "\"product designer\" Ui вакансии",
+      "ru": "\"ux/ui дизайнер\" Ui вакансии",
+      "en": "\"product designer\" Ui jobs",
+      "synonyms": [
+        "product designer",
+        "ux/ui дизайнер",
+        "продуктовый дизайнер",
+        "ui",
+        "Ui"
+      ]
+    },
+    {
+      "id": "stack:product_designer:research",
+      "kind": "stack",
+      "role_id": "product_designer",
+      "stack_id": "research",
+      "label": "Product Designer · Research",
+      "main": "\"product designer\" Research вакансии",
+      "ru": "\"ux/ui дизайнер\" Research вакансии",
+      "en": "\"product designer\" Research jobs",
+      "synonyms": [
+        "product designer",
+        "ux/ui дизайнер",
+        "продуктовый дизайнер",
+        "research",
+        "Research"
+      ]
+    },
+    {
+      "id": "role:graphic_designer",
+      "kind": "role",
+      "role_id": "graphic_designer",
+      "label": "Graphic Designer",
+      "main": "\"graphic designer\" вакансии",
+      "ru": "\"графический дизайнер\" вакансии",
+      "en": "\"graphic designer\" jobs",
+      "synonyms": [
+        "graphic designer",
+        "графический дизайнер"
+      ]
+    },
+    {
+      "id": "stack:graphic_designer:figma",
+      "kind": "stack",
+      "role_id": "graphic_designer",
+      "stack_id": "figma",
+      "label": "Graphic Designer · Figma",
+      "main": "\"graphic designer\" Figma вакансии",
+      "ru": "\"графический дизайнер\" Figma вакансии",
+      "en": "\"graphic designer\" Figma jobs",
+      "synonyms": [
+        "graphic designer",
+        "графический дизайнер",
+        "figma",
+        "Figma"
+      ]
+    },
+    {
+      "id": "stack:graphic_designer:photoshop",
+      "kind": "stack",
+      "role_id": "graphic_designer",
+      "stack_id": "photoshop",
+      "label": "Graphic Designer · Photoshop",
+      "main": "\"graphic designer\" Photoshop вакансии",
+      "ru": "\"графический дизайнер\" Photoshop вакансии",
+      "en": "\"graphic designer\" Photoshop jobs",
+      "synonyms": [
+        "graphic designer",
+        "графический дизайнер",
+        "photoshop",
+        "Photoshop"
+      ]
+    },
+    {
+      "id": "stack:graphic_designer:illustrator",
+      "kind": "stack",
+      "role_id": "graphic_designer",
+      "stack_id": "illustrator",
+      "label": "Graphic Designer · Illustrator",
+      "main": "\"graphic designer\" Illustrator вакансии",
+      "ru": "\"графический дизайнер\" Illustrator вакансии",
+      "en": "\"graphic designer\" Illustrator jobs",
+      "synonyms": [
+        "graphic designer",
+        "графический дизайнер",
+        "illustrator",
+        "Illustrator"
+      ]
+    },
+    {
+      "id": "stack:graphic_designer:indesign",
+      "kind": "stack",
+      "role_id": "graphic_designer",
+      "stack_id": "indesign",
+      "label": "Graphic Designer · Indesign",
+      "main": "\"graphic designer\" Indesign вакансии",
+      "ru": "\"графический дизайнер\" Indesign вакансии",
+      "en": "\"graphic designer\" Indesign jobs",
+      "synonyms": [
+        "graphic designer",
+        "графический дизайнер",
+        "indesign",
+        "Indesign"
+      ]
+    },
+    {
+      "id": "role:devops_engineer",
+      "kind": "role",
+      "role_id": "devops_engineer",
+      "label": "Devops Engineer",
+      "main": "\"devops engineer\" вакансии",
+      "ru": "\"инженер devops\" вакансии",
+      "en": "\"devops engineer\" jobs",
+      "synonyms": [
+        "devops engineer",
+        "инженер devops"
+      ]
+    },
+    {
+      "id": "stack:devops_engineer:linux",
+      "kind": "stack",
+      "role_id": "devops_engineer",
+      "stack_id": "linux",
+      "label": "Devops Engineer · Linux",
+      "main": "\"devops engineer\" Linux вакансии",
+      "ru": "\"инженер devops\" Linux вакансии",
+      "en": "\"devops engineer\" Linux jobs",
+      "synonyms": [
+        "devops engineer",
+        "инженер devops",
+        "linux",
+        "Linux"
+      ]
+    },
+    {
+      "id": "stack:devops_engineer:docker",
+      "kind": "stack",
+      "role_id": "devops_engineer",
+      "stack_id": "docker",
+      "label": "Devops Engineer · Docker",
+      "main": "\"devops engineer\" Docker вакансии",
+      "ru": "\"инженер devops\" Docker вакансии",
+      "en": "\"devops engineer\" Docker jobs",
+      "synonyms": [
+        "devops engineer",
+        "инженер devops",
+        "docker",
+        "Docker"
+      ]
+    },
+    {
+      "id": "stack:devops_engineer:kubernetes",
+      "kind": "stack",
+      "role_id": "devops_engineer",
+      "stack_id": "kubernetes",
+      "label": "Devops Engineer · Kubernetes",
+      "main": "\"devops engineer\" Kubernetes вакансии",
+      "ru": "\"инженер devops\" Kubernetes вакансии",
+      "en": "\"devops engineer\" Kubernetes jobs",
+      "synonyms": [
+        "devops engineer",
+        "инженер devops",
+        "kubernetes",
+        "Kubernetes"
+      ]
+    },
+    {
+      "id": "stack:devops_engineer:terraform",
+      "kind": "stack",
+      "role_id": "devops_engineer",
+      "stack_id": "terraform",
+      "label": "Devops Engineer · Terraform",
+      "main": "\"devops engineer\" Terraform вакансии",
+      "ru": "\"инженер devops\" Terraform вакансии",
+      "en": "\"devops engineer\" Terraform jobs",
+      "synonyms": [
+        "devops engineer",
+        "инженер devops",
+        "terraform",
+        "Terraform"
+      ]
+    },
+    {
+      "id": "stack:devops_engineer:ansible",
+      "kind": "stack",
+      "role_id": "devops_engineer",
+      "stack_id": "ansible",
+      "label": "Devops Engineer · Ansible",
+      "main": "\"devops engineer\" Ansible вакансии",
+      "ru": "\"инженер devops\" Ansible вакансии",
+      "en": "\"devops engineer\" Ansible jobs",
+      "synonyms": [
+        "devops engineer",
+        "инженер devops",
+        "ansible",
+        "Ansible"
+      ]
+    },
+    {
+      "id": "stack:devops_engineer:aws",
+      "kind": "stack",
+      "role_id": "devops_engineer",
+      "stack_id": "aws",
+      "label": "Devops Engineer · Aws",
+      "main": "\"devops engineer\" Aws вакансии",
+      "ru": "\"инженер devops\" Aws вакансии",
+      "en": "\"devops engineer\" Aws jobs",
+      "synonyms": [
+        "devops engineer",
+        "инженер devops",
+        "aws",
+        "Aws"
+      ]
+    },
+    {
+      "id": "stack:devops_engineer:gcp",
+      "kind": "stack",
+      "role_id": "devops_engineer",
+      "stack_id": "gcp",
+      "label": "Devops Engineer · Gcp",
+      "main": "\"devops engineer\" Gcp вакансии",
+      "ru": "\"инженер devops\" Gcp вакансии",
+      "en": "\"devops engineer\" Gcp jobs",
+      "synonyms": [
+        "devops engineer",
+        "инженер devops",
+        "gcp",
+        "Gcp"
+      ]
+    },
+    {
+      "id": "role:systems_administrator",
+      "kind": "role",
+      "role_id": "systems_administrator",
+      "label": "System Administrator",
+      "main": "\"system administrator\" вакансии",
+      "ru": "\"системный администратор\" вакансии",
+      "en": "\"system administrator\" jobs",
+      "synonyms": [
+        "system administrator",
+        "sysadmin",
+        "системный администратор"
+      ]
+    },
+    {
+      "id": "stack:systems_administrator:linux",
+      "kind": "stack",
+      "role_id": "systems_administrator",
+      "stack_id": "linux",
+      "label": "System Administrator · Linux",
+      "main": "\"system administrator\" Linux вакансии",
+      "ru": "\"системный администратор\" Linux вакансии",
+      "en": "\"system administrator\" Linux jobs",
+      "synonyms": [
+        "system administrator",
+        "sysadmin",
+        "системный администратор",
+        "linux",
+        "Linux"
+      ]
+    },
+    {
+      "id": "stack:systems_administrator:windows",
+      "kind": "stack",
+      "role_id": "systems_administrator",
+      "stack_id": "windows",
+      "label": "System Administrator · Windows",
+      "main": "\"system administrator\" Windows вакансии",
+      "ru": "\"системный администратор\" Windows вакансии",
+      "en": "\"system administrator\" Windows jobs",
+      "synonyms": [
+        "system administrator",
+        "sysadmin",
+        "системный администратор",
+        "windows",
+        "Windows"
+      ]
+    },
+    {
+      "id": "stack:systems_administrator:networking",
+      "kind": "stack",
+      "role_id": "systems_administrator",
+      "stack_id": "networking",
+      "label": "System Administrator · Networking",
+      "main": "\"system administrator\" Networking вакансии",
+      "ru": "\"системный администратор\" Networking вакансии",
+      "en": "\"system administrator\" Networking jobs",
+      "synonyms": [
+        "system administrator",
+        "sysadmin",
+        "системный администратор",
+        "networking",
+        "Networking"
+      ]
+    },
+    {
+      "id": "stack:systems_administrator:postgresql",
+      "kind": "stack",
+      "role_id": "systems_administrator",
+      "stack_id": "postgresql",
+      "label": "System Administrator · Postgresql",
+      "main": "\"system administrator\" Postgresql вакансии",
+      "ru": "\"системный администратор\" Postgresql вакансии",
+      "en": "\"system administrator\" Postgresql jobs",
+      "synonyms": [
+        "system administrator",
+        "sysadmin",
+        "системный администратор",
+        "postgresql",
+        "Postgresql"
+      ]
+    },
+    {
+      "id": "role:sre_engineer",
+      "kind": "role",
+      "role_id": "sre_engineer",
+      "label": "Sre",
+      "main": "\"sre\" вакансии",
+      "ru": "\"инженер надежности\" вакансии",
+      "en": "\"sre\" jobs",
+      "synonyms": [
+        "sre",
+        "site reliability engineer",
+        "инженер надежности"
+      ]
+    },
+    {
+      "id": "stack:sre_engineer:linux",
+      "kind": "stack",
+      "role_id": "sre_engineer",
+      "stack_id": "linux",
+      "label": "Sre · Linux",
+      "main": "\"sre\" Linux вакансии",
+      "ru": "\"инженер надежности\" Linux вакансии",
+      "en": "\"sre\" Linux jobs",
+      "synonyms": [
+        "sre",
+        "site reliability engineer",
+        "инженер надежности",
+        "linux",
+        "Linux"
+      ]
+    },
+    {
+      "id": "stack:sre_engineer:kubernetes",
+      "kind": "stack",
+      "role_id": "sre_engineer",
+      "stack_id": "kubernetes",
+      "label": "Sre · Kubernetes",
+      "main": "\"sre\" Kubernetes вакансии",
+      "ru": "\"инженер надежности\" Kubernetes вакансии",
+      "en": "\"sre\" Kubernetes jobs",
+      "synonyms": [
+        "sre",
+        "site reliability engineer",
+        "инженер надежности",
+        "kubernetes",
+        "Kubernetes"
+      ]
+    },
+    {
+      "id": "stack:sre_engineer:prometheus",
+      "kind": "stack",
+      "role_id": "sre_engineer",
+      "stack_id": "prometheus",
+      "label": "Sre · Prometheus",
+      "main": "\"sre\" Prometheus вакансии",
+      "ru": "\"инженер надежности\" Prometheus вакансии",
+      "en": "\"sre\" Prometheus jobs",
+      "synonyms": [
+        "sre",
+        "site reliability engineer",
+        "инженер надежности",
+        "prometheus",
+        "Prometheus"
+      ]
+    },
+    {
+      "id": "stack:sre_engineer:grafana",
+      "kind": "stack",
+      "role_id": "sre_engineer",
+      "stack_id": "grafana",
+      "label": "Sre · Grafana",
+      "main": "\"sre\" Grafana вакансии",
+      "ru": "\"инженер надежности\" Grafana вакансии",
+      "en": "\"sre\" Grafana jobs",
+      "synonyms": [
+        "sre",
+        "site reliability engineer",
+        "инженер надежности",
+        "grafana",
+        "Grafana"
+      ]
+    },
+    {
+      "id": "stack:sre_engineer:terraform",
+      "kind": "stack",
+      "role_id": "sre_engineer",
+      "stack_id": "terraform",
+      "label": "Sre · Terraform",
+      "main": "\"sre\" Terraform вакансии",
+      "ru": "\"инженер надежности\" Terraform вакансии",
+      "en": "\"sre\" Terraform jobs",
+      "synonyms": [
+        "sre",
+        "site reliability engineer",
+        "инженер надежности",
+        "terraform",
+        "Terraform"
+      ]
+    },
+    {
+      "id": "role:appsec_engineer",
+      "kind": "role",
+      "role_id": "appsec_engineer",
+      "label": "Appsec Engineer",
+      "main": "\"appsec engineer\" вакансии",
+      "ru": "\"инженер безопасности приложений\" вакансии",
+      "en": "\"appsec engineer\" jobs",
+      "synonyms": [
+        "appsec engineer",
+        "инженер безопасности приложений"
+      ]
+    },
+    {
+      "id": "stack:appsec_engineer:owasp",
+      "kind": "stack",
+      "role_id": "appsec_engineer",
+      "stack_id": "owasp",
+      "label": "Appsec Engineer · Owasp",
+      "main": "\"appsec engineer\" Owasp вакансии",
+      "ru": "\"инженер безопасности приложений\" Owasp вакансии",
+      "en": "\"appsec engineer\" Owasp jobs",
+      "synonyms": [
+        "appsec engineer",
+        "инженер безопасности приложений",
+        "owasp",
+        "Owasp"
+      ]
+    },
+    {
+      "id": "stack:appsec_engineer:secure_code",
+      "kind": "stack",
+      "role_id": "appsec_engineer",
+      "stack_id": "secure_code",
+      "label": "Appsec Engineer · Secure Code",
+      "main": "\"appsec engineer\" Secure Code вакансии",
+      "ru": "\"инженер безопасности приложений\" Secure Code вакансии",
+      "en": "\"appsec engineer\" Secure Code jobs",
+      "synonyms": [
+        "appsec engineer",
+        "инженер безопасности приложений",
+        "secure_code",
+        "Secure Code"
+      ]
+    },
+    {
+      "id": "stack:appsec_engineer:sast",
+      "kind": "stack",
+      "role_id": "appsec_engineer",
+      "stack_id": "sast",
+      "label": "Appsec Engineer · Sast",
+      "main": "\"appsec engineer\" Sast вакансии",
+      "ru": "\"инженер безопасности приложений\" Sast вакансии",
+      "en": "\"appsec engineer\" Sast jobs",
+      "synonyms": [
+        "appsec engineer",
+        "инженер безопасности приложений",
+        "sast",
+        "Sast"
+      ]
+    },
+    {
+      "id": "stack:appsec_engineer:dast",
+      "kind": "stack",
+      "role_id": "appsec_engineer",
+      "stack_id": "dast",
+      "label": "Appsec Engineer · Dast",
+      "main": "\"appsec engineer\" Dast вакансии",
+      "ru": "\"инженер безопасности приложений\" Dast вакансии",
+      "en": "\"appsec engineer\" Dast jobs",
+      "synonyms": [
+        "appsec engineer",
+        "инженер безопасности приложений",
+        "dast",
+        "Dast"
+      ]
+    },
+    {
+      "id": "role:security_analyst",
+      "kind": "role",
+      "role_id": "security_analyst",
+      "label": "Security Analyst",
+      "main": "\"security analyst\" вакансии",
+      "ru": "\"аналитик soc\" вакансии",
+      "en": "\"security analyst\" jobs",
+      "synonyms": [
+        "security analyst",
+        "soc analyst",
+        "аналитик soc"
+      ]
+    },
+    {
+      "id": "stack:security_analyst:siem",
+      "kind": "stack",
+      "role_id": "security_analyst",
+      "stack_id": "siem",
+      "label": "Security Analyst · Siem",
+      "main": "\"security analyst\" Siem вакансии",
+      "ru": "\"аналитик soc\" Siem вакансии",
+      "en": "\"security analyst\" Siem jobs",
+      "synonyms": [
+        "security analyst",
+        "soc analyst",
+        "аналитик soc",
+        "siem",
+        "Siem"
+      ]
+    },
+    {
+      "id": "stack:security_analyst:linux",
+      "kind": "stack",
+      "role_id": "security_analyst",
+      "stack_id": "linux",
+      "label": "Security Analyst · Linux",
+      "main": "\"security analyst\" Linux вакансии",
+      "ru": "\"аналитик soc\" Linux вакансии",
+      "en": "\"security analyst\" Linux jobs",
+      "synonyms": [
+        "security analyst",
+        "soc analyst",
+        "аналитик soc",
+        "linux",
+        "Linux"
+      ]
+    },
+    {
+      "id": "stack:security_analyst:incident_response",
+      "kind": "stack",
+      "role_id": "security_analyst",
+      "stack_id": "incident_response",
+      "label": "Security Analyst · Incident Response",
+      "main": "\"security analyst\" Incident Response вакансии",
+      "ru": "\"аналитик soc\" Incident Response вакансии",
+      "en": "\"security analyst\" Incident Response jobs",
+      "synonyms": [
+        "security analyst",
+        "soc analyst",
+        "аналитик soc",
+        "incident_response",
+        "Incident Response"
+      ]
+    },
+    {
+      "id": "stack:security_analyst:networking",
+      "kind": "stack",
+      "role_id": "security_analyst",
+      "stack_id": "networking",
+      "label": "Security Analyst · Networking",
+      "main": "\"security analyst\" Networking вакансии",
+      "ru": "\"аналитик soc\" Networking вакансии",
+      "en": "\"security analyst\" Networking jobs",
+      "synonyms": [
+        "security analyst",
+        "soc analyst",
+        "аналитик soc",
+        "networking",
+        "Networking"
+      ]
+    },
+    {
+      "id": "role:product_manager",
+      "kind": "role",
+      "role_id": "product_manager",
+      "label": "Product Manager",
+      "main": "\"product manager\" вакансии",
+      "ru": "\"продакт-менеджер\" вакансии",
+      "en": "\"product manager\" jobs",
+      "synonyms": [
+        "product manager",
+        "продакт-менеджер"
+      ]
+    },
+    {
+      "id": "stack:product_manager:roadmaps",
+      "kind": "stack",
+      "role_id": "product_manager",
+      "stack_id": "roadmaps",
+      "label": "Product Manager · Roadmaps",
+      "main": "\"product manager\" Roadmaps вакансии",
+      "ru": "\"продакт-менеджер\" Roadmaps вакансии",
+      "en": "\"product manager\" Roadmaps jobs",
+      "synonyms": [
+        "product manager",
+        "продакт-менеджер",
+        "roadmaps",
+        "Roadmaps"
+      ]
+    },
+    {
+      "id": "stack:product_manager:analytics",
+      "kind": "stack",
+      "role_id": "product_manager",
+      "stack_id": "analytics",
+      "label": "Product Manager · Analytics",
+      "main": "\"product manager\" Analytics вакансии",
+      "ru": "\"продакт-менеджер\" Analytics вакансии",
+      "en": "\"product manager\" Analytics jobs",
+      "synonyms": [
+        "product manager",
+        "продакт-менеджер",
+        "analytics",
+        "Analytics"
+      ]
+    },
+    {
+      "id": "stack:product_manager:experiments",
+      "kind": "stack",
+      "role_id": "product_manager",
+      "stack_id": "experiments",
+      "label": "Product Manager · Experiments",
+      "main": "\"product manager\" Experiments вакансии",
+      "ru": "\"продакт-менеджер\" Experiments вакансии",
+      "en": "\"product manager\" Experiments jobs",
+      "synonyms": [
+        "product manager",
+        "продакт-менеджер",
+        "experiments",
+        "Experiments"
+      ]
+    },
+    {
+      "id": "role:project_manager",
+      "kind": "role",
+      "role_id": "project_manager",
+      "label": "Project Manager",
+      "main": "\"project manager\" вакансии",
+      "ru": "\"менеджер проектов\" вакансии",
+      "en": "\"project manager\" jobs",
+      "synonyms": [
+        "project manager",
+        "менеджер проектов"
+      ]
+    },
+    {
+      "id": "stack:project_manager:agile",
+      "kind": "stack",
+      "role_id": "project_manager",
+      "stack_id": "agile",
+      "label": "Project Manager · Agile",
+      "main": "\"project manager\" Agile вакансии",
+      "ru": "\"менеджер проектов\" Agile вакансии",
+      "en": "\"project manager\" Agile jobs",
+      "synonyms": [
+        "project manager",
+        "менеджер проектов",
+        "agile",
+        "Agile"
+      ]
+    },
+    {
+      "id": "stack:project_manager:scrum",
+      "kind": "stack",
+      "role_id": "project_manager",
+      "stack_id": "scrum",
+      "label": "Project Manager · Scrum",
+      "main": "\"project manager\" Scrum вакансии",
+      "ru": "\"менеджер проектов\" Scrum вакансии",
+      "en": "\"project manager\" Scrum jobs",
+      "synonyms": [
+        "project manager",
+        "менеджер проектов",
+        "scrum",
+        "Scrum"
+      ]
+    },
+    {
+      "id": "stack:project_manager:kanban",
+      "kind": "stack",
+      "role_id": "project_manager",
+      "stack_id": "kanban",
+      "label": "Project Manager · Kanban",
+      "main": "\"project manager\" Kanban вакансии",
+      "ru": "\"менеджер проектов\" Kanban вакансии",
+      "en": "\"project manager\" Kanban jobs",
+      "synonyms": [
+        "project manager",
+        "менеджер проектов",
+        "kanban",
+        "Kanban"
+      ]
+    },
+    {
+      "id": "stack:project_manager:planning",
+      "kind": "stack",
+      "role_id": "project_manager",
+      "stack_id": "planning",
+      "label": "Project Manager · Planning",
+      "main": "\"project manager\" Planning вакансии",
+      "ru": "\"менеджер проектов\" Planning вакансии",
+      "en": "\"project manager\" Planning jobs",
+      "synonyms": [
+        "project manager",
+        "менеджер проектов",
+        "planning",
+        "Planning"
+      ]
+    },
+    {
+      "id": "role:engineering_manager",
+      "kind": "role",
+      "role_id": "engineering_manager",
+      "label": "Engineering Manager",
+      "main": "\"engineering manager\" вакансии",
+      "ru": "\"руководитель разработки\" вакансии",
+      "en": "\"engineering manager\" jobs",
+      "synonyms": [
+        "engineering manager",
+        "руководитель разработки"
+      ]
+    },
+    {
+      "id": "stack:engineering_manager:people_management",
+      "kind": "stack",
+      "role_id": "engineering_manager",
+      "stack_id": "people_management",
+      "label": "Engineering Manager · People Management",
+      "main": "\"engineering manager\" People Management вакансии",
+      "ru": "\"руководитель разработки\" People Management вакансии",
+      "en": "\"engineering manager\" People Management jobs",
+      "synonyms": [
+        "engineering manager",
+        "руководитель разработки",
+        "people_management",
+        "People Management"
+      ]
+    },
+    {
+      "id": "stack:engineering_manager:delivery",
+      "kind": "stack",
+      "role_id": "engineering_manager",
+      "stack_id": "delivery",
+      "label": "Engineering Manager · Delivery",
+      "main": "\"engineering manager\" Delivery вакансии",
+      "ru": "\"руководитель разработки\" Delivery вакансии",
+      "en": "\"engineering manager\" Delivery jobs",
+      "synonyms": [
+        "engineering manager",
+        "руководитель разработки",
+        "delivery",
+        "Delivery"
+      ]
+    },
+    {
+      "id": "stack:engineering_manager:architecture",
+      "kind": "stack",
+      "role_id": "engineering_manager",
+      "stack_id": "architecture",
+      "label": "Engineering Manager · Architecture",
+      "main": "\"engineering manager\" Architecture вакансии",
+      "ru": "\"руководитель разработки\" Architecture вакансии",
+      "en": "\"engineering manager\" Architecture jobs",
+      "synonyms": [
+        "engineering manager",
+        "руководитель разработки",
+        "architecture",
+        "Architecture"
+      ]
+    },
+    {
+      "id": "role:it_recruiter",
+      "kind": "role",
+      "role_id": "it_recruiter",
+      "label": "It Recruiter",
+      "main": "\"it recruiter\" вакансии",
+      "ru": "\"айти-рекрутер\" вакансии",
+      "en": "\"it recruiter\" jobs",
+      "synonyms": [
+        "it recruiter",
+        "айти-рекрутер",
+        "технический рекрутер"
+      ]
+    },
+    {
+      "id": "stack:it_recruiter:sourcing",
+      "kind": "stack",
+      "role_id": "it_recruiter",
+      "stack_id": "sourcing",
+      "label": "It Recruiter · Sourcing",
+      "main": "\"it recruiter\" Sourcing вакансии",
+      "ru": "\"айти-рекрутер\" Sourcing вакансии",
+      "en": "\"it recruiter\" Sourcing jobs",
+      "synonyms": [
+        "it recruiter",
+        "айти-рекрутер",
+        "технический рекрутер",
+        "sourcing",
+        "Sourcing"
+      ]
+    },
+    {
+      "id": "stack:it_recruiter:interviewing",
+      "kind": "stack",
+      "role_id": "it_recruiter",
+      "stack_id": "interviewing",
+      "label": "It Recruiter · Interviewing",
+      "main": "\"it recruiter\" Interviewing вакансии",
+      "ru": "\"айти-рекрутер\" Interviewing вакансии",
+      "en": "\"it recruiter\" Interviewing jobs",
+      "synonyms": [
+        "it recruiter",
+        "айти-рекрутер",
+        "технический рекрутер",
+        "interviewing",
+        "Interviewing"
+      ]
+    },
+    {
+      "id": "stack:it_recruiter:ats",
+      "kind": "stack",
+      "role_id": "it_recruiter",
+      "stack_id": "ats",
+      "label": "It Recruiter · Ats",
+      "main": "\"it recruiter\" Ats вакансии",
+      "ru": "\"айти-рекрутер\" Ats вакансии",
+      "en": "\"it recruiter\" Ats jobs",
+      "synonyms": [
+        "it recruiter",
+        "айти-рекрутер",
+        "технический рекрутер",
+        "ats",
+        "Ats"
+      ]
+    },
+    {
+      "id": "role:hr_manager",
+      "kind": "role",
+      "role_id": "hr_manager",
+      "label": "Hr Manager",
+      "main": "\"hr manager\" вакансии",
+      "ru": "\"менеджер по персоналу\" вакансии",
+      "en": "\"hr manager\" jobs",
+      "synonyms": [
+        "hr manager",
+        "менеджер по персоналу"
+      ]
+    },
+    {
+      "id": "stack:hr_manager:people_ops",
+      "kind": "stack",
+      "role_id": "hr_manager",
+      "stack_id": "people_ops",
+      "label": "Hr Manager · People Ops",
+      "main": "\"hr manager\" People Ops вакансии",
+      "ru": "\"менеджер по персоналу\" People Ops вакансии",
+      "en": "\"hr manager\" People Ops jobs",
+      "synonyms": [
+        "hr manager",
+        "менеджер по персоналу",
+        "people_ops",
+        "People Ops"
+      ]
+    },
+    {
+      "id": "stack:hr_manager:performance",
+      "kind": "stack",
+      "role_id": "hr_manager",
+      "stack_id": "performance",
+      "label": "Hr Manager · Performance",
+      "main": "\"hr manager\" Performance вакансии",
+      "ru": "\"менеджер по персоналу\" Performance вакансии",
+      "en": "\"hr manager\" Performance jobs",
+      "synonyms": [
+        "hr manager",
+        "менеджер по персоналу",
+        "performance",
+        "Performance"
+      ]
+    },
+    {
+      "id": "stack:hr_manager:hr_analytics",
+      "kind": "stack",
+      "role_id": "hr_manager",
+      "stack_id": "hr_analytics",
+      "label": "Hr Manager · Hr Analytics",
+      "main": "\"hr manager\" Hr Analytics вакансии",
+      "ru": "\"менеджер по персоналу\" Hr Analytics вакансии",
+      "en": "\"hr manager\" Hr Analytics jobs",
+      "synonyms": [
+        "hr manager",
+        "менеджер по персоналу",
+        "hr_analytics",
+        "Hr Analytics"
+      ]
+    },
+    {
+      "id": "role:digital_marketer",
+      "kind": "role",
+      "role_id": "digital_marketer",
+      "label": "Digital Marketer",
+      "main": "\"digital marketer\" вакансии",
+      "ru": "\"интернет-маркетолог\" вакансии",
+      "en": "\"digital marketer\" jobs",
+      "synonyms": [
+        "digital marketer",
+        "интернет-маркетолог"
+      ]
+    },
+    {
+      "id": "stack:digital_marketer:seo",
+      "kind": "stack",
+      "role_id": "digital_marketer",
+      "stack_id": "seo",
+      "label": "Digital Marketer · Seo",
+      "main": "\"digital marketer\" Seo вакансии",
+      "ru": "\"интернет-маркетолог\" Seo вакансии",
+      "en": "\"digital marketer\" Seo jobs",
+      "synonyms": [
+        "digital marketer",
+        "интернет-маркетолог",
+        "seo",
+        "Seo"
+      ]
+    },
+    {
+      "id": "stack:digital_marketer:sem",
+      "kind": "stack",
+      "role_id": "digital_marketer",
+      "stack_id": "sem",
+      "label": "Digital Marketer · Sem",
+      "main": "\"digital marketer\" Sem вакансии",
+      "ru": "\"интернет-маркетолог\" Sem вакансии",
+      "en": "\"digital marketer\" Sem jobs",
+      "synonyms": [
+        "digital marketer",
+        "интернет-маркетолог",
+        "sem",
+        "Sem"
+      ]
+    },
+    {
+      "id": "stack:digital_marketer:analytics",
+      "kind": "stack",
+      "role_id": "digital_marketer",
+      "stack_id": "analytics",
+      "label": "Digital Marketer · Analytics",
+      "main": "\"digital marketer\" Analytics вакансии",
+      "ru": "\"интернет-маркетолог\" Analytics вакансии",
+      "en": "\"digital marketer\" Analytics jobs",
+      "synonyms": [
+        "digital marketer",
+        "интернет-маркетолог",
+        "analytics",
+        "Analytics"
+      ]
+    },
+    {
+      "id": "stack:digital_marketer:ads",
+      "kind": "stack",
+      "role_id": "digital_marketer",
+      "stack_id": "ads",
+      "label": "Digital Marketer · Ads",
+      "main": "\"digital marketer\" Ads вакансии",
+      "ru": "\"интернет-маркетолог\" Ads вакансии",
+      "en": "\"digital marketer\" Ads jobs",
+      "synonyms": [
+        "digital marketer",
+        "интернет-маркетолог",
+        "ads",
+        "Ads"
+      ]
+    },
+    {
+      "id": "role:content_manager",
+      "kind": "role",
+      "role_id": "content_manager",
+      "label": "Content Manager",
+      "main": "\"content manager\" вакансии",
+      "ru": "\"контент-менеджер\" вакансии",
+      "en": "\"content manager\" jobs",
+      "synonyms": [
+        "content manager",
+        "контент-менеджер",
+        "редактор"
+      ]
+    },
+    {
+      "id": "stack:content_manager:writing",
+      "kind": "stack",
+      "role_id": "content_manager",
+      "stack_id": "writing",
+      "label": "Content Manager · Writing",
+      "main": "\"content manager\" Writing вакансии",
+      "ru": "\"контент-менеджер\" Writing вакансии",
+      "en": "\"content manager\" Writing jobs",
+      "synonyms": [
+        "content manager",
+        "контент-менеджер",
+        "редактор",
+        "writing",
+        "Writing"
+      ]
+    },
+    {
+      "id": "stack:content_manager:seo",
+      "kind": "stack",
+      "role_id": "content_manager",
+      "stack_id": "seo",
+      "label": "Content Manager · Seo",
+      "main": "\"content manager\" Seo вакансии",
+      "ru": "\"контент-менеджер\" Seo вакансии",
+      "en": "\"content manager\" Seo jobs",
+      "synonyms": [
+        "content manager",
+        "контент-менеджер",
+        "редактор",
+        "seo",
+        "Seo"
+      ]
+    },
+    {
+      "id": "stack:content_manager:cms",
+      "kind": "stack",
+      "role_id": "content_manager",
+      "stack_id": "cms",
+      "label": "Content Manager · Cms",
+      "main": "\"content manager\" Cms вакансии",
+      "ru": "\"контент-менеджер\" Cms вакансии",
+      "en": "\"content manager\" Cms jobs",
+      "synonyms": [
+        "content manager",
+        "контент-менеджер",
+        "редактор",
+        "cms",
+        "Cms"
+      ]
+    },
+    {
+      "id": "stack:content_manager:social_media",
+      "kind": "stack",
+      "role_id": "content_manager",
+      "stack_id": "social_media",
+      "label": "Content Manager · Social Media",
+      "main": "\"content manager\" Social Media вакансии",
+      "ru": "\"контент-менеджер\" Social Media вакансии",
+      "en": "\"content manager\" Social Media jobs",
+      "synonyms": [
+        "content manager",
+        "контент-менеджер",
+        "редактор",
+        "social_media",
+        "Social Media"
+      ]
+    }
+  ]
+}

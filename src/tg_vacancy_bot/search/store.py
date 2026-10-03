@@ -34,6 +34,7 @@ class SearchStore:
         self.path = path
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as c:
+            c.execute('PRAGMA journal_mode=WAL')
             c.executescript('''
                 CREATE TABLE IF NOT EXISTS search_runs (
                     id TEXT PRIMARY KEY, owner TEXT NOT NULL, query TEXT NOT NULL,
@@ -74,6 +75,31 @@ class SearchStore:
                 CREATE INDEX IF NOT EXISTS search_tasks_queue ON search_tasks(source,status,retry_at);
             ''')
 
+            for table, fields in {
+                'search_runs': {
+                    'profile_snapshot_json': 'TEXT',
+                    'client_request_id': 'TEXT',
+                },
+                'search_hits': {'classification_override': 'TEXT'},
+                'search_items': {
+                    'universal_decision_json': 'TEXT',
+                    'scope': "TEXT NOT NULL DEFAULT 'shared'",
+                },
+            }.items():
+                existing = {
+                    row['name'] for row in c.execute(f'PRAGMA table_info({table})')
+                }
+                for name, definition in fields.items():
+                    if name not in existing:
+                        c.execute(f'ALTER TABLE {table} ADD COLUMN {name} {definition}')
+            c.execute('DROP INDEX IF EXISTS search_source_permalink')
+            c.execute(
+                'CREATE UNIQUE INDEX search_source_permalink ON search_items(source,permalink,scope) WHERE permalink IS NOT NULL'
+            )
+            c.execute(
+                'CREATE UNIQUE INDEX IF NOT EXISTS search_request_key ON search_runs(owner,client_request_id) WHERE client_request_id IS NOT NULL'
+            )
+
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.path, timeout=10)
@@ -96,6 +122,8 @@ class SearchStore:
         result_limit: int = 50,
         period_days: int = 7,
         include_review: bool = True,
+        profile_snapshot: dict | None = None,
+        client_request_id: str | None = None,
     ) -> dict:
         query = ' '.join(query.split())
         sources = list(dict.fromkeys(sources))
@@ -103,7 +131,7 @@ class SearchStore:
             not 3 <= len(query) <= 160
             or not sources
             or not set(sources) <= SOURCES
-            or track != 'go'
+            or track not in {'go', 'catalog'}
             or mode not in {'preview', 'save', 'save_publish'}
             or not 1 <= result_limit <= 100
             or not 1 <= period_days <= 30
@@ -111,9 +139,30 @@ class SearchStore:
             raise ValueError('Недопустимые параметры поиска')
         if owner.startswith('candidate:') and mode != 'preview':
             raise ValueError('Кандидатам доступен только предпросмотр')
+        if track == 'catalog':
+            from tg_vacancy_bot.premium_search.settings import catalog_search_allowed
+            from tg_vacancy_bot.telegram.candidate_store import CandidateProfile
+
+            if not catalog_search_allowed(owner):
+                raise ValueError('Catalog search unavailable')
+            user_id = int(owner.split(':', 1)[1])
+            profile = CandidateProfile(**(profile_snapshot or {}))
+            if (
+                profile.telegram_user_id != user_id
+                or not profile.is_active
+                or sources != ['premium']
+            ):
+                raise ValueError('Catalog source/profile unavailable')
         run_id = uuid.uuid4().hex
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
+            if client_request_id:
+                previous = c.execute(
+                    'SELECT id FROM search_runs WHERE owner=? AND client_request_id=?',
+                    (owner, client_request_id),
+                ).fetchone()
+                if previous:
+                    return self.get_run(previous['id'], owner)
             if (
                 owner.startswith('candidate:')
                 and c.execute(
@@ -126,8 +175,8 @@ class SearchStore:
                 )
             c.execute(
                 '''INSERT INTO search_runs
-                (id,owner,query,sources_json,track,mode,result_limit,period_days,include_review,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)''',
+                (id,owner,query,sources_json,track,mode,result_limit,period_days,include_review,created_at,updated_at,profile_snapshot_json,client_request_id)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (
                     run_id,
                     owner,
@@ -140,6 +189,8 @@ class SearchStore:
                     int(include_review),
                     now(),
                     now(),
+                    _json(profile_snapshot) if profile_snapshot else None,
+                    client_request_id,
                 ),
             )
             c.executemany(
@@ -158,6 +209,9 @@ class SearchStore:
             run = dict(row)
             run['include_review'] = bool(run['include_review'])
             run['sources'] = json.loads(run.pop('sources_json'))
+            run['profile_snapshot'] = json.loads(
+                run.pop('profile_snapshot_json') or 'null'
+            )
             run['source_states'] = {
                 r['source']: dict(r)
                 for r in c.execute(
@@ -167,13 +221,13 @@ class SearchStore:
             }
             return run
 
-    def list_runs(self, limit: int = 30) -> list[dict]:
+    def list_runs(self, limit: int = 30, *, include_private: bool = True) -> list[dict]:
         with self.connect() as c:
             ids = [
                 r[0]
                 for r in c.execute(
-                    'SELECT id FROM search_runs ORDER BY created_at DESC LIMIT ?',
-                    (limit,),
+                    "SELECT id FROM search_runs WHERE (? OR owner NOT LIKE 'candidate:%') ORDER BY created_at DESC LIMIT ?",
+                    (include_private, limit),
                 )
             ]
         return [self.get_run(rid) for rid in ids]
@@ -317,10 +371,13 @@ class SearchStore:
         item = dict(row)
         item['raw_data'] = json.loads(item.pop('raw_json'))
         item['analysis'] = json.loads(item.pop('analysis_json') or 'null')
+        item['universal_decision'] = json.loads(
+            item.pop('universal_decision_json') or 'null'
+        )
         item['can_persist'] = bool(
-            item['text']
+            item['scope'] == 'shared'
+            and item['text']
             and item['permalink']
-            and item['timestamp']
             and item['publication_status'] != 'published'
             and item['action_state'] not in {'queued', 'running'}
             and item['action_error'] != 'delivery_uncertain'
@@ -339,6 +396,7 @@ class SearchStore:
         queries: list[str] | None = None,
         score: int = 0,
         raw_data: dict | None = None,
+        classification_override: str | None = None,
         **metadata,
     ) -> str:
         allowed = {
@@ -357,16 +415,25 @@ class SearchStore:
         }
         if not metadata.keys() <= allowed:
             raise ValueError('invalid_search_metadata')
+        run = self.get_run(run_id)
+        scope = (
+            (run['owner'] + ':' + run_id)
+            if run['owner'].startswith('candidate:')
+            else 'shared'
+        )
+        if scope != 'shared':
+            external_id = scope + ':' + external_id
         item_id = hashlib.sha256(f'{source}:{external_id}'.encode()).hexdigest()[:32]
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             old = c.execute(
-                'SELECT * FROM search_items WHERE source=? AND (external_id=? OR permalink=?)',
-                (source, external_id, permalink),
+                'SELECT * FROM search_items WHERE source=? AND scope=? AND (external_id=? OR permalink=?)',
+                (source, scope, external_id, permalink),
             ).fetchone()
             if old:
                 item_id = old['id']
             values = dict(
+                scope=scope,
                 source=source,
                 external_id=external_id,
                 text=text,
@@ -379,6 +446,10 @@ class SearchStore:
             if old:
                 # A new search must never undo an administrator's saved/published decision.
                 changed = old['text'] != text
+                if old['action_state'] in {'queued', 'running'}:
+                    values.pop('premium_result_id', None)
+                if not timestamp:
+                    values['timestamp'] = old['timestamp']
                 incoming_status = values.pop('publication_status', 'preview')
                 if (
                     old['publication_status'] != 'duplicate'
@@ -393,6 +464,7 @@ class SearchStore:
                 if changed:
                     values.update(
                         analysis_json=None,
+                        universal_decision_json=None,
                         title=metadata.get('title'),
                         company=metadata.get('company'),
                         summary=metadata.get('summary'),
@@ -428,6 +500,11 @@ class SearchStore:
                 ON CONFLICT(run_id,item_id) DO UPDATE SET queries_json=excluded.queries_json,score=MAX(score,excluded.score)''',
                 (run_id, item_id, _json(combined), score),
             )
+            if classification_override is not None:
+                c.execute(
+                    'UPDATE search_hits SET classification_override=? WHERE run_id=? AND item_id=?',
+                    (classification_override, run_id, item_id),
+                )
         return item_id
 
     def list_results(
@@ -444,13 +521,16 @@ class SearchStore:
             return dict(items=[], total=0, offset=offset, limit=limit)
         with self.connect() as c:
             rows = c.execute(
-                '''SELECT i.*,h.queries_json FROM search_items i JOIN search_hits h ON h.item_id=i.id
+                '''SELECT i.*,h.queries_json,h.classification_override FROM search_items i JOIN search_hits h ON h.item_id=i.id
                 WHERE h.run_id=? ORDER BY h.score DESC,i.timestamp DESC,i.id''',
                 (run_id,),
             ).fetchall()
         items, seen = [], set()
         for row in rows:
             item = self._item(row)
+            override = item.pop('classification_override')
+            if item['reason'] != 'administrator_rejected':
+                item['classification'] = override or item['classification']
             if item['classification'] not in (
                 {'accepted', 'review'} if include_review else {'accepted'}
             ):
@@ -473,6 +553,7 @@ class SearchStore:
             for key in (
                 'raw_data',
                 'analysis',
+                'universal_decision',
                 'text_hash',
                 'premium_result_id',
                 'action',
@@ -498,6 +579,7 @@ class SearchStore:
             'company',
             'summary',
             'analysis_json',
+            'universal_decision_json',
             'publication_status',
             'action_state',
             'action_error',
@@ -578,7 +660,7 @@ class SearchStore:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         with self.connect() as c:
             c.execute(
-                """UPDATE search_items SET raw_json='{}',text='',analysis_json=NULL
+                """UPDATE search_items SET raw_json='{}',text='',analysis_json=NULL,universal_decision_json=NULL
                 WHERE updated_at<? AND action_state NOT IN ('queued','running')""",
                 (cutoff,),
             )

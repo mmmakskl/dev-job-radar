@@ -110,6 +110,9 @@ class PremiumSearchStore:
             additions = {
                 'premium_search_runs': {
                     'phase': "TEXT NOT NULL DEFAULT 'queued'",
+                    'owner': "TEXT NOT NULL DEFAULT 'admin'",
+                    'client_request_id': 'TEXT',
+                    'profile_snapshot_json': 'TEXT',
                     'include_review': 'INTEGER NOT NULL DEFAULT 1',
                     'cancel_requested': 'INTEGER NOT NULL DEFAULT 0',
                     'retry_at': 'TEXT',
@@ -155,7 +158,7 @@ class PremiumSearchStore:
                     (query, row['search_run_id']),
                 )
                 if row['status'] in {'queued', 'running'}:
-                    key = (query, row['track'])
+                    key = (query, row['track'], row['owner'])
                     if key in active:
                         c.execute(
                             "UPDATE premium_search_runs SET status='cancelled', finished_at=? WHERE search_run_id=?",
@@ -163,8 +166,10 @@ class PremiumSearchStore:
                         )
                     active.add(key)
             c.executescript('''
-                CREATE UNIQUE INDEX IF NOT EXISTS premium_active_query
-                    ON premium_search_runs(normalized_query, track) WHERE status IN ('queued','running');
+                DROP INDEX IF EXISTS premium_active_query;
+                CREATE UNIQUE INDEX premium_active_query
+                    ON premium_search_runs(normalized_query, track, owner) WHERE status IN ('queued','running');
+                CREATE UNIQUE INDEX IF NOT EXISTS premium_request_key ON premium_search_runs(owner,client_request_id) WHERE client_request_id IS NOT NULL;
                 CREATE INDEX IF NOT EXISTS premium_run_queue ON premium_search_runs(status, retry_at, created_at);
                 CREATE INDEX IF NOT EXISTS premium_results_run ON premium_search_results(search_run_id, status, created_at);
                 CREATE INDEX IF NOT EXISTS premium_results_hash ON premium_search_results(text_hash);
@@ -211,6 +216,9 @@ class PremiumSearchStore:
         result_limit: int = 50,
         period_days: int = 7,
         include_review: bool = True,
+        owner: str = 'admin',
+        client_request_id: str | None = None,
+        profile_snapshot: dict | None = None,
     ) -> dict:
         query = normalize_query(query)
         get_track(track)
@@ -220,18 +228,38 @@ class PremiumSearchStore:
             or not 1 <= period_days <= 30
         ):
             raise ValueError('Недопустимые параметры поиска')
+        if track == 'catalog':
+            from tg_vacancy_bot.premium_search.settings import catalog_search_allowed
+
+            if (
+                not catalog_search_allowed(owner)
+                or not profile_snapshot
+                or mode != 'preview'
+            ):
+                raise ValueError('Catalog search requires an allowed profile preview')
+            if profile_snapshot.get('telegram_user_id') != int(
+                owner.split(':')[1]
+            ) or not profile_snapshot.get('is_active'):
+                raise ValueError('Catalog profile owner mismatch')
         run_id = str(uuid.uuid4())
         with self._connect() as c:
             c.execute('BEGIN IMMEDIATE')
+            if client_request_id:
+                previous = c.execute(
+                    'SELECT * FROM premium_search_runs WHERE owner=? AND client_request_id=?',
+                    (owner, client_request_id),
+                ).fetchone()
+                if previous:
+                    return self._run(previous)
             existing = c.execute(
-                "SELECT search_run_id FROM premium_search_runs WHERE normalized_query=? AND track=? AND status IN ('queued','running')",
-                (query.casefold(), track),
+                "SELECT search_run_id FROM premium_search_runs WHERE normalized_query=? AND track=? AND owner=? AND status IN ('queued','running')",
+                (query.casefold(), track, owner),
             ).fetchone()
             if existing:
                 raise ActiveRunError(existing[0])
             c.execute(
-                '''INSERT INTO premium_search_runs(search_run_id,query,normalized_query,track,mode,result_limit,period_days,status,include_review,created_at,updated_at)
-                      VALUES(?,?,?,?,?,?,?,'queued',?,?,?)''',
+                '''INSERT INTO premium_search_runs(search_run_id,query,normalized_query,track,mode,result_limit,period_days,status,include_review,created_at,updated_at,owner,client_request_id,profile_snapshot_json)
+                      VALUES(?,?,?,?,?,?,?,'queued',?,?,?,?,?,?)''',
                 (
                     run_id,
                     query,
@@ -243,10 +271,21 @@ class PremiumSearchStore:
                     int(include_review),
                     now(),
                     now(),
+                    owner,
+                    client_request_id,
+                    json.dumps(profile_snapshot) if profile_snapshot else None,
                 ),
             )
             self._metrics(c, run_id)
         return self.get_run(run_id)
+
+    def find_request(self, owner: str, client_request_id: str) -> dict | None:
+        with self._connect() as c:
+            row = c.execute(
+                'SELECT * FROM premium_search_runs WHERE owner=? AND client_request_id=?',
+                (owner, client_request_id),
+            ).fetchone()
+        return self._run(row) if row else None
 
     def update_run(self, run_id: str, **values: Any) -> None:
         allowed = {
@@ -462,7 +501,7 @@ class PremiumSearchStore:
         urls = set(result['apply_urls'])
         with self._connect() as c:
             rows = c.execute(
-                "SELECT * FROM premium_search_results WHERE result_id!=? AND (analysis_json IS NOT NULL OR status IN ('accepted','duplicate','saved','published') OR (search_run_id=? AND status='error')) ORDER BY created_at",
+                "SELECT * FROM premium_search_results WHERE search_run_id IN (SELECT search_run_id FROM premium_search_runs WHERE owner NOT LIKE 'candidate:%') AND result_id!=? AND (analysis_json IS NOT NULL OR status IN ('accepted','duplicate','saved','published') OR (search_run_id=? AND status='error')) ORDER BY created_at",
                 (result['result_id'], result['search_run_id']),
             ).fetchall()
         for row in rows:
@@ -476,12 +515,31 @@ class PremiumSearchStore:
                 return self._result(row, True)
         return None
 
+    def cached_universal(self, post_link: str, raw_text: str) -> dict | None:
+        """Reuse only an identical source post; stack/text similarity is not identity."""
+        from tg_vacancy_bot.llm.universal import decision_from_dict
+
+        with self._connect() as c:
+            rows = c.execute(
+                'SELECT analysis_json FROM premium_search_results WHERE post_link=? AND raw_text=? AND analysis_json IS NOT NULL ORDER BY updated_at DESC',
+                (post_link, raw_text),
+            ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(row['analysis_json']).get('universal_decision')
+                if payload is not None:
+                    decision_from_dict(payload)
+                    return payload
+            except (ValueError, TypeError, KeyError):
+                continue
+        return None
+
     def analyzed_results(self, exclude_id: str) -> list[dict]:
         with self._connect() as c:
             return [
                 self._result(row, True)
                 for row in c.execute(
-                    "SELECT * FROM premium_search_results WHERE result_id!=? AND analysis_json IS NOT NULL AND status IN ('accepted','review','saved','published')",
+                    "SELECT * FROM premium_search_results WHERE search_run_id IN (SELECT search_run_id FROM premium_search_runs WHERE owner NOT LIKE 'candidate:%') AND result_id!=? AND analysis_json IS NOT NULL AND status IN ('accepted','review','saved','published')",
                     (exclude_id,),
                 )
             ]
@@ -515,9 +573,14 @@ class PremiumSearchStore:
             if row['action_state'] in {'queued', 'running'}:
                 raise ValueError('Действие уже выполняется')
             if action in {'save', 'publish'}:
+                owner = c.execute(
+                    'SELECT owner FROM premium_search_runs WHERE search_run_id=?',
+                    (row['search_run_id'],),
+                ).fetchone()[0]
+                if owner.startswith('candidate:'):
+                    raise ValueError('Личный предпросмотр нельзя опубликовать')
                 if not all(
-                    row[key]
-                    for key in ('raw_text', 'post_link', 'published_at', 'channel_name')
+                    row[key] for key in ('raw_text', 'post_link', 'channel_name')
                 ):
                     raise ValueError('Нет доступного анализа для сохранения')
                 if origin == 'run' and (
@@ -563,13 +626,13 @@ class PremiumSearchStore:
             ).fetchone()
         return self._run(row) if row else None
 
-    def list_runs(self, limit: int = 20) -> list[dict]:
+    def list_runs(self, limit: int = 20, *, include_private: bool = True) -> list[dict]:
         with self._connect() as c:
             return [
                 self._run(r)
                 for r in c.execute(
-                    'SELECT * FROM premium_search_runs ORDER BY created_at DESC,rowid DESC LIMIT ?',
-                    (min(limit, 100),),
+                    "SELECT * FROM premium_search_runs WHERE (? OR owner NOT LIKE 'candidate:%') ORDER BY created_at DESC,rowid DESC LIMIT ?",
+                    (include_private, min(limit, 100)),
                 )
             ]
 
@@ -714,18 +777,21 @@ class PremiumSearchStore:
         result = dict(row)
         result['metrics'] = json.loads(result.pop('metrics_json'))
         result['quota'] = json.loads(result.pop('quota_json'))
+        result['profile_snapshot'] = json.loads(
+            result.pop('profile_snapshot_json') or 'null'
+        )
         return result
 
-    @staticmethod
-    def _result(row: sqlite3.Row, raw: bool) -> dict:
+    def _result(self, row: sqlite3.Row, raw: bool) -> dict:
         result = dict(row)
         result['analysis'] = json.loads(result.pop('analysis_json') or 'null')
         result['apply_urls'] = json.loads(result.pop('apply_urls_json'))
         if not raw:
+            run = self.get_run(result['search_run_id'])
             result['can_persist'] = bool(
-                result['raw_text']
+                not run['owner'].startswith('candidate:')
+                and result['raw_text']
                 and result['post_link']
-                and result['published_at']
                 and result['channel_name']
                 and result['status'] != 'published'
                 and result['delivery_state'] != 'sending'

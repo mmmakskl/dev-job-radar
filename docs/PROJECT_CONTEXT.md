@@ -103,7 +103,7 @@ Premium Search расположен в `src/tg_vacancy_bot/premium_search/`. Е�
 |---|---|---|
 | Админ-настройки, источники, actions, telemetry, общие search runs/results/лимиты | `data/admin/admin.sqlite3` | Admin control plane и live worker |
 | Premium runs и результаты | `data/premium_search.sqlite3` | Premium Search store/worker |
-| Candidate-карточки и действия | `data/candidate_bot.sqlite3` | Отдельный Bot API worker |
+| Реестр анализа/источников, Candidate-карточки, архив, профили и доставки | `data/candidate_bot.sqlite3` | Ingestion пишет общий анализ; Bot API worker — личные данные |
 | Группы репостов | `data/vacancy_groups.sqlite3` | Основной pipeline |
 | Exact dedupe state | `data/state.jsonl` | Append-only зеркало успешного экспорта |
 | In-flight claims | `data/state.jsonl.claims.sqlite3` | Конкурентная защита pipeline |
@@ -125,16 +125,16 @@ Premium Search расположен в `src/tg_vacancy_bot/premium_search/`. Е�
   экспорт должен быть восстанавливаемым, а не приводить к дубликату.
 - Группировка репостов отдельна от exact dedupe и должна оставаться
   консервативной: ложное объединение хуже пропуска репоста.
-- Локальный Telegram-поиск читает опубликованные title/company/summary из
-  Candidate cache; старые Sheets-only записи недоступны. Личный Candidate Bot
-  дополнительно создаёт изолированные preview-запуски по включённым источникам.
+- Локальный Telegram-поиск в админ-панели читает опубликованные
+  title/company/summary из Candidate cache; старые Sheets-only записи
+  недоступны. Личный Candidate Bot дополнительно предоставляет профильную выдачу и catalog preview под flags и allowlist.
 - Admin API управляет настройками, источниками и jobs, но не владеет Telethon
   session и не выполняет поиск напрямую.
 
 ## Ориентир для следующего архитектурного этапа
 
-Большая миграция к source-neutral contracts, versioned SQLite registry и
-dual-write из [ARCHITECTURE_PLAN.md](ARCHITECTURE_PLAN.md) отложена. Общий поиск
+Общий source-neutral registry интегрирован в Candidate SQLite; принятые решения
+зафиксированы в [Candidate plan](CANDIDATE_BOT_MULTIDIRECTION_PLAN.md). Общий поиск
 и Threads добавлены поверх существующих хранилищ и workers без обязательного
 предварительного рефакторинга. Два листа Sheets, JSONL, Telegram ID, Premium
 история и Candidate-действия сохраняют прежнюю роль; Threads ID — `threads:<id>`.
@@ -143,7 +143,7 @@ dual-write из [ARCHITECTURE_PLAN.md](ARCHITECTURE_PLAN.md) отложена. �
 ## Реализованный общий поиск (15 сентября 2026)
 
 `search/service.py` исполняет независимые задания Telegram/Premium/Threads в
-существующем live-процессе; admin и Candidate Bot только ставят задания.
+существующем live-процессе; admin ставит задания.
 `search/store.py` добавляет таблицы runs, результатов, действий и лимитов в
 существующую admin SQLite, а не создаёт новую основную базу вакансий. Локальный
 Telegram-поиск читает только опубликованные карточки Candidate cache и не
@@ -165,15 +165,15 @@ Threads выключен по умолчанию. Его официальный 
 локальный бюджет — 1000 запросов/сутки против максимальных 2200 у Meta.
 Админ `/search` предлагает preview/save/save_publish, независимые статусы,
 частичные результаты, историю, новый запуск при обновлении и подтверждённые
-действия. Candidate `/search`/«Поиск» использует только личный preview и скрывает
-review-результаты. Отсутствие Threads credentials не блокирует другие источники.
+действия. Личный Candidate Bot ставит ограниченные owner-scoped catalog preview в существующую очередь. Отсутствие Threads credentials
+не блокирует другие источники.
 
 ### Карта добавленных и изменённых файлов
 
 - Источник и анализ: новые `src/tg_vacancy_bot/threads/{source,rules}.py` и
   `src/tg_vacancy_bot/search/terms.py` — официальный API, нормализация,
   курсоры/retry и варианты запросов.
-- Общая очередь и исполнение: новые `src/tg_vacancy_bot/search/{settings,store,service,bot}.py`;
+- Общая очередь и исполнение: новые `src/tg_vacancy_bot/search/{settings,store,service}.py`;
   интеграция в `scripts/run_live.py`, `scripts/run_candidate_bot.py`,
   `src/tg_vacancy_bot/admin/api.py` и `telegram/candidate_bot.py`.
 - Публикация: `pipeline/processor.py` использует существующее сохранение с
@@ -183,7 +183,8 @@ review-результаты. Отсутствие Threads credentials не бл�
   `search-navigation.test.tsx`, `web/lib/search-api.test.ts`; дополнения в
   `web/app/page.tsx`, `web/app/styles.css`, `web/lib/api.ts`.
 - Тесты: `tests/test_threads_source.py`, `test_threads_rules.py`,
-  `test_candidate_search.py` и проверки store/service/API общего поиска;
+  `test_candidate_integration.py`, `test_catalog_search_integration.py`,
+  `test_registry.py` и проверки store/service/API общего поиска;
   регрессии существующих Telegram/Premium/publication сценариев.
 - Документация и настройки: `.env.example`, `README.md`, этот контекст и
   `ARCHITECTURE_PLAN.md`.

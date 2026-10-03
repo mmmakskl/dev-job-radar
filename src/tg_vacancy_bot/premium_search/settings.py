@@ -25,3 +25,21 @@ def publisher_configured() -> bool:
         and bool(os.getenv('CANDIDATE_BOT_TOKEN'))
         and bool(os.getenv('CANDIDATE_BOT_CHANNEL'))
     )
+
+
+def catalog_search_allowed(owner: str) -> bool:
+    """Fail closed when rollout access is removed, including queued previews."""
+    from tg_vacancy_bot import config
+
+    if not owner.startswith('candidate:'):
+        return False
+    try:
+        user_id = int(owner.split(':', 1)[1])
+    except ValueError:
+        return False
+    return (
+        enabled()
+        and getattr(config, 'CANDIDATE_CATALOG_SEARCH_ENABLED', False)
+        and user_id in getattr(config, 'CANDIDATE_PROFILE_ALLOWED_USER_IDS', ())
+        and user_id in getattr(config, 'CANDIDATE_BOT_ALLOWED_USER_IDS', ())
+    )
