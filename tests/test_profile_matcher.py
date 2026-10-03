@@ -144,3 +144,46 @@ def test_normalized_skill_phrases_match_token_boundaries():
         ).status
         == 'match'
     )
+
+
+def test_primary_and_additional_languages_use_the_stack_matching_rule():
+    assert match_profile(decision(), profile(primary_language='go')).status == 'match'
+    assert (
+        match_profile(decision(), profile(primary_language='python')).status
+        == 'no_match'
+    )
+    assert (
+        match_profile(
+            decision(),
+            profile(primary_language='python', additional_languages=['go']),
+        ).status
+        == 'match'
+    )
+
+
+def test_worldwide_geography_does_not_veto_a_country_specific_listing():
+    value = decision(
+        analysis=SimpleNamespace(
+            **{
+                **vars(decision().analysis),
+                'hiring_geography': 'Europe',
+                'country': 'Germany',
+                'city': 'Berlin',
+            }
+        )
+    )
+    assert match_profile(value, profile(geography=['Весь мир'])).status == 'match'
+
+
+def test_api_developer_catalog_role_remains_compatible_with_backend_profile():
+    value = decision(
+        classifications=(
+            {
+                'direction_id': 'development',
+                'specialization_id': 'backend',
+                'role_id': 'api_developer',
+                'confidence': 90,
+            },
+        )
+    )
+    assert match_profile(value, profile()).status == 'match'

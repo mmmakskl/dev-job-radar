@@ -26,11 +26,25 @@ class ProfileMatch:
 def _norm(value: str) -> str:
     value = unicodedata.normalize("NFKC", value).casefold().strip()
     value = re.sub(r"[^\w+#.]+", " ", value, flags=re.UNICODE)
+    value = re.sub(r"(?<![\w+#])c\+\+(?![\w+#])", "cpp", value)
+    value = re.sub(r"(?<![\w+#])c#(?![\w+#])", "csharp", value)
     value = " ".join(value.split())
     return {
         "golang": "go",
+        "c++": "cpp",
+        "c#": "csharp",
         "postgres": "postgresql",
         "k8s": "kubernetes",
+        "россия": "russia",
+        "казахстан": "kazakhstan",
+        "беларусь": "belarus",
+        "ес": "eu",
+        "евросоюз": "eu",
+        "european union": "eu",
+        "russian": "ru",
+        "русский": "ru",
+        "english": "en",
+        "английский": "en",
         "джуниор": "junior",
         "мидл": "middle",
         "сеньор": "senior",
@@ -73,10 +87,21 @@ def match_profile(
     missing: list[str] = []
     conflicting: list[str] = []
     roles = {
-        (item["direction_id"], item["specialization_id"], item["role_id"])
+        (
+            item["direction_id"],
+            item["specialization_id"],
+            (
+                "backend_developer"
+                if item["role_id"] == "api_developer"
+                else item["role_id"]
+            ),
+        )
         for item in decision.classifications
     }
-    path = (profile.direction_id, profile.specialization_id, profile.role_id)
+    profile_role = (
+        "backend_developer" if profile.role_id == "api_developer" else profile.role_id
+    )
+    path = (profile.direction_id, profile.specialization_id, profile_role)
     if path in roles:
         matched.append("role")
     elif roles:
@@ -86,21 +111,42 @@ def match_profile(
 
     analysis = decision.analysis
     preferences = profile.preferences
+    geography = _values(preferences.get("geography", []))
     checks = (
         (
             "stacks",
             [*(_values(analysis.required_stack)), *(_values(analysis.preferred_stack))],
+            [
+                *preferences.get("stacks", []),
+                *preferences.get("additional_languages", []),
+                *(
+                    [preferences["primary_language"]]
+                    if preferences.get("primary_language")
+                    else []
+                ),
+            ],
         ),
-        ("seniority", _values([analysis.grade_from, analysis.grade_to])),
-        ("formats", _values(analysis.work_format)),
+        ("seniority", _values([analysis.grade_from, analysis.grade_to]), None),
+        ("formats", _values(analysis.work_format), None),
         (
             "geography",
             _values([analysis.hiring_geography, analysis.country, analysis.city]),
+            (
+                []
+                if any(
+                    value in {"worldwide", "world", "весь мир"} for value in geography
+                )
+                else None
+            ),
         ),
-        ("vacancy_languages", _values(analysis.vacancy_language)),
+        ("vacancy_languages", _values(analysis.vacancy_language), None),
     )
-    for key, actual in checks:
-        expected = _values(preferences.get(key, []))
+    for key, actual, explicit_expected in checks:
+        expected = _values(
+            explicit_expected
+            if explicit_expected is not None
+            else preferences.get(key, [])
+        )
         if not expected:
             continue
         if not actual:
