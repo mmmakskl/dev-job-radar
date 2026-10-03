@@ -5,7 +5,7 @@ from datetime import datetime
 
 from tg_vacancy_bot import config
 from tg_vacancy_bot.models import NOT_SPECIFIED, VacancyAnalysis
-from tg_vacancy_bot.telegram.bot_api import TelegramBotApi
+from tg_vacancy_bot.telegram.bot_api import BotApiRejected, TelegramBotApi
 from tg_vacancy_bot.telegram.candidate_store import CandidateStore
 from tg_vacancy_bot.telegram.notifier import format_vacancy_notification
 
@@ -76,10 +76,15 @@ class CandidateVacancyNotifier:
                 parse_mode='HTML',
                 reply_markup=channel_keyboard(vacancy.callback_key),
             )
-        except Exception:
+        except BotApiRejected:
             if not strict_delivery:
                 self.store.release_channel_delivery(vacancy_id)
             logging.error('Не удалось отправить пользовательскую Telegram-карточку')
+            return False
+        except Exception:
+            # A timeout can follow a successful Telegram send. Keep the claim
+            # until an operator reconciles the uncertain channel message.
+            logging.error('Исход отправки пользовательской карточки неизвестен')
             return False
         message_id = sent.get('message_id') if isinstance(sent, dict) else None
         self.store.mark_channel_published(

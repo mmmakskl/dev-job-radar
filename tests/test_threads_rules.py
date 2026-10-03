@@ -87,7 +87,7 @@ def test_llm_classification_uses_existing_client(monkeypatch):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
 
-    from tg_vacancy_bot.llm import mistral
+    from tg_vacancy_bot.llm import mistral, universal
     from tg_vacancy_bot.threads.rules import classify_text
 
     create = AsyncMock(
@@ -106,6 +106,7 @@ def test_llm_classification_uses_existing_client(monkeypatch):
         chat=SimpleNamespace(completions=SimpleNamespace(create=create))
     )
     monkeypatch.setattr(mistral, '_get_client', lambda: client)
+    monkeypatch.setattr(universal, '_claim_daily_call', lambda _limit: True)
     assert asyncio.run(classify_text('ambiguous engineer post')).is_job is True
     client.with_options.assert_called_once_with(max_retries=0)
     assert (
@@ -116,12 +117,29 @@ def test_llm_classification_uses_existing_client(monkeypatch):
 def test_llm_error_is_sanitized(monkeypatch):
     import asyncio
     from tg_vacancy_bot.llm import mistral
+    from tg_vacancy_bot.llm import universal
     from tg_vacancy_bot.threads.rules import classify_text
 
     def broken():
         raise RuntimeError('secret-token')
 
     monkeypatch.setattr(mistral, '_get_client', broken)
+    monkeypatch.setattr(universal, '_claim_daily_call', lambda _limit: True)
     with pytest.raises(ClassificationError) as caught:
         asyncio.run(classify_text('post'))
     assert str(caught.value) == 'classification_failed'
+
+
+def test_threads_classification_respects_shared_daily_quota(monkeypatch):
+    import asyncio
+    from tg_vacancy_bot.llm import mistral, universal
+    from tg_vacancy_bot.threads.rules import classify_text
+
+    monkeypatch.setattr(universal, '_claim_daily_call', lambda _limit: False)
+    monkeypatch.setattr(
+        mistral,
+        '_get_client',
+        lambda: (_ for _ in ()).throw(AssertionError('API must not be called')),
+    )
+    with pytest.raises(ClassificationError, match='daily_limit'):
+        asyncio.run(classify_text('Go engineer'))

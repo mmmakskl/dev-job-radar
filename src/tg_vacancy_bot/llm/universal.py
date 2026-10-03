@@ -255,7 +255,9 @@ def go_projection_accepted(decision: UniversalDecision) -> bool:
         and decision.confidence >= get_track('go').confidence_threshold
         and 'Go' in normalize_stack(decision.analysis.required_stack)
         and any(
-            item['confidence'] >= get_track('go').confidence_threshold
+            item['role_id']
+            in {'backend_developer', 'api_developer', 'devops_engineer', 'sre_engineer'}
+            and item['confidence'] >= get_track('go').confidence_threshold
             for item in decision.classifications
         )
     )

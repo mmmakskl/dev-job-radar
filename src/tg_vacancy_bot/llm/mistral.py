@@ -44,16 +44,25 @@ async def analyze_text(vacancy_text: str) -> VacancyAnalysis | None:
     """
     max_attempts = config.MISTRAL_MAX_ATTEMPTS
     for attempt in range(max_attempts):
+        from tg_vacancy_bot.llm.universal import _claim_daily_call
+
+        if not _claim_daily_call(config.MISTRAL_DAILY_LIMIT):
+            logging.warning('[MISTRAL] Daily quota exhausted')
+            return None
         response_text = None
         try:
-            response = await _get_client().chat.completions.create(
-                model=config.MISTRAL_MODEL,
-                messages=[
-                    {"role": "system", "content": config.MISTRAL_SYSTEM_PROMPT},
-                    {"role": "user", "content": vacancy_text},
-                ],
-                response_format={"type": "json_object"},
-                temperature=config.MISTRAL_TEMPERATURE,
+            response = (
+                await _get_client()
+                .with_options(max_retries=0)
+                .chat.completions.create(
+                    model=config.MISTRAL_MODEL,
+                    messages=[
+                        {"role": "system", "content": config.MISTRAL_SYSTEM_PROMPT},
+                        {"role": "user", "content": vacancy_text},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=config.MISTRAL_TEMPERATURE,
+                )
             )
 
             response_text = response.choices[0].message.content

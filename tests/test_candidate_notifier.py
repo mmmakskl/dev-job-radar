@@ -6,6 +6,7 @@ from tg_vacancy_bot.llm.schemas import validate_analysis_result
 from tg_vacancy_bot import config
 from tg_vacancy_bot.telegram import candidate_notifier
 from tg_vacancy_bot.telegram.candidate_notifier import CandidateVacancyNotifier
+from tg_vacancy_bot.telegram.bot_api import BotApiError, BotApiRejected
 from tg_vacancy_bot.telegram.candidate_store import CandidateStore
 from tests.test_llm_schemas import valid_payload
 
@@ -21,7 +22,7 @@ class FakeBotApi:
 
 class FailingBotApi:
     async def send_message(self, *args, **kwargs):
-        raise RuntimeError('temporary Bot API failure')
+        raise BotApiRejected('explicit rejection')
 
 
 def test_build_candidate_notifier_uses_configured_card_channel(monkeypatch, tmp_path):
@@ -161,3 +162,29 @@ def test_candidate_notifier_releases_failed_delivery_for_retry(tmp_path) -> None
 
     assert sent is False
     assert state == 'pending'
+
+
+def test_channel_send_timeout_stays_uncertain_across_retry(tmp_path) -> None:
+    class TimeoutApi:
+        def __init__(self):
+            self.calls = 0
+
+        async def send_message(self, *args, **kwargs):
+            self.calls += 1
+            raise BotApiError('response lost after send')
+
+    store = CandidateStore(str(tmp_path / 'candidate.sqlite3'))
+    api = TimeoutApi()
+    notifier = CandidateVacancyNotifier(api, store, '@beta_vacancies')
+    kwargs = {
+        'vacancy_id': 'jobs_ambiguous',
+        'post_link': 'https://t.me/jobs/ambiguous',
+        'channel_name': 'jobs',
+        'data': validate_analysis_result(valid_payload()),
+        'published_at': datetime(2026, 8, 13, tzinfo=timezone.utc),
+    }
+
+    assert asyncio.run(notifier(**kwargs)) is False
+    assert store.channel_delivery_state('jobs_ambiguous') == 'sending'
+    asyncio.run(notifier(**kwargs))
+    assert api.calls == 1

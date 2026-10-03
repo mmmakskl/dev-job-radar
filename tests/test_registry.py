@@ -1,9 +1,10 @@
 """Offline integration checks; mocked decisions do not measure Mistral quality."""
 
 import asyncio
+import json
 import sqlite3
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
 import pytest
@@ -157,6 +158,73 @@ def test_go_projection_needs_required_significant_go():
     assert not go_projection_accepted(optional)
     assert not go_projection_accepted(decision('Go', confidence=89))
     assert not go_projection_accepted(decision('Go', role_confidence=89))
+
+
+def test_go_projection_rejects_unrelated_high_confidence_role():
+    unrelated = replace(
+        decision('Go'),
+        classifications=(
+            {
+                'direction_id': 'design',
+                'specialization_id': 'product_design',
+                'role_id': 'product_designer',
+                'confidence': 95,
+            },
+        ),
+    )
+    assert not go_projection_accepted(unrelated)
+
+
+def test_jsonl_dedupe_import_preserves_exact_keys_and_active_hash_ttl(tmp_path):
+    candidate_path = str(tmp_path / 'candidate.sqlite3')
+    VacancyRegistry(candidate_path)
+    state_path = tmp_path / 'state.jsonl'
+    recent = datetime.now(timezone.utc) - timedelta(days=1)
+    old = datetime.now(timezone.utc) - timedelta(days=40)
+    events = [
+        {
+            'event': 'exported',
+            'post_link': 'https://t.me/jobs/101',
+            'text_hash': 'recent-hash',
+            'created_at': recent.isoformat(),
+        },
+        {
+            'event': 'exported',
+            'post_link': 'https://t.me/jobs/102',
+            'text_hash': 'expired-hash',
+            'created_at': old.isoformat(),
+        },
+    ]
+    state_path.write_text('\n'.join(json.dumps(e) for e in events) + '\n')
+
+    preview = import_legacy(candidate_path, state_path=str(state_path))
+    assert preview['dedupe_keys'] == 5
+    with sqlite3.connect(candidate_path) as connection:
+        assert (
+            connection.execute('SELECT COUNT(*) FROM registry_dedupe_keys').fetchone()[
+                0
+            ]
+            == 0
+        )
+
+    applied = import_legacy(candidate_path, state_path=str(state_path), dry_run=False)
+    repeated = import_legacy(candidate_path, state_path=str(state_path), dry_run=False)
+    assert applied['dedupe_keys'] == repeated['dedupe_keys'] == 5
+    with sqlite3.connect(candidate_path) as connection:
+        rows = connection.execute(
+            'SELECT kind, key, created_at, expires_at FROM registry_dedupe_keys'
+        ).fetchall()
+    keys = {(kind, key) for kind, key, _, _ in rows}
+    assert ('link', 'https://t.me/jobs/101') in keys
+    assert ('id', 'jobs_101') in keys
+    assert ('link', 'https://t.me/jobs/102') in keys
+    assert ('id', 'jobs_102') in keys
+    assert ('hash', 'recent-hash') in keys
+    assert ('hash', 'expired-hash') not in keys
+    assert (
+        next(created for kind, key, created, _ in rows if key == 'recent-hash')
+        == recent.isoformat()
+    )
 
 
 def test_source_analysis_registry_matching_and_projection_path(tmp_path, monkeypatch):

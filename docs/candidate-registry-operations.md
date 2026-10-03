@@ -41,13 +41,19 @@ save/publish не превращают universal review/недоступный �
 PYTHONPATH=src venv/bin/python scripts/migrate_candidate_registry.py \
   --candidate-db /secure/data/candidate_bot.sqlite3 \
   --premium-db /secure/data/premium_search.sqlite3 \
-  --search-db /secure/data/admin/admin.sqlite3
+  --search-db /secure/data/admin/admin.sqlite3 \
+  --state-jsonl /secure/data/state.jsonl --text-hash-ttl-days 30
 ```
 
 Импорт включает старые общие Candidate-карточки и только сохранённые или
 опубликованные общие Premium/Threads результаты. Preview и личный архив не
 дают допуска в общий реестр. Отсутствующий полный анализ хранится как
 недоступный, без выдумывания классификаций или профильных совпадений.
+`--state-jsonl` импортирует только успешные `exported` события: точные ссылки
+и построенные из них ID бессрочно, text hashes — пока не истёк указанный TTL.
+Отчёт показывает число ключей без текстов и идентификаторов. Повторный импорт
+идемпотентен; исходный JSONL не изменяется и остаётся текущим источником
+дедупликации.
 Известная дата источника сохраняется; пустая дата повторного импорта её не
 затирает. Legacy callbacks, profile versions, drafts, archive и delivery states
 не пересоздаются. Exact source ID/URL может объединить источник; сходство
@@ -63,6 +69,7 @@ PYTHONPATH=src venv/bin/python scripts/migrate_candidate_registry.py \
   --candidate-db /secure/data/candidate_bot.sqlite3 \
   --premium-db /secure/data/premium_search.sqlite3 \
   --search-db /secure/data/admin/admin.sqlite3 \
+  --state-jsonl /secure/data/state.jsonl --text-hash-ttl-days 30 \
   --backup /secure/backups/candidate-before-registry.sqlite3 --apply
 ```
 
@@ -90,6 +97,8 @@ Backup содержит персональные данные и хранитс�
 Bot API подтверждаются только вакансии этой страницы. Явный отказ возвращает
 их в pending; сетевой timeout и сбой между send/ack оставляют unknown/sending.
 Их нельзя автоматически возвращать в pending: сначала сверить с Telegram.
+Для общего канала действует та же граница: явный отказ Bot API освобождает
+заявку, а timeout оставляет `sending` до ручной сверки публикации.
 Неиспользованное резервирование без начала send может быть освобождено после
 таймаута. История уведомлений и сохранённые карточки не удаляются при
 отключении профиля.

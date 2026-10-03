@@ -921,8 +921,10 @@ def test_mistral_sdk_retries_disabled(monkeypatch):
     from tg_vacancy_bot.llm import mistral
     from tg_vacancy_bot.premium_search.analyzer import analyze_premium_text
     from tg_vacancy_bot import config
+    from tg_vacancy_bot.llm import universal
 
     monkeypatch.setattr(config, 'LEGACY_GO_ANALYSIS', True)
+    monkeypatch.setattr(universal, '_claim_daily_call', lambda _limit: True)
 
     create = AsyncMock(
         return_value=SimpleNamespace(
@@ -941,3 +943,20 @@ def test_mistral_sdk_retries_disabled(monkeypatch):
     assert asyncio.run(analyze_premium_text('Hiring Golang')).status() == 'accepted'
     client.with_options.assert_called_once_with(max_retries=0)
     assert create.await_count == 1
+
+
+def test_legacy_premium_analysis_respects_shared_daily_quota(monkeypatch):
+    from tg_vacancy_bot.llm import universal
+    from tg_vacancy_bot.llm import mistral
+    from tg_vacancy_bot.premium_search.analyzer import analyze_premium_text
+    from tg_vacancy_bot import config
+
+    monkeypatch.setattr(config, 'LEGACY_GO_ANALYSIS', True)
+    monkeypatch.setattr(universal, '_claim_daily_call', lambda _limit: False)
+    monkeypatch.setattr(
+        mistral,
+        '_get_client',
+        lambda: (_ for _ in ()).throw(AssertionError('API must not be called')),
+    )
+    with pytest.raises(universal.AnalysisUnavailable, match='daily_limit'):
+        asyncio.run(analyze_premium_text('Hiring Golang'))

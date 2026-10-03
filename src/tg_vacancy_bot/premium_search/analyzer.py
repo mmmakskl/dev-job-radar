@@ -167,6 +167,10 @@ async def analyze_premium_text(text: str) -> PremiumAnalysis:
         return adapt_universal(decision)
     from tg_vacancy_bot import config
     from tg_vacancy_bot.llm.mistral import _get_client
+    from tg_vacancy_bot.llm.universal import AnalysisUnavailable, _claim_daily_call
+
+    if not _claim_daily_call(config.MISTRAL_DAILY_LIMIT):
+        raise AnalysisUnavailable('daily_limit')
 
     example = {key: None for key in sorted(EXPECTED_FIELDS)}
     example.update(
