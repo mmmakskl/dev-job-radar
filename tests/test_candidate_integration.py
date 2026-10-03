@@ -542,5 +542,5 @@ def test_concurrent_private_save_never_overwrites_ingestion_card(tmp_path):
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         list(executor.map(write, (True, False)))
-    cards = store.list_for_user(2, 'new')
+    cards = store.list_for_user(2, 'undated')
     assert len(cards) == 1 and cards[0].title == 'Shared'

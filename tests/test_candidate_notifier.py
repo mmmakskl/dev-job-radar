@@ -57,7 +57,7 @@ def test_candidate_notifier_sends_compact_buttons_and_registers_vacancy(
         'post_link': 'https://t.me/jobs/42',
         'channel_name': 'jobs',
         'data': validate_analysis_result(valid_payload()),
-        'published_at': datetime(2026, 8, 13, tzinfo=timezone.utc),
+        'published_at': datetime.now(timezone.utc),
     }
     sent = asyncio.run(notifier(**kwargs))
     repeated = asyncio.run(notifier(**kwargs))

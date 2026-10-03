@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -272,3 +273,56 @@ def test_failed_confirmation_keeps_draft_and_no_partial_profile(tmp_path):
     assert store.list_profiles(1) == []
     assert not store.put_profile_draft(1, {**draft, 'revision': 2}, 1)
     assert not store.put_profile_draft(1, {**draft, 'token': 'forged'}, 0)
+
+
+def test_published_date_windows_boundaries_unknown_dates_and_saved_archive(tmp_path):
+    store = CandidateStore(str(tmp_path / 'candidate.sqlite3'))
+    now = datetime(2026, 10, 4, 12, tzinfo=timezone.utc)
+    dates = {
+        'exact_now': now,
+        'inside_24h': now - timedelta(hours=23, seconds=59),
+        'exact_24h': now - timedelta(hours=24),
+        'exact_7d': now - timedelta(days=7),
+        'beyond_7d': now - timedelta(days=7, seconds=1),
+        'saved_old': now - timedelta(days=40),
+        'future': now + timedelta(seconds=1),
+    }
+    items = {}
+    for vacancy_id, published in dates.items():
+        items[vacancy_id] = store.register_vacancy(
+            vacancy_id=vacancy_id,
+            title=vacancy_id,
+            company=None,
+            summary=None,
+            post_link=f'https://t.me/jobs/{vacancy_id}',
+            apply_link=None,
+            published_at=published.isoformat(),
+        )
+    items['unknown'] = store.register_vacancy(
+        vacancy_id='unknown',
+        title='unknown',
+        company=None,
+        summary=None,
+        post_link='https://t.me/jobs/unknown',
+        apply_link=None,
+        published_at=None,
+    )
+    store.save_vacancy(1, items['saved_old'].callback_key)
+    assert {v.vacancy_id for v in store.list_for_user(1, 'new', now=now)} == {
+        'exact_now',
+        'inside_24h',
+        'exact_24h',
+    }
+    assert {
+        v.vacancy_id for v in store.list_for_user(1, 'older', now=now, older_days=7)
+    } == {'exact_7d'}
+    assert [v.vacancy_id for v in store.list_for_user(1, 'undated', now=now)] == [
+        'unknown'
+    ]
+    assert [v.vacancy_id for v in store.list_for_user(1, 'saved', now=now)] == [
+        'saved_old'
+    ]
+    max_days = store.max_older_days()
+    assert max_days >= 30
+    assert store.set_older_days(1, min(14, max_days))
+    assert not store.set_older_days(1, store.max_older_days() + 1)

@@ -261,7 +261,7 @@ def test_source_analysis_registry_matching_and_projection_path(tmp_path, monkeyp
             args[0], args[1], 'https://t.me/jobs/2', None, 'jobs'
         )
         sheets.assert_awaited_once()
-        assert len(registry.candidates.list_for_user(1, 'new')) == 1
+        assert len(registry.candidates.list_for_user(1, 'undated')) == 1
 
     asyncio.run(run())
 

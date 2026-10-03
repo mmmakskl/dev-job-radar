@@ -6,7 +6,7 @@ import sqlite3
 import uuid
 from contextlib import nullcontext
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -131,6 +131,14 @@ class CandidateStore:
                 telegram_user_id INTEGER PRIMARY KEY,
                 draft_json TEXT NOT NULL
             )""")
+            connection.execute(
+                '''CREATE TABLE IF NOT EXISTS candidate_feed_preferences (
+                telegram_user_id INTEGER PRIMARY KEY,
+                older_days INTEGER NOT NULL DEFAULT 7,
+                awaiting_custom_days INTEGER NOT NULL DEFAULT 0,
+                CHECK (older_days BETWEEN 2 AND 3650)
+            )'''
+            )
             self._add_column_if_missing(
                 connection, 'vacancies', 'go_visible', 'INTEGER NOT NULL DEFAULT 1'
             )
@@ -170,6 +178,7 @@ class CandidateStore:
         values = dict(preferences or {})
         list_fields = {
             'stacks',
+            'additional_languages',
             'seniority',
             'formats',
             'geography',
@@ -181,7 +190,7 @@ class CandidateStore:
         unknown = (
             set(values)
             - list_fields
-            - {'timezone', 'delivery_mode', 'premium_template_id'}
+            - {'timezone', 'delivery_mode', 'premium_template_id', 'primary_language'}
         )
         if unknown:
             raise ValueError(f'Unsupported profile fields: {sorted(unknown)}')
@@ -192,6 +201,21 @@ class CandidateStore:
             ):
                 raise ValueError(f'{field} must be a list of non-empty strings')
             values[field] = list(dict.fromkeys(x.strip() for x in value))
+        primary_language = values.get('primary_language')
+        allowed_languages = {
+            'go',
+            'python',
+            'java',
+            'javascript',
+            'cpp',
+            'csharp',
+            'rust',
+            'php',
+            'kotlin',
+            'swift',
+        }
+        if primary_language is not None and primary_language not in allowed_languages:
+            raise ValueError('Unsupported primary programming language')
         timezone_name = values.get('timezone', 'Europe/Moscow')
         try:
             ZoneInfo(timezone_name)
@@ -617,22 +641,117 @@ class CandidateStore:
         return True
 
     def list_for_user(
-        self, telegram_user_id: int, bucket: str
+        self,
+        telegram_user_id: int,
+        bucket: str,
+        *,
+        now: datetime | None = None,
+        older_days: int = 7,
     ) -> list[CandidateVacancy]:
-        if bucket not in {'new', 'saved'}:
+        if bucket not in {'new', 'older', 'undated', 'saved'}:
             raise ValueError(f'Unsupported vacancy bucket: {bucket}')
+        now = now or datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        now = now.astimezone(timezone.utc)
+        if not 2 <= older_days <= 3650:
+            raise ValueError('older_days must be between 2 and 3650')
+        cutoff_24h = (now - timedelta(hours=24)).isoformat()
+        cutoff_n_days = (now - timedelta(days=older_days)).isoformat()
+        trusted_date = "(v.published_at LIKE '%Z' OR v.published_at LIKE '%+__:__' OR v.published_at LIKE '%-__:__')"
         if bucket == 'new':
-            query = '''SELECT v.* FROM vacancies v
-                WHERE v.go_visible=1 AND NOT EXISTS (SELECT 1 FROM user_saved_vacancies s
+            query = f'''SELECT v.* FROM vacancies v
+                WHERE v.go_visible=1 AND v.published_at IS NOT NULL
+                AND julianday(v.published_at) IS NOT NULL AND {trusted_date}
+                AND julianday(v.published_at) >= julianday(?)
+                AND julianday(v.published_at) <= julianday(?)
+                AND NOT EXISTS (SELECT 1 FROM user_saved_vacancies s
                     WHERE s.vacancy_id=v.vacancy_id AND s.telegram_user_id=?)
-                ORDER BY COALESCE(v.published_at, v.created_at) DESC'''
+                ORDER BY v.published_at DESC'''
+            parameters = (cutoff_24h, now.isoformat(), telegram_user_id)
+        elif bucket == 'older':
+            query = f'''SELECT v.* FROM vacancies v
+                WHERE v.go_visible=1 AND v.published_at IS NOT NULL
+                AND julianday(v.published_at) IS NOT NULL AND {trusted_date}
+                AND julianday(v.published_at) >= julianday(?)
+                AND julianday(v.published_at) < julianday(?)
+                AND NOT EXISTS (SELECT 1 FROM user_saved_vacancies s
+                    WHERE s.vacancy_id=v.vacancy_id AND s.telegram_user_id=?)
+                ORDER BY v.published_at DESC'''
+            parameters = (cutoff_n_days, cutoff_24h, telegram_user_id)
+        elif bucket == 'undated':
+            query = f'''SELECT v.* FROM vacancies v
+                WHERE v.go_visible=1 AND (v.published_at IS NULL
+                    OR julianday(v.published_at) IS NULL OR NOT {trusted_date})
+                AND NOT EXISTS (SELECT 1 FROM user_saved_vacancies s
+                    WHERE s.vacancy_id=v.vacancy_id AND s.telegram_user_id=?)
+                ORDER BY v.created_at DESC'''
+            parameters = (telegram_user_id,)
         else:
             query = '''SELECT v.* FROM vacancies v
                 JOIN user_saved_vacancies s ON s.vacancy_id=v.vacancy_id
                 WHERE s.telegram_user_id=? ORDER BY s.saved_at DESC'''
+            parameters = (telegram_user_id,)
         with self._connect() as connection:
-            rows = connection.execute(query, (telegram_user_id,)).fetchall()
+            rows = connection.execute(query, parameters).fetchall()
         return [self._vacancy_from_row(row) for row in rows]
+
+    def get_older_days(self, telegram_user_id: int) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                'SELECT older_days FROM candidate_feed_preferences WHERE telegram_user_id=?',
+                (telegram_user_id,),
+            ).fetchone()
+        return int(row['older_days']) if row else 7
+
+    def max_older_days(self) -> int:
+        """Allow custom windows through the oldest dated item actually stored."""
+        with self._connect() as connection:
+            age = connection.execute(
+                "SELECT CAST(julianday('now')-MIN(julianday(published_at)) AS INTEGER) "
+                'FROM vacancies WHERE go_visible=1 AND published_at IS NOT NULL'
+            ).fetchone()[0]
+        return max(30, min(3650, int(age or 0)))
+
+    def set_older_days(self, telegram_user_id: int, days: int) -> bool:
+        if (
+            not isinstance(days, int)
+            or isinstance(days, bool)
+            or not 2 <= days <= self.max_older_days()
+        ):
+            return False
+        with self._connect() as connection:
+            connection.execute(
+                '''INSERT INTO candidate_feed_preferences
+                (telegram_user_id,older_days,awaiting_custom_days) VALUES(?,?,0)
+                ON CONFLICT(telegram_user_id) DO UPDATE SET
+                older_days=excluded.older_days,awaiting_custom_days=0''',
+                (telegram_user_id, days),
+            )
+        return True
+
+    def request_custom_days(self, telegram_user_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                '''INSERT INTO candidate_feed_preferences
+                (telegram_user_id,older_days,awaiting_custom_days) VALUES(?,7,1)
+                ON CONFLICT(telegram_user_id) DO UPDATE SET awaiting_custom_days=1''',
+                (telegram_user_id,),
+            )
+
+    def take_custom_days_request(self, telegram_user_id: int) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                'SELECT awaiting_custom_days FROM candidate_feed_preferences WHERE telegram_user_id=?',
+                (telegram_user_id,),
+            ).fetchone()
+            if not row or not row['awaiting_custom_days']:
+                return False
+            connection.execute(
+                'UPDATE candidate_feed_preferences SET awaiting_custom_days=0 WHERE telegram_user_id=?',
+                (telegram_user_id,),
+            )
+            return True
 
     @staticmethod
     def _vacancy_from_row(row: sqlite3.Row) -> CandidateVacancy:
