@@ -138,10 +138,7 @@ CANDIDATE_BOT_CHANNEL = parse_telegram_target(os.getenv('CANDIDATE_BOT_CHANNEL')
 CANDIDATE_BOT_ALLOWED_USER_IDS = parse_telegram_user_ids(
     os.getenv('CANDIDATE_BOT_ALLOWED_USER_IDS')
 )
-# Independent shadow rollout: an existing bot tester is not automatically enrolled.
-CANDIDATE_PROFILE_FEED_ENABLED = parse_bool_env(
-    os.getenv('CANDIDATE_PROFILE_FEED_ENABLED')
-)
+# The personal track feed follows CANDIDATE_BOT_ALLOWED_USER_IDS.
 CANDIDATE_PROFILE_ALLOWED_USER_IDS = parse_telegram_user_ids(
     os.getenv('CANDIDATE_PROFILE_ALLOWED_USER_IDS')
 )

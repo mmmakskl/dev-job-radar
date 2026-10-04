@@ -111,13 +111,13 @@ def test_feed_is_owner_scoped_current_confirmed_and_keeps_new_go_only(tmp_path):
     assert 'пока нет' in api.messages[-1][1]
 
 
-def test_personal_feed_requires_independent_rollout(tmp_path):
+def test_personal_feed_is_available_without_profile_rollout_allowlist(tmp_path):
     store, registry, _, decision = setup(tmp_path)
     ingest(registry, decision)
     api = FakeBotApi()
     bot = CandidateBot(api, store, {1}, registry=registry, profile_feed_enabled=True)
     asyncio.run(bot.handle_update(message(1, 'Для меня')))
-    assert 'недоступна' in api.messages[-1][1]
+    assert 'Backend' in api.messages[-1][1]
 
 
 def test_delivery_priority_manual_nonblocking_and_stable_timezone(tmp_path):
@@ -153,6 +153,17 @@ def test_delivery_priority_manual_nonblocking_and_stable_timezone(tmp_path):
     assert len(api.messages) == 1
     assert states(runner.store) == {'jobs_1': 'sent'}
     assert manual.is_active and hourly.is_active
+
+
+def test_onec_profiles_never_trigger_automatic_personal_delivery():
+    from types import SimpleNamespace
+
+    profile = SimpleNamespace(
+        is_active=True,
+        direction_id='onec',
+        preferences={'delivery_mode': 'immediate'},
+    )
+    assert determining_profile(SimpleNamespace(matched_profiles=(profile,))) is None
 
 
 def test_hourly_eligibility_uses_winning_profile_local_hour(tmp_path):

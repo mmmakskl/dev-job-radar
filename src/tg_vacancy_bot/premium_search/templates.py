@@ -70,7 +70,9 @@ def list_templates(profile: Any) -> tuple[QueryTemplate, ...]:
     return tuple(
         template
         for template in _BY_ROLE.get(role_id, ())
-        if template.kind == 'role' or template.stack_id in selected
+        if template.kind == 'role'
+        or template.stack_id in selected
+        or role_id.startswith('onec_')
     )
 
 
@@ -98,7 +100,11 @@ def compose_query(
     selected_stacks = (
         preferences.get('stacks', ()) if isinstance(preferences, dict) else ()
     )
-    if template.kind == 'stack' and template.stack_id not in (selected_stacks or ()):
+    if (
+        template.kind == 'stack'
+        and template.stack_id not in (selected_stacks or ())
+        and not template.role_id.startswith('onec_')
+    ):
         raise ValueError('Стек шаблона не выбран в профиле')
     if language not in {'main', 'ru', 'en'}:
         raise ValueError('Язык должен быть main, ru или en')

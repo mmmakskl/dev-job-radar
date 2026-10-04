@@ -39,7 +39,9 @@ def determining_profile(match):
     automatic = [
         p
         for p in match.matched_profiles
-        if p.is_active and p.preferences.get('delivery_mode') in {'immediate', 'hourly'}
+        if p.is_active
+        and p.direction_id != 'onec'
+        and p.preferences.get('delivery_mode') in {'immediate', 'hourly'}
     ]
     return min(
         automatic,
