@@ -1,9 +1,11 @@
 import asyncio
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock
 
 from tg_vacancy_bot.telegram.candidate_bot import CandidateBot
 from tg_vacancy_bot.telegram.candidate_store import CandidateStore
+from tg_vacancy_bot.telegram.bot_api import BotApiError
 
 
 class FakeBotApi:
@@ -24,6 +26,7 @@ class FakeBotApi:
 
     async def edit_message_text(self, chat_id, message_id, text, **kwargs):
         self.edits.append((chat_id, message_id, text, kwargs))
+        self.messages[message_id - 1] = (chat_id, text, kwargs)
         return {'message_id': message_id}
 
 
@@ -178,15 +181,49 @@ def test_start_has_feed_archive_profiles_and_access_is_limited(tmp_path):
 
 
 def press(bot, api, label, user=1):
-    rows = api.messages[-1][2]['reply_markup']['inline_keyboard']
+    message_index = next(
+        index
+        for index in range(len(api.messages) - 1, -1, -1)
+        if api.messages[index][0] == user
+        and 'reply_markup' in api.messages[index][2]
+        and 'inline_keyboard' in api.messages[index][2]['reply_markup']
+    )
+    rows = api.messages[message_index][2]['reply_markup']['inline_keyboard']
     data = next(b['callback_data'] for row in rows for b in row if b['text'] == label)
-    asyncio.run(bot.handle_update(callback(user, data)))
+    update = callback(user, data)
+    update['callback_query']['message'] = {
+        'message_id': message_index + 1,
+        'chat': {'id': user, 'type': 'private'},
+    }
+    asyncio.run(bot.handle_update(update))
     return data
 
 
 def complete_draft(bot, api, store):
     while store.get_profile_draft(1)['step'] != 'preview':
-        press(bot, api, 'Пропустить')
+        step = store.get_profile_draft(1)['step']
+        if step in {'stacks', 'additional_languages', 'legacy_stacks'}:
+            press(bot, api, 'Готово')
+        elif step in {'seniority', 'formats'}:
+            press(bot, api, 'Все')
+        elif step == 'geography':
+            press(bot, api, 'Весь мир')
+            press(bot, api, 'Готово')
+        else:
+            press(bot, api, 'Пропустить')
+
+
+def create_roleless_profile(bot, api, store, direction, technology):
+    press(bot, api, 'Создать профиль')
+    press(bot, api, direction)
+    press(bot, api, technology)
+    press(bot, api, 'Готово')
+    press(bot, api, 'Все')
+    press(bot, api, 'Все')
+    press(bot, api, 'Весь мир')
+    press(bot, api, 'Готово')
+    press(bot, api, 'Сохранить профиль')
+    return store.list_profiles(1)[-1]
 
 
 def test_wizard_restart_back_validation_save_and_multiple_profiles(tmp_path):
@@ -199,15 +236,16 @@ def test_wizard_restart_back_validation_save_and_multiple_profiles(tmp_path):
     revision = store.get_profile_draft(1)['revision']
     asyncio.run(bot.handle_update(callback(1, stale)))
     assert store.get_profile_draft(1)['revision'] == revision
-    assert 'устарела' in api.answers[-1][1]
+    assert api.answers[-1][1] == 'Обновляю экран.'
     asyncio.run(bot.handle_update(callback(2, stale)))
     assert store.get_profile_draft(2) is None
-    press(bot, api, 'Серверная разработка (backend)')
-    press(bot, api, 'Backend-разработчик — создаёт серверную часть и API')
     press(bot, api, 'Go')
-    press(bot, api, 'Пропустить')
-    press(bot, api, 'Пропустить')
-    press(bot, api, 'Пропустить')
+    bot = CandidateBot(api, CandidateStore(store.path), {1, 2})
+    press(bot, api, 'Готово')
+    press(bot, api, 'Все')
+    press(bot, api, 'Все')
+    press(bot, api, 'Весь мир')
+    press(bot, api, 'Готово')
     bot = CandidateBot(api, CandidateStore(store.path), {1, 2})
     asyncio.run(bot.handle_update(message(1, 'Профили')))
     press(bot, api, 'Продолжить черновик')
@@ -215,16 +253,16 @@ def test_wizard_restart_back_validation_save_and_multiple_profiles(tmp_path):
     saved = press(bot, api, 'Сохранить профиль')
     asyncio.run(bot.handle_update(callback(1, saved)))
     profile = store.list_profiles(1)[0]
-    assert profile.name == 'Go backend-разработчик'
-    assert profile.preferences['primary_language'] == 'go'
+    assert profile.name == 'Разработка · Go'
+    assert profile.preferences['stacks'] == ['go']
     assert profile.preferences['delivery_mode'] == 'manual'
     assert len(store.get_profile_versions(1, profile.profile_id)) == 1
     assert store.get_profile_draft(1) is None
     asyncio.run(bot.handle_update(message(1, 'Профили')))
     press(bot, api, 'Создать профиль')
     press(bot, api, 'Тестирование')
-    press(bot, api, 'Ручное тестирование')
-    press(bot, api, 'Инженер по тестированию — проверяет продукт вручную')
+    press(bot, api, 'Sql')
+    press(bot, api, 'Готово')
     complete_draft(bot, api, store)
     press(bot, api, 'Сохранить профиль')
     assert len(store.list_profiles(1)) == 2
@@ -247,10 +285,13 @@ def test_edit_cancel_toggle_templates_and_forged_callbacks(tmp_path):
     asyncio.run(bot.handle_update(callback(2, f'p:toggle:{profile.profile_id}:1')))
     assert store.get_profile(1, profile.profile_id).is_active
     asyncio.run(bot.handle_update(message(1, 'Профили')))
-    press(bot, api, '✓ Go')
-    toggle = press(bot, api, 'Выключить')
+    press(bot, api, '● Go')
+    toggle = press(bot, api, 'Снять активность')
     asyncio.run(bot.handle_update(callback(1, toggle)))
     assert not store.get_profile(1, profile.profile_id).is_active
+    asyncio.run(bot.handle_update(message(1, '/profiles')))
+    press(bot, api, 'Выбрать активным')
+    press(bot, api, '● Go')
     press(bot, api, 'Premium-шаблоны')
     rows = api.messages[-1][2]['reply_markup']['inline_keyboard']
     data = rows[-1][0]['callback_data']
@@ -261,10 +302,13 @@ def test_edit_cancel_toggle_templates_and_forged_callbacks(tmp_path):
     assert any('Запрос:' in m[1] for m in api.messages)
     asyncio.run(bot.handle_update(callback(1, data)))
     assert store.get_profile(1, profile.profile_id).version == chosen.version
+    asyncio.run(bot.handle_update(message(1, 'Профили')))
+    press(bot, api, '● Go')
     press(bot, api, 'Редактировать')
     press(bot, api, 'Тестирование')
     draft = store.get_profile_draft(1)
-    assert 'role_id' not in draft['values']
+    assert draft['values']['role_id'] == ''
+    assert draft['values']['specialization_id'] == ''
     assert draft['values']['preferences']['stacks'] == []
     assert 'premium_template_id' not in draft['values']['preferences']
     for action in [
@@ -272,7 +316,7 @@ def test_edit_cancel_toggle_templates_and_forged_callbacks(tmp_path):
         'choose:-1',
         'choose:999',
         'choose:broken',
-        'next',
+        'skip',
         'advanced',
     ]:
         asyncio.run(
@@ -285,7 +329,7 @@ def test_edit_cancel_toggle_templates_and_forged_callbacks(tmp_path):
     assert store.get_profile_draft(1) is None
     assert store.get_profile(1, profile.profile_id) == chosen
     asyncio.run(bot.handle_update(message(1, 'Профили')))
-    press(bot, api, '○ Go')
+    press(bot, api, '● Go')
     press(bot, api, 'Редактировать')
     legacy_draft = store.get_profile_draft(1)
     assert legacy_draft['values']['preferences']['stacks'] == ['go']
@@ -301,37 +345,39 @@ def test_short_profile_wizard_and_advanced_settings_preserve_timezone(tmp_path):
     asyncio.run(bot.handle_update(message(1, '/profiles')))
     press(bot, api, 'Создать профиль')
     press(bot, api, 'Разработка')
-    press(bot, api, 'Серверная разработка (backend)')
-    press(bot, api, 'Backend-разработчик — создаёт серверную часть и API')
-    assert 'Docker' not in api.messages[-1][1]
+    initial_stack_buttons = api.messages[-1][2]['reply_markup']['inline_keyboard']
+    assert not any(
+        'Docker' in button['text'] for row in initial_stack_buttons for button in row
+    )
     press(bot, api, 'Go')
-    press(bot, api, 'Опытный')
+    press(bot, api, 'Готово')
+    press(bot, api, 'Senior')
+    press(bot, api, 'Middle')
+    press(bot, api, 'Готово')
     press(bot, api, 'Удалённо')
+    press(bot, api, 'Готово')
     press(bot, api, 'Россия')
     press(bot, api, 'Готово')
     assert not store.list_profiles(1)
     press(bot, api, 'Дополнительные настройки')
-    press(bot, api, 'Пропустить')
     assert 'PostgreSQL, gRPC, Docker' in api.messages[-1][1]
     asyncio.run(bot.handle_update(message(1, 'SQL, API')))
     press(bot, api, 'Пропустить')
     press(bot, api, 'Русский')
     press(bot, api, 'Сохранить профиль')
     profile = store.list_profiles(1)[0]
-    assert profile.name == 'Go backend-разработчик'
-    assert profile.preferences['primary_language'] == 'go'
+    assert profile.name == 'Разработка · Go'
+    assert profile.preferences['stacks'] == ['go']
     assert profile.preferences['required_skills'] == ['SQL', 'API']
     assert profile.preferences['vacancy_languages'] == ['ru']
     assert profile.preferences['timezone'] == 'Europe/Moscow'
     asyncio.run(bot.handle_update(message(1, '/profiles')))
-    press(bot, api, '✓ Go backend-разработчик')
+    press(bot, api, 'Выбрать активным')
+    press(bot, api, '● Разработка · Go')
     press(bot, api, 'Дополнительные настройки')
-    assert store.get_profile_draft(1)['step'] == 'additional_languages'
+    assert store.get_profile_draft(1)['step'] == 'required_skills'
     press(bot, api, 'Пропустить')
     press(bot, api, 'Пропустить')
-    press(bot, api, 'Пропустить')
-    press(bot, api, 'Пропустить')
-    press(bot, api, 'Назад')
     assert store.get_profile_draft(1)['step'] == 'vacancy_languages'
     press(bot, api, 'Отмена')
     updated = store.get_profile(1, profile.profile_id)
@@ -363,13 +409,13 @@ def test_edit_old_profile_keeps_legacy_matching_and_delivery_preferences(tmp_pat
     api = FakeBotApi()
     bot = CandidateBot(api, store, {1})
     asyncio.run(bot.handle_update(message(1, 'Профили')))
-    press(bot, api, '✓ My backend')
+    press(bot, api, '● My backend')
     press(bot, api, 'Редактировать')
     press(bot, api, '✓ Разработка')
-    press(bot, api, '✓ Серверная разработка (backend)')
-    press(bot, api, '✓ Backend-разработчик — создаёт серверную часть и API')
-    press(bot, api, 'Пропустить')
-    complete_draft(bot, api, store)
+    press(bot, api, 'Готово')
+    press(bot, api, 'Готово')
+    press(bot, api, 'Готово')
+    press(bot, api, 'Готово')
     press(bot, api, 'Сохранить профиль')
     updated = store.get_profile(1, old.profile_id)
     for field in (
@@ -386,8 +432,166 @@ def test_edit_old_profile_keeps_legacy_matching_and_delivery_preferences(tmp_pat
     assert updated.preferences['timezone'] == 'Europe/Berlin'
     assert updated.preferences['delivery_mode'] == 'hourly'
     asyncio.run(bot.handle_update(message(1, 'Профили')))
-    press(bot, api, '✓ Backend-разработчик')
+    press(bot, api, '● My backend')
     press(bot, api, 'Дополнительные настройки')
-    press(bot, api, 'Пропустить')
+    press(bot, api, 'Готово')
     assert 'Технологии из старых настроек' in api.messages[-1][1]
     assert 'go' in api.messages[-1][1] and 'python' in api.messages[-1][1]
+
+
+def test_new_profile_uses_catalog_technology_pages_and_edits_one_message(tmp_path):
+    store, _ = make_store(tmp_path)
+    api = FakeBotApi()
+    bot = CandidateBot(api, store, {1})
+    asyncio.run(bot.handle_update(message(1, '/profiles')))
+    press(bot, api, 'Создать профиль')
+    wizard_message_count = len(api.messages)
+    press(bot, api, 'Разработка')
+    draft = store.get_profile_draft(1)
+    assert draft['step'] == 'stacks'
+    assert draft['values']['specialization_id'] == ''
+    assert draft['values']['role_id'] == ''
+    assert len(api.messages) == wizard_message_count
+    assert api.edits[-1][1] == api.messages[-1][0] or api.edits[-1][1] == 2
+    assert 'Языки и технологии' in api.edits[-1][2]
+    press(bot, api, 'Go')
+    assert store.get_profile_draft(1)['values']['preferences']['stacks'] == ['go']
+    press(bot, api, '→')
+    assert store.get_profile_draft(1)['values']['preferences']['stacks'] == ['go']
+    assert len(api.messages) == wizard_message_count
+    press(bot, api, 'Готово')
+    press(bot, api, 'Все')
+    press(bot, api, 'Все')
+    press(bot, api, 'Весь мир')
+    press(bot, api, 'Готово')
+    press(bot, api, 'Сохранить профиль')
+    assert len(api.messages) == wizard_message_count
+    assert 'сохранён' in api.messages[-1][1]
+    assert 'Профили' in api.messages[-1][1]
+
+
+def test_grade_format_are_multi_select_and_all_means_no_filter(tmp_path):
+    store, _ = make_store(tmp_path)
+    api = FakeBotApi()
+    bot = CandidateBot(api, store, {1})
+    asyncio.run(bot.handle_update(message(1, '/profiles')))
+    press(bot, api, 'Создать профиль')
+    press(bot, api, 'Дизайн')
+    press(bot, api, 'Готово')
+    assert store.get_profile_draft(1)['step'] == 'seniority'
+    press(bot, api, 'Middle')
+    press(bot, api, 'Senior')
+    assert store.get_profile_draft(1)['values']['preferences']['seniority'] == [
+        'middle',
+        'senior',
+    ]
+    press(bot, api, 'Готово')
+    assert store.get_profile_draft(1)['step'] == 'formats'
+    press(bot, api, 'Удалённо')
+    press(bot, api, 'Гибрид')
+    assert store.get_profile_draft(1)['values']['preferences']['formats'] == [
+        'remote',
+        'hybrid',
+    ]
+    press(bot, api, 'Все')
+    assert store.get_profile_draft(1)['values']['preferences']['formats'] == []
+
+
+def test_vacancy_text_language_has_exactly_one_skip_button_and_is_not_programming_language(
+    tmp_path,
+):
+    store, _ = make_store(tmp_path)
+    profile = store.create_profile(
+        1,
+        name='Legacy backend',
+        direction_id='development',
+        specialization_id='backend',
+        role_id='backend_developer',
+    )
+    api = FakeBotApi()
+    bot = CandidateBot(api, store, {1})
+    asyncio.run(bot.handle_update(callback(1, f'p:advanced:{profile.profile_id}:1')))
+    draft = store.get_profile_draft(1)
+    while draft['step'] != 'vacancy_languages':
+        press(
+            bot,
+            api,
+            'Готово' if draft['step'] == 'additional_languages' else 'Пропустить',
+        )
+        draft = store.get_profile_draft(1)
+    rows = api.messages[-1][2]['reply_markup']['inline_keyboard']
+    labels = [button['text'] for row in rows for button in row]
+    assert labels.count('Пропустить') == 1
+    assert 'язык объявления, а не язык программирования' in api.messages[-1][1].lower()
+
+
+def test_every_main_menu_command_has_a_live_route(tmp_path):
+    store, _ = make_store(tmp_path)
+    api = FakeBotApi()
+    bot = CandidateBot(api, store, {1})
+    routes = {
+        '/start': 'Выберите',
+        '/help': 'Команды',
+        '/new': 'Опубликовано',
+        '/older': 'Выберите срок',
+        '/saved': 'Сохранённых',
+        '/undated': 'без достоверной даты',
+        '/profiles': 'Профили',
+    }
+    for command, expected in routes.items():
+        asyncio.run(bot.handle_update(message(1, command)))
+        assert expected.lower() in api.messages[-1][1].lower()
+
+
+def test_ambiguous_legacy_active_profiles_require_explicit_selection(tmp_path):
+    store, _ = make_store(tmp_path)
+    first = store.create_profile(
+        1,
+        name='Go',
+        direction_id='development',
+        specialization_id='backend',
+        role_id='backend_developer',
+    )
+    second = store.create_profile(
+        1,
+        name='Python',
+        direction_id='development',
+        specialization_id='backend',
+        role_id='backend_developer',
+        is_active=False,
+    )
+    with store._connect() as connection:
+        connection.execute(
+            'UPDATE candidate_profiles SET is_active=1 WHERE profile_id=?',
+            (second.profile_id,),
+        )
+    api = FakeBotApi()
+    bot = CandidateBot(
+        api,
+        store,
+        {1},
+        profile_feed_enabled=True,
+        profile_allowed_user_ids={1},
+        registry=object(),
+    )
+    asyncio.run(bot.handle_update(message(1, 'Для меня')))
+    assert 'раньше было активно несколько' in api.messages[-2][1]
+    assert store.get_active_profile_state(1) == 'ambiguous'
+    press(bot, api, 'Выбрать активным')
+    assert store.get_active_profile_state(1) == 'single'
+    assert store.get_active_profile(1).profile_id == first.profile_id
+
+
+def test_wizard_replaces_uneditable_message_and_persists_new_message_id(tmp_path):
+    store, _ = make_store(tmp_path)
+    api = FakeBotApi()
+    bot = CandidateBot(api, store, {1})
+    asyncio.run(bot.handle_update(message(1, '/profiles')))
+    press(bot, api, 'Создать профиль')
+    old_id = store.get_profile_draft(1)['message_id']
+    api.edit_message_text = AsyncMock(side_effect=BotApiError('message is too old'))
+    press(bot, api, 'Разработка')
+    draft = store.get_profile_draft(1)
+    assert len(api.messages) == 3
+    assert draft['message_id'] == 3 and draft['message_id'] != old_id
+    assert 'Языки и технологии' in api.messages[-1][1]

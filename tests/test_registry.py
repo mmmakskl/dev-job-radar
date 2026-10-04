@@ -79,9 +79,9 @@ def test_shared_analysis_current_profile_versions_and_owner_isolation(tmp_path):
     result = registry.list_personal_matches(1)
     assert len(result) == 1
     assert {p.profile_id for p in result[0].matched_profiles} == {
-        first.profile_id,
         second.profile_id,
     }
+    assert registry.candidates.get_active_profile(1) == second
     assert registry.list_personal_matches(2) == []
     registry.candidates.update_profile(1, first.profile_id, is_active=False)
     registry.candidates.update_profile(
@@ -92,7 +92,7 @@ def test_shared_analysis_current_profile_versions_and_owner_isolation(tmp_path):
         assert c.execute('SELECT COUNT(*) FROM registry_analyses').fetchone()[0] == 1
         assert (
             c.execute('SELECT COUNT(*) FROM registry_profile_matches').fetchone()[0]
-            == 3
+            == 2
         )
 
 

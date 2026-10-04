@@ -6,13 +6,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
-from tg_vacancy_bot.candidate_catalog import CATALOG, validate_profile_path
+from tg_vacancy_bot.candidate_catalog import CATALOG, direction_stacks
 from tg_vacancy_bot.premium_search.templates import compose_query, list_templates
 from tg_vacancy_bot.telegram.candidate_card_formatter import (
     format_card,
     format_legacy_card,
 )
 from tg_vacancy_bot.telegram.candidate_delivery_worker import personal_card
+from tg_vacancy_bot.telegram.bot_api import BotApiError
 from tg_vacancy_bot.telegram.candidate_search import CandidateSearch
 from tg_vacancy_bot.telegram.candidate_store import (
     CandidateProfile,
@@ -23,6 +24,7 @@ from tg_vacancy_bot.telegram.candidate_store import (
 
 class CandidateBotApi(Protocol):
     async def get_updates(self, offset: int | None, timeout: int) -> list[dict]: ...
+    async def set_my_commands(self, commands: list[dict[str, str]]) -> None: ...
     async def send_message(
         self,
         chat_id: int | str,
@@ -48,9 +50,7 @@ class CandidateBotApi(Protocol):
 
 PROFILE_STEPS = (
     'direction_id',
-    'specialization_id',
-    'role_id',
-    'primary_language',
+    'stacks',
     'seniority',
     'formats',
     'geography',
@@ -61,9 +61,7 @@ STEP_LABELS = dict(
         PROFILE_STEPS,
         (
             'Направление',
-            'Специализация',
-            'Роль',
-            'Основной язык',
+            'Языки и технологии',
             'Грейд',
             'Формат',
             'География',
@@ -148,11 +146,11 @@ ROLE_LABELS = {
     'content_manager': ('Контент-менеджер', 'планирует и выпускает материалы'),
 }
 SENIORITY_LABELS = {
-    'intern': 'Стажёр',
-    'junior': 'Начинающий',
-    'middle': 'Средний',
-    'senior': 'Опытный',
-    'lead': 'Ведущий',
+    'intern': 'Intern',
+    'junior': 'Junior',
+    'middle': 'Middle',
+    'senior': 'Senior',
+    'lead': 'Lead',
 }
 FORMAT_LABELS = {'remote': 'Удалённо', 'hybrid': 'Гибрид', 'office': 'В офисе'}
 SPECIALIZATION_LABELS = {
@@ -190,6 +188,58 @@ GEOGRAPHY_CHOICES = [
     ('ЕС', 'ЕС'),
     ('__custom__', 'Другая страна'),
 ]
+TECHNOLOGY_LABELS = {
+    **LANGUAGE_LABELS,
+    'typescript': 'TypeScript',
+    'ruby': 'Ruby',
+    'nodejs': 'Node.js',
+    'react_native': 'React Native',
+    'embedded_linux': 'Embedded Linux',
+    'power_bi': 'Power BI',
+    'pytorch': 'PyTorch',
+    'tensorflow': 'TensorFlow',
+    'mlops': 'MLOps',
+    'figma': 'Figma',
+    'photoshop': 'Photoshop',
+    'illustrator': 'Illustrator',
+    'indesign': 'InDesign',
+    'kubernetes': 'Kubernetes',
+    'postgresql': 'PostgreSQL',
+    'kafka': 'Kafka',
+    'airflow': 'Airflow',
+    'terraform': 'Terraform',
+    'ansible': 'Ansible',
+    'aws': 'AWS',
+    'gcp': 'Google Cloud',
+    'linux': 'Linux',
+    'windows': 'Windows',
+    'prometheus': 'Prometheus',
+    'grafana': 'Grafana',
+    'owasp': 'OWASP',
+    'secure_code': 'Безопасный код',
+    'incident_response': 'Реагирование на инциденты',
+    'people_management': 'Управление командами',
+    'hr_analytics': 'HR-аналитика',
+}
+PAGE_SIZE = 8
+DIRECTION_LABELS = {
+    'development': 'Разработка',
+    'qa': 'Тестирование',
+    'data_ai': 'Данные и искусственный интеллект',
+    'analytics': 'Аналитика',
+    'design': 'Дизайн',
+    'devops_admin': 'DevOps и системное администрирование',
+    'security': 'Информационная безопасность',
+    'management': 'Менеджмент',
+    'hr_recruiting': 'HR и подбор',
+    'marketing_content': 'Маркетинг и контент',
+}
+
+
+def _technology_label(value: str) -> str:
+    if value in TECHNOLOGY_LABELS:
+        return TECHNOLOGY_LABELS[value]
+    return value.replace('_', ' ').strip().title()
 
 
 def personal_keyboard(callback_key: str) -> dict:
@@ -267,15 +317,17 @@ def _language_choices(values: dict) -> list[tuple[str, str]]:
 
 
 def _profile_name(values: dict) -> str:
-    label = ROLE_LABELS.get(
-        values.get('role_id'), (values.get('role_id', 'Профиль'), '')
-    )[0]
-    language = values.get('preferences', {}).get('primary_language')
-    if language and values.get('direction_id') in {'development', 'qa', 'data_ai'}:
-        return (
-            f'{LANGUAGE_LABELS.get(language, language)} {label[:1].lower() + label[1:]}'
-        )
-    return label
+    if values.get('name'):
+        return values['name']
+    direction = DIRECTION_LABELS.get(values.get('direction_id'), 'Профиль')
+    preferences = values.get('preferences', {})
+    technologies = preferences.get('stacks', [])
+    language = preferences.get('primary_language')
+    if language:
+        technologies = [language, *technologies]
+    if technologies:
+        return f'{direction} · {_technology_label(technologies[0])}'
+    return direction
 
 
 def _days_label(days: int) -> str:
@@ -322,6 +374,18 @@ class CandidateBot:
         }
 
     async def _personal_feed(self, user_id: int) -> None:
+        state = self.store.get_active_profile_state(user_id)
+        if state != 'single':
+            message = (
+                'Выберите один активный профиль: раньше было активно несколько.'
+                if state == 'ambiguous'
+                else 'Сначала создайте профиль и выберите его активным.'
+            )
+            await self.api.send_message(
+                user_id, message, reply_markup={'inline_keyboard': []}
+            )
+            await self._profiles(user_id)
+            return
         await self._show_browser(user_id, 'for_me')
 
     async def _show_age_choices(self, user_id: int) -> None:
@@ -422,6 +486,19 @@ class CandidateBot:
         return True
 
     async def run(self, shutdown_event: asyncio.Event) -> None:
+        await self.api.set_my_commands(
+            [
+                {'command': 'start', 'description': 'Открыть главное меню'},
+                {'command': 'help', 'description': 'Показать команды'},
+                {'command': 'new', 'description': 'Вакансии за последние 24 часа'},
+                {'command': 'older', 'description': 'Выбрать срок ранней ленты'},
+                {'command': 'saved', 'description': 'Сохранённые вакансии'},
+                {'command': 'undated', 'description': 'Объявления без даты'},
+                {'command': 'forme', 'description': 'Поиск по активному профилю'},
+                {'command': 'profiles', 'description': 'Профили и активный профиль'},
+                {'command': 'cancel', 'description': 'Отменить текущую настройку'},
+            ]
+        )
         offset: int | None = None
         while not shutdown_event.is_set():
             try:
@@ -459,7 +536,14 @@ class CandidateBot:
         if text in {'/start', '/help'}:
             await self.api.send_message(
                 chat_id,
-                'Выберите период ленты. Даты берутся из публикации источника; без даты — отдельный раздел.',
+                (
+                    'Выберите период ленты. Даты берутся из публикации источника; '
+                    'объявления без даты находятся отдельно.'
+                    if text == '/start'
+                    else 'Команды: /new — новые за 24 часа; /older — срок ранней ленты; '
+                    '/saved — сохранённые; /undated — без даты; /forme — по активному профилю; '
+                    '/profiles — профили; /cancel — отменить мастер.'
+                ),
                 reply_markup=self._keyboard(user_id),
             )
             return
@@ -469,24 +553,41 @@ class CandidateBot:
         if text in {'Профили', '/profiles'}:
             await self._profiles(user_id)
             return
+        if text in {'/new', 'Новые · 24 часа'}:
+            await self._show_browser(user_id, 'new')
+            return
+        if text in {'/older'}:
+            await self._show_age_choices(user_id)
+            return
+        if text in {'/saved', 'Сохранённые'}:
+            await self._show_browser(user_id, 'saved')
+            return
+        if text in {'/undated', 'Без даты'}:
+            await self._show_browser(user_id, 'undated')
+            return
         if text in {'Отмена', '/cancel'} and self.store.get_profile_draft(user_id):
             draft = self.store.get_profile_draft(user_id)
             self.store.finish_profile_draft(
                 user_id, draft['token'], draft['revision'], save=False
             )
-            await self.api.send_message(user_id, 'Настройка отменена.')
+            if isinstance(draft.get('message_id'), int):
+                try:
+                    await self.api.edit_message_text(
+                        user_id,
+                        draft['message_id'],
+                        'Настройка профиля отменена.',
+                        reply_markup={'inline_keyboard': []},
+                    )
+                except BotApiError:
+                    await self.api.send_message(user_id, 'Настройка профиля отменена.')
+            else:
+                await self.api.send_message(user_id, 'Настройка профиля отменена.')
             return
         if text.startswith('Ранее'):
             await self._show_age_choices(user_id)
             return
-        if text == 'Новые · 24 часа':
+        if text in {'Новые', '/new'}:
             await self._show_browser(user_id, 'new')
-            return
-        if text == 'Без даты':
-            await self._show_browser(user_id, 'undated')
-            return
-        if text in {'Сохранённые', '/saved'}:
-            await self._show_browser(user_id, 'saved')
             return
         if self.store.take_custom_days_request(user_id):
             try:
@@ -522,7 +623,7 @@ class CandidateBot:
         if bucket is None:
             await self.api.send_message(
                 chat_id,
-                'Используйте «Новые», «Сохранённые» или «Профили».',
+                'Используйте кнопки «Новые», «Ранее», «Сохранённые», «Без даты» или «Профили».',
                 reply_markup=self._keyboard(user_id),
             )
             return
@@ -612,13 +713,26 @@ class CandidateBot:
             )
             return
         if parts[0] in {'p', 'w'}:
+            await self.api.answer_callback_query(callback_id, 'Обновляю экран.')
             try:
+                source_message = callback.get('message') or {}
+                if parts == ['p', 'resume'] and isinstance(
+                    source_message.get('message_id'), int
+                ):
+                    draft = self.store.get_profile_draft(user_id)
+                    if draft is not None:
+                        draft['message_id'] = source_message['message_id']
+                        self.store.put_profile_draft(user_id, draft, draft['revision'])
                 valid = await self._profile_callback(user_id, parts)
             except (ValueError, KeyError, TypeError):
                 valid = False
-            await self.api.answer_callback_query(
-                callback_id, 'Готово.' if valid else 'Кнопка устарела или недоступна.'
-            )
+            if not valid and parts[0] == 'w' and self.store.get_profile_draft(user_id):
+                await self._show_draft(user_id)
+            elif not valid:
+                await self.api.send_message(
+                    user_id,
+                    'Эта кнопка устарела. Откройте актуальный профиль в разделе «Профили».',
+                )
             return
         # Legacy status, search, and complaint callback payloads are deliberately
         # unsupported and can never write to personal data.
@@ -638,32 +752,16 @@ class CandidateBot:
         step, values = draft['step'], draft['values']
         directions = CATALOG['directions']
         if step == 'direction_id':
-            labels = {
-                'development': 'Разработка',
-                'qa': 'Тестирование',
-                'data_ai': 'Данные и искусственный интеллект',
-                'analytics': 'Аналитика',
-                'design': 'Дизайн',
-                'devops_admin': 'DevOps и системное администрирование',
-                'security': 'Информационная безопасность',
-                'management': 'Менеджмент',
-                'hr_recruiting': 'HR и подбор',
-                'marketing_content': 'Маркетинг и контент',
-            }
             return [
-                (d['id'], labels.get(d['id'], d['synonyms'][0])) for d in directions
+                (d['id'], DIRECTION_LABELS.get(d['id'], d['synonyms'][0]))
+                for d in directions
             ]
-        elif step == 'specialization_id':
-            items = next(d for d in directions if d['id'] == values['direction_id'])[
-                'specializations'
+        elif step == 'stacks':
+            return [
+                (item, _technology_label(item))
+                for item in direction_stacks(values['direction_id'])
             ]
-        elif step in {'role_id', 'primary_language', 'additional_languages'}:
-            specs = next(d for d in directions if d['id'] == values['direction_id'])[
-                'specializations'
-            ]
-            roles = next(s for s in specs if s['id'] == values['specialization_id'])[
-                'roles'
-            ]
+        elif step in {'primary_language', 'additional_languages'}:
             if step == 'primary_language':
                 return _language_choices(values)
             if step == 'additional_languages':
@@ -671,8 +769,6 @@ class CandidateBot:
                 return [
                     choice for choice in _language_choices(values) if choice[0] != main
                 ]
-            roles = [r for r in roles if r['id'] != 'api_developer']
-            items = roles
         elif step == 'legacy_stacks':
             role = _role_for_values(values)
             return [(value, value) for value in (role or {}).get('stacks', [])]
@@ -682,112 +778,156 @@ class CandidateBot:
             return {
                 'seniority': [(k, SENIORITY_LABELS[k]) for k in SENIORITY_LABELS],
                 'formats': [(k, FORMAT_LABELS[k]) for k in FORMAT_LABELS],
-                'vacancy_languages': [('ru', 'Русский'), ('en', 'Английский')],
+                'vacancy_languages': [
+                    ('ru', 'Русский'),
+                    ('en', 'Английский'),
+                    ('__all__', 'Любой'),
+                ],
             }.get(step, [])
-        if step == 'role_id':
-            return [
-                (
-                    item['id'],
-                    ROLE_LABELS.get(item['id'], (item['synonyms'][0], ''))[0]
-                    + (
-                        ' — ' + ROLE_LABELS[item['id']][1]
-                        if ROLE_LABELS.get(item['id'], ('', ''))[1]
-                        else ''
-                    ),
-                )
-                for item in items
-            ]
-        if step == 'specialization_id':
-            return [
-                (item['id'], SPECIALIZATION_LABELS.get(item['id'], item['synonyms'][0]))
-                for item in items
-            ]
-        return [(x['id'], x['synonyms'][0]) for x in items]
+        return []
 
     @staticmethod
     def _profile_text(values: dict) -> str:
         prefs = values.get('preferences', {})
-        role = ROLE_LABELS.get(values.get('role_id'), (values.get('role_id', '—'), ''))
-        direction = next(
-            (
-                item['synonyms'][0]
-                for item in CATALOG['directions']
-                if item['id'] == values.get('direction_id')
-            ),
-            '—',
-        )
-        specialization = next(
-            (
-                item['synonyms'][0]
-                for d in CATALOG['directions']
-                if d['id'] == values.get('direction_id')
-                for item in d['specializations']
-                if item['id'] == values.get('specialization_id')
-            ),
-            '—',
-        )
         lines = [
             f"Профиль: {_profile_name(values)}",
-            f'Направление: {direction}',
-            f'Специализация: {specialization}',
-            f'Роль: {role[0]} — {role[1]}' if role[1] else f'Роль: {role[0]}',
+            f"Направление: {DIRECTION_LABELS.get(values.get('direction_id'), '—')}",
+            (
+                'Активность: выбран'
+                if values.get('is_active')
+                else 'Активность: не выбран'
+            ),
         ]
-        if prefs.get('primary_language'):
-            lines.append(
-                f"Основной язык: {LANGUAGE_LABELS.get(prefs['primary_language'], prefs['primary_language'])}"
+        selected_stacks = list(prefs.get('stacks', []))
+        selected_stacks.extend(
+            item
+            for item in [
+                prefs.get('primary_language'),
+                *prefs.get('additional_languages', []),
+            ]
+            if item and item not in selected_stacks
+        )
+        lines.append(
+            'Языки и технологии: '
+            + (
+                ', '.join(_technology_label(item) for item in selected_stacks)
+                or 'любые'
             )
+        )
+        if prefs.get('seniority'):
+            lines.append(
+                'Грейд: '
+                + ', '.join(
+                    SENIORITY_LABELS.get(item, item) for item in prefs['seniority']
+                )
+            )
+        else:
+            lines.append('Грейд: любой')
+        if prefs.get('formats'):
+            lines.append(
+                'Формат: '
+                + ', '.join(FORMAT_LABELS.get(item, item) for item in prefs['formats'])
+            )
+        else:
+            lines.append('Формат: любой')
         lines.extend(
-            f"{STEP_LABELS.get(key, key)}: {', '.join(LANGUAGE_LABELS.get(item, item) for item in value) if isinstance(value, list) else value}"
+            f"{STEP_LABELS.get(key, key)}: {', '.join(_technology_label(item) for item in value) if isinstance(value, list) else value}"
             for key, value in prefs.items()
             if key
             not in {
                 'timezone',
                 'delivery_mode',
                 'premium_template_id',
-                'primary_language',
                 'stacks',
+                'seniority',
+                'formats',
+                'geography',
             }
             and value
         )
-        if prefs.get('stacks'):
-            lines.append(
-                'Технологии из прежних настроек: ' + ', '.join(prefs['stacks'])
-            )
         return '\n'.join(lines)[:3500]
 
-    async def _profiles(self, user_id: int) -> None:
-        rows = [
-            [
-                {
-                    'text': f'{"✓" if p.is_active else "○"} {p.name}',
-                    'callback_data': f'p:view:{p.profile_id}:{p.version}',
-                }
-            ]
-            for p in self.store.list_profiles(user_id)
-        ]
+    async def _profiles(
+        self, user_id: int, *, message_id: int | None = None, notice: str = ''
+    ) -> None:
+        profiles = self.store.list_profiles(user_id)
+        rows = []
+        for profile in profiles:
+            rows.append(
+                [
+                    {
+                        'text': f'{"●" if profile.is_active else "○"} {profile.name}',
+                        'callback_data': f'p:view:{profile.profile_id}:{profile.version}',
+                    },
+                    {
+                        'text': 'Выбрать активным',
+                        'callback_data': f'p:activate:{profile.profile_id}:{profile.version}',
+                    },
+                ]
+            )
         rows.append([{'text': 'Создать профиль', 'callback_data': 'p:new'}])
         if self.store.get_profile_draft(user_id):
             rows.append([{'text': 'Продолжить черновик', 'callback_data': 'p:resume'}])
-        await self.api.send_message(
-            user_id, 'Профили', reply_markup={'inline_keyboard': rows}
-        )
+        state = self.store.get_active_profile_state(user_id)
+        status = {
+            'ambiguous': 'Раньше были активны несколько профилей. Выберите один активный профиль ниже.',
+            'none': 'Активный профиль не выбран. Это не ограничивает общий сбор вакансий.',
+            'single': 'Активный профиль определяет персональную выдачу и сопоставление.',
+        }[state]
+        text = notice + 'Профили\n' + status
+        markup = {'inline_keyboard': rows}
+        if message_id is not None:
+            try:
+                await self.api.edit_message_text(
+                    user_id, message_id, text, reply_markup=markup
+                )
+                return
+            except BotApiError:
+                pass
+        await self.api.send_message(user_id, text, reply_markup=markup)
 
     async def _show_profile(self, user_id: int, profile: CandidateProfile) -> None:
         rows = [
             [
                 {
-                    'text': label,
-                    'callback_data': f'p:{action}:{profile.profile_id}:{profile.version}',
+                    'text': (
+                        'Снять активность' if profile.is_active else 'Выбрать активным'
+                    ),
+                    'callback_data': f'p:toggle:{profile.profile_id}:{profile.version}',
                 }
-            ]
-            for action, label in [
-                ('edit', 'Редактировать'),
-                ('advanced', 'Дополнительные настройки'),
-                ('toggle', 'Выключить' if profile.is_active else 'Включить'),
-                ('templates', 'Premium-шаблоны'),
-                ('search', 'Искать'),
-            ]
+            ],
+            [
+                {
+                    'text': 'Редактировать',
+                    'callback_data': f'p:edit:{profile.profile_id}:{profile.version}',
+                }
+            ],
+            [
+                {
+                    'text': 'Дополнительные настройки',
+                    'callback_data': f'p:advanced:{profile.profile_id}:{profile.version}',
+                }
+            ],
         ]
+        if self.store.get_active_profile(user_id) == profile and profile.role_id:
+            if list_templates(profile):
+                rows.append(
+                    [
+                        {
+                            'text': 'Premium-шаблоны',
+                            'callback_data': f'p:templates:{profile.profile_id}:{profile.version}',
+                        }
+                    ]
+                )
+            if self.search is not None and self.search._available(user_id):
+                rows.append(
+                    [
+                        {
+                            'text': 'Искать',
+                            'callback_data': f'p:search:{profile.profile_id}:{profile.version}',
+                        }
+                    ]
+                )
         await self.api.send_message(
             user_id,
             self._profile_text(vars(profile)),
@@ -817,13 +957,30 @@ class CandidateBot:
                 if profile
                 else {
                     'name': '',
+                    'specialization_id': '',
+                    'role_id': '',
                     'preferences': {
+                        'stacks': [],
                         'delivery_mode': 'manual',
                         'timezone': 'Europe/Moscow',
                     },
-                    'is_active': True,
+                    'is_active': False,
                 }
             )
+            values = {
+                **values,
+                'preferences': dict(values.get('preferences', {})),
+            }
+            if profile is not None:
+                preferences = values['preferences']
+                visible = list(preferences.get('stacks', []))
+                for item in [
+                    preferences.get('primary_language'),
+                    *preferences.get('additional_languages', []),
+                ]:
+                    if item and item not in visible:
+                        visible.append(item)
+                preferences['stacks'] = visible
             self.store.put_profile_draft(
                 user_id,
                 {
@@ -855,7 +1012,11 @@ class CandidateBot:
         main = values.get('preferences', {}).get('primary_language')
         choices = [choice for choice in choices if choice[0] != main]
         prefix = ['additional_languages'] if choices else []
-        if values.get('preferences', {}).get('stacks'):
+        if (
+            values.get('preferences', {}).get('stacks')
+            and values.get('specialization_id')
+            and values.get('role_id')
+        ):
             prefix.append('legacy_stacks')
         return [
             *prefix,
@@ -867,10 +1028,7 @@ class CandidateBot:
 
     @staticmethod
     def _basic_steps(values: dict) -> list[str]:
-        prefix = ['direction_id', 'specialization_id', 'role_id']
-        if _language_choices(values):
-            prefix.append('primary_language')
-        return [*prefix, 'seniority', 'formats', 'geography', 'preview']
+        return list(PROFILE_STEPS)
 
     async def _show_draft(self, user_id: int) -> None:
         draft = self.store.get_profile_draft(user_id)
@@ -883,7 +1041,7 @@ class CandidateBot:
         def button(label, action):
             return {'text': label, 'callback_data': prefix + action}
 
-        rows = []
+        rows: list[list[dict[str, str]]] = []
         if step == 'preview':
             text = 'Проверьте профиль перед сохранением:\n\n' + self._profile_text(
                 draft['values']
@@ -895,50 +1053,81 @@ class CandidateBot:
         else:
             hints = {
                 'direction_id': 'Выберите направление. Например: разработка или аналитика.',
-                'specialization_id': 'Уточните область. Например: backend или мобильная разработка.',
-                'role_id': 'Выберите понятную роль. Например: backend-разработчик.',
-                'primary_language': 'Какой язык для вас основной? Например: Go.',
-                'seniority': 'Выберите комфортный уровень. Например: средний (middle).',
-                'formats': 'Где готовы работать? Например: удалённо или в офисе.',
+                'stacks': 'Выберите любые подходящие языки и технологии из каталога. Пример: Go, PostgreSQL, Docker. Для HR и дизайна будут свои варианты.',
+                'seniority': 'Можно выбрать несколько уровней. Например: Middle и Senior.',
+                'formats': 'Можно выбрать несколько форматов. Например: удалённо и гибридно.',
                 'geography': 'Где ищете работу? Можно выбрать несколько стран или регионов.',
                 'additional_languages': 'Можно добавить языки помимо основного. Например: Python.',
                 'required_skills': self._required_skills_hint(draft['values']),
                 'excluded_skills': 'Какие технологии или условия исключить? Введите через запятую или пропустите.',
-                'vacancy_languages': 'Русский, английский или любой; это не язык программирования.',
+                'vacancy_languages': 'Язык текста объявления — русский, английский или любой. Это язык объявления, а не язык программирования.',
                 'legacy_stacks': 'Технологии из старых настроек. Это может быть Docker, PostgreSQL или язык; список уже участвует в matching.',
             }
             text = f"{STEP_LABELS.get(step, step)}\n{hints.get(step, 'Выберите подходящее или пропустите.')}"
+            if draft.get('input_prompt'):
+                text += '\n' + draft['input_prompt']
+            if draft.get('error'):
+                text += '\n' + draft['error']
             choices = self._choices(draft)
-            selected = draft['values']['preferences'].get(
-                ('stacks' if step == 'legacy_stacks' else step),
+            preferences = draft['values']['preferences']
+            selected = preferences.get(
+                'stacks' if step in {'stacks', 'legacy_stacks'} else step,
                 draft['values'].get(step, []),
             )
+            if not isinstance(selected, list):
+                selected = [selected] if selected else []
+            page_count = max(1, (len(choices) + PAGE_SIZE - 1) // PAGE_SIZE)
+            page = max(0, min(int(draft.get('page', 0)), page_count - 1))
+            draft['page'] = page
+            visible_choices = choices[page * PAGE_SIZE : (page + 1) * PAGE_SIZE]
             rows = [
-                [button(('✓ ' if key in selected else '') + label, f'choose:{i}')]
-                for i, (key, label) in enumerate(choices)
+                [
+                    button(
+                        ('✓ ' if key in selected else '') + label,
+                        f'choose:{page * PAGE_SIZE + i}',
+                    )
+                ]
+                for i, (key, label) in enumerate(visible_choices)
             ]
-            if step not in {'direction_id', 'specialization_id', 'role_id'}:
+            if page_count > 1:
+                page_controls = []
+                if page > 0:
+                    page_controls.append(button('←', f'page:{page - 1}'))
+                page_controls.append(button(f'{page + 1}/{page_count}', 'page:stay'))
+                if page + 1 < page_count:
+                    page_controls.append(button('→', f'page:{page + 1}'))
+                rows.append(page_controls)
+            if step != 'direction_id':
                 if step in {'required_skills', 'excluded_skills'}:
                     rows.append([button('Ввести через запятую', 'input')])
-                if step in {'geography', 'additional_languages', 'legacy_stacks'}:
+                if step in {
+                    'stacks',
+                    'seniority',
+                    'formats',
+                    'geography',
+                    'additional_languages',
+                    'legacy_stacks',
+                }:
                     rows.append([button('Готово', 'next')])
-                elif step in {'seniority', 'formats', 'vacancy_languages'} and choices:
+                if step in {'seniority', 'formats'}:
+                    rows.append([button('Все', 'all')])
+                if step in {
+                    'vacancy_languages',
+                    'primary_language',
+                    'required_skills',
+                    'excluded_skills',
+                }:
                     rows.append([button('Пропустить', 'skip')])
-                rows.append([button('Пропустить', 'skip')])
-                if step == 'primary_language' and not choices:
-                    text = 'Для этой роли основной язык не требуется. Можно продолжить.'
-                    rows.append([button('Продолжить', 'next')])
             if selected:
-                selected_labels = (
-                    [
-                        dict(choices).get(item, LANGUAGE_LABELS.get(item, item))
-                        for item in selected
-                        if isinstance(selected, list)
-                    ]
-                    if isinstance(selected, list)
-                    else [dict(choices).get(selected, selected)]
-                )
+                selected_labels = [
+                    dict(choices).get(item, _technology_label(item))
+                    for item in selected
+                ]
                 text += f"\nВыбрано: {', '.join(selected_labels)}"
+            elif step in {'seniority', 'formats'}:
+                text += '\nВыбрано: Все (без ограничения)'
+            elif step == 'stacks':
+                text += '\nВыбрано: без фильтра по языкам и технологиям'
         order = (
             self._advanced_steps(draft['values'])
             if draft.get('wizard') == 'advanced'
@@ -947,9 +1136,30 @@ class CandidateBot:
         if step != order[0]:
             rows.append([button('Назад', 'back')])
         rows.append([button('Отмена', 'cancel')])
-        await self.api.send_message(
-            user_id, text, reply_markup={'inline_keyboard': rows}
-        )
+        reply_markup = {'inline_keyboard': rows}
+        message_id = draft.get('message_id')
+        try:
+            if isinstance(message_id, int):
+                await self.api.edit_message_text(
+                    user_id,
+                    message_id,
+                    text,
+                    reply_markup=reply_markup,
+                )
+            else:
+                sent = await self.api.send_message(
+                    user_id, text, reply_markup=reply_markup
+                )
+                message_id = sent.get('message_id')
+                if isinstance(message_id, int):
+                    draft['message_id'] = message_id
+                    self.store.put_profile_draft(user_id, draft, draft['revision'])
+        except BotApiError:
+            sent = await self.api.send_message(user_id, text, reply_markup=reply_markup)
+            message_id = sent.get('message_id')
+            if isinstance(message_id, int):
+                draft['message_id'] = message_id
+                self.store.put_profile_draft(user_id, draft, draft['revision'])
 
     @staticmethod
     def _required_skills_hint(values: dict) -> str:
@@ -965,25 +1175,49 @@ class CandidateBot:
             'kotlin': 'Ktor, Spring, PostgreSQL',
             'swift': 'SwiftUI, UIKit, iOS',
         }
-        language = values.get('preferences', {}).get('primary_language')
+        preferences = values.get('preferences', {})
+        language = preferences.get('primary_language') or next(
+            (item for item in preferences.get('stacks', []) if item in examples), None
+        )
         example = examples.get(language, 'например, SQL или Docker')
         return f"Необязательно. Пример для ориентира: {example}. Это не добавит навыки автоматически; введите свои или пропустите."
 
     def _set_draft_value(self, draft: dict, value: str | list[str]) -> None:
         step, values = draft['step'], draft['values']
-        if step in PROFILE_STEPS[:3]:
-            if values.get(step) != value:
-                index = PROFILE_STEPS.index(step)
-                for key in PROFILE_STEPS[index + 1 : 3]:
-                    values.pop(key, None)
+        if step == 'direction_id':
+            if values.get('direction_id') != value:
+                values['specialization_id'] = ''
+                values['role_id'] = ''
                 values['preferences']['stacks'] = []
                 values['preferences'].pop('primary_language', None)
                 values['preferences'].pop('additional_languages', None)
                 values['preferences'].pop('premium_template_id', None)
                 values['name'] = ''
-            values[step] = value
-            if step == 'role_id' and not values['name']:
-                values['name'] = dict(self._choices(draft))[value]
+            values['direction_id'] = value
+            draft['page'] = 0
+        elif step in {'stacks', 'seniority', 'formats'}:
+            key = step
+            selected = list(values['preferences'].get(key, []))
+            if value == '__all__':
+                selected = []
+            elif isinstance(value, str):
+                if value in selected:
+                    selected.remove(value)
+                else:
+                    selected.append(value)
+            else:
+                selected = list(value)
+            values['preferences'][key] = list(dict.fromkeys(selected))
+            if step == 'stacks':
+                values['preferences'].pop('primary_language', None)
+                values['preferences'].pop('additional_languages', None)
+                values['preferences'].pop('premium_template_id', None)
+                self.store._validate_profile_path(
+                    values['direction_id'],
+                    values.get('specialization_id', ''),
+                    values.get('role_id', ''),
+                    selected,
+                )
         elif step == 'name':
             if not value or not str(value).strip():
                 raise ValueError('Имя не может быть пустым.')
@@ -1010,12 +1244,14 @@ class CandidateBot:
             if isinstance(value, str):
                 value = [value]
             pref_step = 'stacks' if step == 'legacy_stacks' else step
+            if step == 'vacancy_languages' and value == ['__all__']:
+                value = []
             preferences = {**values['preferences'], pref_step: value}
             if pref_step == 'stacks':
-                validate_profile_path(
+                self.store._validate_profile_path(
                     values['direction_id'],
-                    values['specialization_id'],
-                    values['role_id'],
+                    values.get('specialization_id', ''),
+                    values.get('role_id', ''),
                     value,
                 )
                 self.store._clear_invalid_template(values['role_id'], preferences)
@@ -1041,7 +1277,13 @@ class CandidateBot:
         draft = self.store.get_profile_draft(user_id)
         step = draft['step']
         try:
-            if step in {'direction_id', 'specialization_id', 'role_id', 'preview'}:
+            if step in {
+                'direction_id',
+                'stacks',
+                'seniority',
+                'formats',
+                'preview',
+            }:
                 raise ValueError('Используйте кнопки текущего шага.')
             if step == 'geography' and '__custom__' in draft['values'][
                 'preferences'
@@ -1060,11 +1302,16 @@ class CandidateBot:
                 )
                 self._set_draft_value(draft, value)
                 self._advance(draft)
+            draft['error'] = ''
+            draft['input_prompt'] = ''
             revision = draft['revision']
             draft['revision'] += 1
             self.store.put_profile_draft(user_id, draft, revision)
         except ValueError as error:
-            await self.api.send_message(user_id, str(error))
+            revision = draft['revision']
+            draft['error'] = str(error)
+            draft['revision'] += 1
+            self.store.put_profile_draft(user_id, draft, revision)
         await self._show_draft(user_id)
 
     async def _profile_callback(self, user_id: int, parts: list[str]) -> bool:
@@ -1098,7 +1345,8 @@ class CandidateBot:
                     await self._show_draft(user_id)
                     return True
                 if action == 'save' and step == 'preview':
-                    draft['values']['name'] = _profile_name(draft['values'])
+                    if draft.get('profile_id') is None:
+                        draft['values']['name'] = _profile_name(draft['values'])
                     if not self.store.put_profile_draft(user_id, draft, revision):
                         return False
                 result = self.store.finish_profile_draft(
@@ -1106,14 +1354,16 @@ class CandidateBot:
                 )
                 if not result:
                     return False
-                if action == 'save':
-                    await self.api.send_message(
-                        user_id,
-                        f"Профиль «{_profile_name(draft['values'])}» сохранён.",
-                    )
-                else:
-                    await self.api.send_message(user_id, 'Настройка профиля отменена.')
-                await self._profiles(user_id)
+                notice = (
+                    f"Профиль «{_profile_name(draft['values'])}» сохранён.\n"
+                    if action == 'save'
+                    else 'Настройка профиля отменена.\n'
+                )
+                await self._profiles(
+                    user_id,
+                    message_id=draft.get('message_id'),
+                    notice=notice,
+                )
                 return True
             if action == 'choose' and len(parts) == 5:
                 choices = self._choices(draft)
@@ -1121,15 +1371,10 @@ class CandidateBot:
                 if index < 0 or index >= len(choices):
                     return False
                 value = choices[index][0]
-                if step in {'direction_id', 'specialization_id', 'role_id'}:
+                if step == 'direction_id':
                     self._set_draft_value(draft, value)
                     self._advance(draft)
-                elif step in {
-                    'primary_language',
-                    'seniority',
-                    'formats',
-                    'vacancy_languages',
-                }:
+                elif step in {'primary_language', 'vacancy_languages'}:
                     self._set_draft_value(draft, value)
                     self._advance(draft)
                 elif step == 'geography' and value == '__custom__':
@@ -1137,9 +1382,8 @@ class CandidateBot:
                     draft['values']['preferences']['geography'] = list(
                         dict.fromkeys([*selected, '__custom__'])
                     )
-                    await self.api.send_message(
-                        user_id,
-                        'Введите страну или регион. Можно указать точное значение.',
+                    draft['input_prompt'] = (
+                        'Введите страну или регион. Можно указать точное значение.'
                     )
                 elif step == 'geography':
                     selected = list(draft['values']['preferences'].get('geography', []))
@@ -1156,6 +1400,14 @@ class CandidateBot:
                         else:
                             selected.append(value)
                     self._set_draft_value(draft, selected)
+                elif step in {
+                    'stacks',
+                    'seniority',
+                    'formats',
+                    'additional_languages',
+                    'legacy_stacks',
+                }:
+                    self._set_draft_value(draft, value)
                 else:
                     pref_step = 'stacks' if step == 'legacy_stacks' else step
                     selected = list(draft['values']['preferences'].get(pref_step, []))
@@ -1164,26 +1416,46 @@ class CandidateBot:
                     else:
                         selected.append(value)
                     self._set_draft_value(draft, selected)
+            elif len(parts) == 5 and action == 'page':
+                choices = self._choices(draft)
+                page_count = max(1, (len(choices) + PAGE_SIZE - 1) // PAGE_SIZE)
+                if parts[4] == 'stay':
+                    pass
+                else:
+                    page = int(parts[4])
+                    if page < 0 or page >= page_count:
+                        return False
+                    draft['page'] = page
             elif len(parts) != 4:
                 return False
             elif action == 'back':
                 self._back(draft)
             elif action == 'input' and step in {'required_skills', 'excluded_skills'}:
-                await self.api.send_message(
-                    user_id,
-                    'Введите свои значения через запятую. Примеры не добавляются автоматически.',
+                draft['input_prompt'] = (
+                    'Введите свои значения через запятую. Примеры не добавляются автоматически.'
                 )
-            elif action in {'skip', 'next'} and step not in (
-                'direction_id',
-                'specialization_id',
-                'role_id',
-                'preview',
-            ):
-                if action == 'skip':
-                    if draft.get('profile_id') is None and step == 'primary_language':
-                        draft['values']['preferences'].pop('primary_language', None)
-                    elif draft.get('profile_id') is None and step != 'legacy_stacks':
-                        self._set_draft_value(draft, [])
+            elif action == 'all' and step in {'seniority', 'formats'}:
+                self._set_draft_value(draft, '__all__')
+                self._advance(draft)
+            elif action == 'skip' and step in {
+                'primary_language',
+                'vacancy_languages',
+                'required_skills',
+                'excluded_skills',
+            }:
+                if step == 'vacancy_languages':
+                    draft['values']['preferences'].pop('vacancy_languages', None)
+                elif draft.get('profile_id') is None and step == 'primary_language':
+                    draft['values']['preferences'].pop('primary_language', None)
+                self._advance(draft)
+            elif action == 'next' and step in {
+                'stacks',
+                'seniority',
+                'formats',
+                'geography',
+                'additional_languages',
+                'legacy_stacks',
+            }:
                 self._advance(draft)
             else:
                 return False
@@ -1198,7 +1470,19 @@ class CandidateBot:
         if profile is None or parts[3] != str(profile.version):
             return False
         action = parts[1]
+        if action == 'activate':
+            selected = self.store.activate_profile(user_id, profile.profile_id)
+            if selected is None:
+                return False
+            await self.api.send_message(
+                user_id,
+                f'Активен профиль «{selected.name}». Только он используется для персонального поиска и выдачи.',
+            )
+            await self._profiles(user_id)
+            return True
         if action == 'template' and len(parts) == 5:
+            if self.store.get_active_profile(user_id) != profile:
+                return False
             templates = list_templates(profile)
             index = int(parts[4])
             if index < 0 or index >= len(templates):
@@ -1224,11 +1508,16 @@ class CandidateBot:
         elif action == 'advanced':
             await self._start_draft(user_id, profile, wizard='advanced')
         elif action == 'toggle':
-            profile = self.store.update_profile(
-                user_id,
-                profile.profile_id,
-                expected_version=profile.version,
-                is_active=not profile.is_active,
+            profile = (
+                self.store.update_profile(
+                    user_id,
+                    profile.profile_id,
+                    expected_version=profile.version,
+                    is_active=False,
+                )
+                if profile.is_active
+                and self.store.get_active_profile_state(user_id) == 'single'
+                else self.store.activate_profile(user_id, profile.profile_id)
             )
             if profile is None:
                 return False
@@ -1239,6 +1528,8 @@ class CandidateBot:
             else:
                 await self.search.preview(user_id, profile)
         elif action == 'templates':
+            if self.store.get_active_profile(user_id) != profile:
+                return False
             rows = [
                 [
                     {

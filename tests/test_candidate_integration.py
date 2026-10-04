@@ -8,7 +8,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from tests.test_candidate_bot import FakeBotApi, callback, message
+from tests.test_candidate_bot import (
+    FakeBotApi,
+    callback,
+    create_roleless_profile,
+    message,
+    press,
+)
 from tests.test_universal_analysis import _payload
 from tg_vacancy_bot import config
 from tg_vacancy_bot.llm.universal import _validate
@@ -86,6 +92,7 @@ def test_feed_is_owner_scoped_current_confirmed_and_keeps_new_go_only(tmp_path):
         direction_id='development',
         specialization_id='backend',
         role_id='backend_developer',
+        is_active=False,
     )
     ingest(registry, replace(decision, needs_review=True), 'jobs_2')
     api = FakeBotApi()
@@ -100,15 +107,15 @@ def test_feed_is_owner_scoped_current_confirmed_and_keeps_new_go_only(tmp_path):
     asyncio.run(bot.handle_update(message(1, 'Для меня')))
     assert len(api.messages) == 1
     text = api.messages[0][1]
-    assert 'Backend &lt;team&gt;' in text and 'Другой профиль' in text
+    assert 'Backend &lt;team&gt;' in text and 'Другой профиль' not in text
     assert '2020' in text and '&lt;role&gt;' in text
     assert store.list_for_user(1, 'new') == []
     asyncio.run(bot.handle_update(message(2, 'Для меня')))
-    assert 'пока нет' in api.messages[-1][1]
+    assert 'Активный профиль не выбран' in api.messages[-1][1]
     store.update_profile(1, profile.profile_id, is_active=False)
     store.update_profile(1, second.profile_id, is_active=False)
     asyncio.run(bot.handle_update(message(1, 'Для меня')))
-    assert 'пока нет' in api.messages[-1][1]
+    assert 'Сначала создайте профиль' in api.messages[-2][1]
 
 
 def test_personal_feed_requires_independent_rollout(tmp_path):
@@ -120,7 +127,7 @@ def test_personal_feed_requires_independent_rollout(tmp_path):
     assert 'недоступна' in api.messages[-1][1]
 
 
-def test_delivery_priority_manual_nonblocking_and_stable_timezone(tmp_path):
+def test_delivery_uses_only_the_selected_active_profile(tmp_path):
     store, registry, manual, decision = setup(tmp_path, 'manual')
     ingest(registry, decision)
     hourly = store.create_profile(
@@ -145,14 +152,114 @@ def test_delivery_priority_manual_nonblocking_and_stable_timezone(tmp_path):
     runner = worker(api, registry)
     asyncio.run(runner.tick(NOW))
     assert len(api.messages) == 1 and 'Часовая сводка' not in api.messages[0][1]
-    assert all(name in api.messages[0][1] for name in ['Часовой', 'Сразу', 'Backend'])
+    assert 'Сразу' in api.messages[0][1]
+    assert 'Часовой' not in api.messages[0][1]
+    assert 'Backend <team>' not in api.messages[0][1]
     store.update_profile(
         1, immediate.profile_id, preferences={'delivery_mode': 'hourly'}
     )
     asyncio.run(worker(api, registry).tick(NOW + timedelta(hours=2)))
     assert len(api.messages) == 1
     assert states(runner.store) == {'jobs_1': 'sent'}
-    assert manual.is_active and hourly.is_active
+    assert not store.get_profile(1, manual.profile_id).is_active
+    assert not store.get_profile(1, hourly.profile_id).is_active
+    assert store.get_active_profile(1).profile_id == immediate.profile_id
+
+
+def test_profile_creation_activation_personal_and_older_feed_navigation(tmp_path):
+    store = CandidateStore(str(tmp_path / 'candidate.sqlite3'))
+    registry = VacancyRegistry(store.path)
+    api = FakeBotApi()
+    bot = CandidateBot(
+        api,
+        store,
+        {1},
+        registry=registry,
+        profile_feed_enabled=True,
+        profile_allowed_user_ids={1},
+    )
+
+    asyncio.run(bot.handle_update(message(1, '/profiles')))
+    profile = create_roleless_profile(bot, api, store, 'Разработка', 'Go')
+    assert not profile.is_active
+    press(bot, api, 'Выбрать активным')
+    assert store.get_active_profile(1).profile_id == profile.profile_id
+
+    decision = _validate(_payload())
+    decision = replace(
+        decision,
+        analysis=replace(
+            decision.analysis,
+            title='Go engineer',
+            summary='Backend systems',
+            primary_language='Go',
+            required_stack=['Go'],
+        ),
+        classifications=(
+            {
+                'direction_id': 'development',
+                'specialization_id': 'backend',
+                'role_id': 'backend_developer',
+                'confidence': 95,
+            },
+        ),
+    )
+    # Both source and personal views use publication time, while eligibility is
+    # deliberately recent so it cannot accidentally substitute for it.
+    for index, days in enumerate((2, 5), start=1):
+        published = NOW - timedelta(days=days)
+        registry.ingest(
+            vacancy_id=f'older_{index}',
+            post_link=f'https://t.me/jobs/{index}',
+            decision=decision,
+            eligible_at=NOW,
+            published_at=published.isoformat(),
+        )
+        store.register_vacancy(
+            vacancy_id=f'older_{index}',
+            title=f'Go role {index}',
+            company='Acme',
+            summary='Remote role',
+            post_link=f'https://t.me/jobs/{index}',
+            apply_link=None,
+            published_at=published.isoformat(),
+        )
+
+    asyncio.run(bot.handle_update(message(1, 'Для меня')))
+    assert '1 / 2' in api.messages[-1][1]
+    assert 'Go engineer' in api.messages[-1][1]
+    nav = next(
+        button['callback_data']
+        for row in api.messages[-1][2]['reply_markup']['inline_keyboard']
+        for button in row
+        if button['text'] == '→'
+    )
+    update = callback(1, nav, 'personal-next')
+    update['callback_query']['message'] = {
+        'message_id': len(api.messages),
+        'chat': {'id': 1, 'type': 'private'},
+    }
+    asyncio.run(bot.handle_update(update))
+    assert '2 / 2' in api.edits[-1][2]
+
+    asyncio.run(bot.handle_update(message(1, 'Ранее · за 7 дней')))
+    press(bot, api, '7 дней')
+    assert '1 / 2' in api.messages[-1][1]
+    assert 'Go role 1' in api.messages[-1][1]
+    older_next = next(
+        button['callback_data']
+        for row in api.messages[-1][2]['reply_markup']['inline_keyboard']
+        for button in row
+        if button['text'] == '→'
+    )
+    update = callback(1, older_next, 'older-next')
+    update['callback_query']['message'] = {
+        'message_id': len(api.messages),
+        'chat': {'id': 1, 'type': 'private'},
+    }
+    asyncio.run(bot.handle_update(update))
+    assert '2 / 2' in api.edits[-1][2]
+    assert 'Go role 2' in api.edits[-1][2]
 
 
 def test_hourly_eligibility_uses_winning_profile_local_hour(tmp_path):

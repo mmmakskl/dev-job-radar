@@ -187,3 +187,47 @@ def test_api_developer_catalog_role_remains_compatible_with_backend_profile():
         )
     )
     assert match_profile(value, profile()).status == 'match'
+
+
+def test_roleless_profiles_match_direction_grade_ranges_and_format_alternatives():
+    vacancy = decision(
+        classifications=(
+            {
+                'direction_id': 'hr_recruiting',
+                'specialization_id': 'recruiting',
+                'role_id': 'it_recruiter',
+                'confidence': 99,
+            },
+        ),
+        analysis=SimpleNamespace(
+            required_stack=['sourcing'],
+            preferred_stack=[],
+            grade_from='Junior',
+            grade_to='Middle',
+            work_format='Hybrid',
+            hiring_geography='Worldwide',
+            country='Не указано',
+            city='Не указано',
+            vacancy_language='Не указано',
+            requirements='Sourcing experience',
+            responsibilities='',
+            summary='',
+        ),
+        confidence=99,
+    )
+    candidate = replace(
+        profile(direction_id='hr_recruiting'),
+        specialization_id='',
+        role_id='',
+        preferences={
+            'stacks': ['sourcing'],
+            'seniority': ['middle', 'senior'],
+            'formats': ['hybrid', 'office'],
+        },
+    )
+    assert match_profile(vacancy, candidate).status == 'match'
+    candidate = replace(
+        candidate,
+        preferences={**candidate.preferences, 'seniority': ['senior']},
+    )
+    assert match_profile(vacancy, candidate).status == 'no_match'

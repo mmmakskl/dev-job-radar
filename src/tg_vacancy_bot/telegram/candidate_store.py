@@ -10,7 +10,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from tg_vacancy_bot.candidate_catalog import CATALOG_VERSION, validate_profile_path
+from tg_vacancy_bot.candidate_catalog import (
+    CATALOG_VERSION,
+    validate_direction_stacks,
+    validate_profile_path,
+)
 
 
 @dataclass(frozen=True)
@@ -158,7 +162,10 @@ class CandidateStore:
                     JOIN vacancies v ON v.vacancy_id = a.vacancy_id
                     WHERE a.status='saved'
                 ''')
-            connection.execute('PRAGMA user_version = 3')
+            # Version 4 changes only the profile contract. Legacy role columns and
+            # rows are intentionally retained unchanged; role-neutral profiles use
+            # empty legacy fields and are validated by direction.
+            connection.execute('PRAGMA user_version = 4')
 
     def _profile_from_row(self, row: sqlite3.Row) -> CandidateProfile:
         return CandidateProfile(
@@ -248,11 +255,8 @@ class CandidateStore:
         if not isinstance(is_active, bool):
             raise ValueError('is_active must be a boolean')
         preferences = self._validate_preferences(preferences)
-        validate_profile_path(
-            direction_id,
-            specialization_id,
-            role_id,
-            preferences['stacks'],
+        self._validate_profile_path(
+            direction_id, specialization_id, role_id, preferences['stacks']
         )
         self._clear_invalid_template(role_id, preferences)
         name = name.strip()
@@ -269,6 +273,10 @@ class CandidateStore:
         with (
             nullcontext(_connection) if _connection is not None else self._connect()
         ) as connection:
+            if _connection is None:
+                connection.execute('BEGIN IMMEDIATE')
+            if is_active:
+                self._deactivate_others(connection, telegram_user_id, profile_id)
             connection.execute(
                 '''INSERT INTO candidate_profiles VALUES
                 (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)''',
@@ -344,13 +352,15 @@ class CandidateStore:
                 raise ValueError('is_active must be a boolean')
             values['name'] = values['name'].strip()
             values['preferences'] = self._validate_preferences(values['preferences'])
-            validate_profile_path(
+            self._validate_profile_path(
                 values['direction_id'],
                 values['specialization_id'],
                 values['role_id'],
                 values['preferences'].get('stacks', []),
             )
             self._clear_invalid_template(values['role_id'], values['preferences'])
+            if values['is_active'] and not current.is_active:
+                self._deactivate_others(connection, telegram_user_id, profile_id)
             version, now = current.version + 1, utc_now()
             snapshot = {**values, 'catalog_version': CATALOG_VERSION}
             connection.execute(
@@ -479,6 +489,108 @@ class CandidateStore:
                 (telegram_user_id,),
             ).fetchall()
         return [self._profile_from_row(row) for row in rows]
+
+    def get_active_profile_state(self, telegram_user_id: int) -> str:
+        """Report legacy ambiguity without silently changing stored active flags."""
+        active = [p for p in self.list_profiles(telegram_user_id) if p.is_active]
+        return 'none' if not active else 'single' if len(active) == 1 else 'ambiguous'
+
+    def get_active_profile(self, telegram_user_id: int) -> CandidateProfile | None:
+        """Return the selected profile only when the owner has exactly one active."""
+        active = [p for p in self.list_profiles(telegram_user_id) if p.is_active]
+        return active[0] if len(active) == 1 else None
+
+    def activate_profile(
+        self, telegram_user_id: int, profile_id: str
+    ) -> CandidateProfile | None:
+        """Atomically select one owned profile, versioning every changed profile."""
+        with self._connect() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            row = connection.execute(
+                'SELECT 1 FROM candidate_profiles WHERE telegram_user_id=? AND profile_id=?',
+                (telegram_user_id, profile_id),
+            ).fetchone()
+            if row is None:
+                return None
+            self._deactivate_others(connection, telegram_user_id, profile_id)
+            current = self.get_profile(telegram_user_id, profile_id)
+            if current is not None and not current.is_active:
+                now = utc_now()
+                version = current.version + 1
+                connection.execute(
+                    'UPDATE candidate_profiles SET is_active=1,current_version=?,updated_at=? '
+                    'WHERE telegram_user_id=? AND profile_id=?',
+                    (version, now, telegram_user_id, profile_id),
+                )
+                snapshot = {
+                    'name': current.name,
+                    'direction_id': current.direction_id,
+                    'specialization_id': current.specialization_id,
+                    'role_id': current.role_id,
+                    'preferences': current.preferences,
+                    'is_active': True,
+                    'catalog_version': CATALOG_VERSION,
+                }
+                connection.execute(
+                    'INSERT INTO candidate_profile_versions VALUES(?,?,?,?)',
+                    (
+                        profile_id,
+                        version,
+                        json.dumps(snapshot, ensure_ascii=False),
+                        now,
+                    ),
+                )
+        return self.get_profile(telegram_user_id, profile_id)
+
+    @staticmethod
+    def _deactivate_others(
+        connection: sqlite3.Connection, telegram_user_id: int, selected_id: str
+    ) -> None:
+        rows = connection.execute(
+            'SELECT * FROM candidate_profiles WHERE telegram_user_id=? '
+            'AND profile_id!=? AND is_active=1',
+            (telegram_user_id, selected_id),
+        ).fetchall()
+        now = utc_now()
+        for row in rows:
+            version = int(row['current_version']) + 1
+            snapshot = {
+                'name': row['name'],
+                'direction_id': row['direction_id'],
+                'specialization_id': row['specialization_id'],
+                'role_id': row['role_id'],
+                'preferences': json.loads(row['preferences_json']),
+                'is_active': False,
+                'catalog_version': CATALOG_VERSION,
+            }
+            connection.execute(
+                'UPDATE candidate_profiles SET is_active=0,current_version=?,updated_at=? '
+                'WHERE profile_id=?',
+                (version, now, row['profile_id']),
+            )
+            connection.execute(
+                'INSERT INTO candidate_profile_versions VALUES(?,?,?,?)',
+                (
+                    row['profile_id'],
+                    version,
+                    json.dumps(snapshot, ensure_ascii=False),
+                    now,
+                ),
+            )
+
+    @staticmethod
+    def _validate_profile_path(
+        direction_id: str,
+        specialization_id: str,
+        role_id: str,
+        stacks: list[str],
+    ) -> None:
+        if not specialization_id and not role_id:
+            validate_direction_stacks(direction_id, stacks)
+        elif not specialization_id or not role_id:
+            raise ValueError('Legacy specialization and role must both be present')
+        else:
+            validate_profile_path(direction_id, specialization_id, role_id, stacks)
 
     def get_profile_versions(
         self, telegram_user_id: int, profile_id: str
@@ -656,45 +768,54 @@ class CandidateStore:
         now = now.astimezone(timezone.utc)
         if not 2 <= older_days <= 3650:
             raise ValueError('older_days must be between 2 and 3650')
-        cutoff_24h = (now - timedelta(hours=24)).isoformat()
-        cutoff_n_days = (now - timedelta(days=older_days)).isoformat()
-        trusted_date = "(v.published_at LIKE '%Z' OR v.published_at LIKE '%+__:__' OR v.published_at LIKE '%-__:__')"
-        if bucket == 'new':
-            query = f'''SELECT v.* FROM vacancies v
-                WHERE v.go_visible=1 AND v.published_at IS NOT NULL
-                AND julianday(v.published_at) IS NOT NULL AND {trusted_date}
-                AND julianday(v.published_at) >= julianday(?)
-                AND julianday(v.published_at) <= julianday(?)
-                AND NOT EXISTS (SELECT 1 FROM user_saved_vacancies s
-                    WHERE s.vacancy_id=v.vacancy_id AND s.telegram_user_id=?)
-                ORDER BY v.published_at DESC'''
-            parameters = (cutoff_24h, now.isoformat(), telegram_user_id)
-        elif bucket == 'older':
-            query = f'''SELECT v.* FROM vacancies v
-                WHERE v.go_visible=1 AND v.published_at IS NOT NULL
-                AND julianday(v.published_at) IS NOT NULL AND {trusted_date}
-                AND julianday(v.published_at) >= julianday(?)
-                AND julianday(v.published_at) < julianday(?)
-                AND NOT EXISTS (SELECT 1 FROM user_saved_vacancies s
-                    WHERE s.vacancy_id=v.vacancy_id AND s.telegram_user_id=?)
-                ORDER BY v.published_at DESC'''
-            parameters = (cutoff_n_days, cutoff_24h, telegram_user_id)
-        elif bucket == 'undated':
-            query = f'''SELECT v.* FROM vacancies v
-                WHERE v.go_visible=1 AND (v.published_at IS NULL
-                    OR julianday(v.published_at) IS NULL OR NOT {trusted_date})
-                AND NOT EXISTS (SELECT 1 FROM user_saved_vacancies s
-                    WHERE s.vacancy_id=v.vacancy_id AND s.telegram_user_id=?)
-                ORDER BY v.created_at DESC'''
-            parameters = (telegram_user_id,)
-        else:
+        cutoff_24h = now - timedelta(hours=24)
+        cutoff_n_days = now - timedelta(days=older_days)
+        if bucket == 'saved':
             query = '''SELECT v.* FROM vacancies v
                 JOIN user_saved_vacancies s ON s.vacancy_id=v.vacancy_id
                 WHERE s.telegram_user_id=? ORDER BY s.saved_at DESC'''
             parameters = (telegram_user_id,)
+            with self._connect() as connection:
+                rows = connection.execute(query, parameters).fetchall()
+            return [self._vacancy_from_row(row) for row in rows]
         with self._connect() as connection:
-            rows = connection.execute(query, parameters).fetchall()
-        return [self._vacancy_from_row(row) for row in rows]
+            rows = connection.execute(
+                '''SELECT v.* FROM vacancies v WHERE v.go_visible=1
+                AND NOT EXISTS (SELECT 1 FROM user_saved_vacancies s
+                    WHERE s.vacancy_id=v.vacancy_id AND s.telegram_user_id=?)''',
+                (telegram_user_id,),
+            ).fetchall()
+        classified = []
+        for row in rows:
+            published = self._trusted_published_datetime(row['published_at'])
+            if bucket == 'undated':
+                include = published is None
+            elif published is None:
+                include = False
+            elif bucket == 'new':
+                include = cutoff_24h <= published <= now
+            else:
+                include = cutoff_n_days <= published < cutoff_24h
+            if include:
+                classified.append((published, row))
+        if bucket == 'undated':
+            classified.sort(key=lambda pair: pair[1]['created_at'], reverse=True)
+        else:
+            classified.sort(key=lambda pair: pair[0], reverse=True)
+        return [self._vacancy_from_row(row) for _, row in classified]
+
+    @staticmethod
+    def _trusted_published_datetime(value: str | None) -> datetime | None:
+        """Parse a source timestamp only when it carries an explicit UTC offset."""
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except (TypeError, ValueError):
+            return None
+        if parsed.tzinfo is None:
+            return None
+        return parsed.astimezone(timezone.utc)
 
     def get_older_days(self, telegram_user_id: int) -> int:
         with self._connect() as connection:
@@ -707,11 +828,24 @@ class CandidateStore:
     def max_older_days(self) -> int:
         """Allow custom windows through the oldest dated item actually stored."""
         with self._connect() as connection:
-            age = connection.execute(
-                "SELECT CAST(julianday('now')-MIN(julianday(published_at)) AS INTEGER) "
-                'FROM vacancies WHERE go_visible=1 AND published_at IS NOT NULL'
-            ).fetchone()[0]
-        return max(30, min(3650, int(age or 0)))
+            values = [
+                row[0]
+                for row in connection.execute(
+                    'SELECT published_at FROM vacancies WHERE go_visible=1 '
+                    'AND published_at IS NOT NULL'
+                )
+            ]
+        dates = [
+            parsed
+            for value in values
+            if (parsed := self._trusted_published_datetime(value)) is not None
+        ]
+        age = (
+            max((datetime.now(timezone.utc) - value).days for value in dates)
+            if dates
+            else 0
+        )
+        return max(30, min(3650, age))
 
     def set_older_days(self, telegram_user_id: int, days: int) -> bool:
         if (

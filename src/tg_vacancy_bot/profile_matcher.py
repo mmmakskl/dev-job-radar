@@ -48,6 +48,13 @@ def _norm(value: str) -> str:
         "джуниор": "junior",
         "мидл": "middle",
         "сеньор": "senior",
+        "стажер": "intern",
+        "стажёр": "intern",
+        "начальный": "junior",
+        "начинающий": "junior",
+        "средний": "middle",
+        "опытный": "senior",
+        "ведущий": "lead",
     }.get(value, value)
 
 
@@ -70,6 +77,29 @@ def _contains_skill(text: str, skill: str) -> bool:
     )
 
 
+GRADE_ORDER = {
+    grade: index
+    for index, grade in enumerate(('intern', 'junior', 'middle', 'senior', 'lead'))
+}
+
+
+def _grade_range_matches(start: str, end: str, expected: list[str]) -> bool | None:
+    """Return overlap of selected grade alternatives with an analyzed grade range."""
+    lower, upper = _norm(start), _norm(end)
+    if lower not in GRADE_ORDER and upper not in GRADE_ORDER:
+        return None
+    if lower not in GRADE_ORDER:
+        lower = upper
+    if upper not in GRADE_ORDER:
+        upper = lower
+    low_rank, high_rank = sorted((GRADE_ORDER[lower], GRADE_ORDER[upper]))
+    return any(
+        GRADE_ORDER[grade] >= low_rank and GRADE_ORDER[grade] <= high_rank
+        for value in expected
+        if (grade := _norm(value)) in GRADE_ORDER
+    )
+
+
 def match_profile(
     decision: UniversalDecision, profile: CandidateProfile
 ) -> ProfileMatch:
@@ -86,28 +116,13 @@ def match_profile(
     matched: list[str] = []
     missing: list[str] = []
     conflicting: list[str] = []
-    roles = {
-        (
-            item["direction_id"],
-            item["specialization_id"],
-            (
-                "backend_developer"
-                if item["role_id"] == "api_developer"
-                else item["role_id"]
-            ),
-        )
-        for item in decision.classifications
-    }
-    profile_role = (
-        "backend_developer" if profile.role_id == "api_developer" else profile.role_id
-    )
-    path = (profile.direction_id, profile.specialization_id, profile_role)
-    if path in roles:
-        matched.append("role")
-    elif roles:
-        conflicting.append("role")
+    directions = {item["direction_id"] for item in decision.classifications}
+    if profile.direction_id in directions:
+        matched.append("direction")
+    elif directions:
+        conflicting.append("direction")
     else:
-        missing.append("role")
+        missing.append("direction")
 
     analysis = decision.analysis
     preferences = profile.preferences
@@ -148,6 +163,17 @@ def match_profile(
             else preferences.get(key, [])
         )
         if not expected:
+            continue
+        if key == "seniority":
+            overlap = _grade_range_matches(
+                analysis.grade_from, analysis.grade_to, expected
+            )
+            if overlap is None:
+                missing.append(key)
+            elif overlap:
+                matched.append(key)
+            else:
+                conflicting.append(key)
             continue
         if not actual:
             missing.append(key)

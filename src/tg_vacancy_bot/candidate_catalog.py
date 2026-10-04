@@ -55,3 +55,30 @@ def validate_profile_path(
     invalid = set(stacks or []) - set(allowed)
     if invalid:
         raise ValueError(f'Stacks do not apply to this role: {sorted(invalid)}')
+
+
+def direction_stacks(direction_id: str) -> list[str]:
+    """Return every distinct language/technology option catalogued for a direction."""
+    direction = next(
+        (item for item in CATALOG['directions'] if item['id'] == direction_id), None
+    )
+    if direction is None:
+        raise ValueError('Invalid profile direction')
+    return list(
+        dict.fromkeys(
+            stack
+            for specialization in direction['specializations']
+            for role in specialization['roles']
+            for stack in role['stacks']
+        )
+    )
+
+
+def validate_direction_stacks(
+    direction_id: str, stacks: list[str] | None = None
+) -> None:
+    """Validate a role-neutral profile against all catalogued direction options."""
+    allowed = set(direction_stacks(direction_id))
+    invalid = set(stacks or []) - allowed
+    if invalid:
+        raise ValueError(f'Stacks do not apply to this direction: {sorted(invalid)}')
