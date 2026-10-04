@@ -46,9 +46,10 @@ class CandidateSearch:
             )
             return
         template = profile.preferences.get('premium_template_id')
-        if not template or not profile.is_active:
+        if not template or self.candidates.get_active_profile(user_id) != profile:
             await self.api.send_message(
-                user_id, 'Включите профиль и сначала выберите Premium-шаблон.'
+                user_id,
+                'Выберите этот профиль активным и сначала сохраните Premium-шаблон.',
             )
             return
         query = compose_query(template, profile)
@@ -98,7 +99,7 @@ class CandidateSearch:
         profile = self.candidates.get_profile(user_id, row['profile_id'])
         if (
             profile is None
-            or not profile.is_active
+            or self.candidates.get_active_profile(user_id) != profile
             or profile.version != row['profile_version']
         ):
             return None

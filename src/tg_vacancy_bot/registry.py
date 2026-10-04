@@ -27,7 +27,7 @@ from tg_vacancy_bot.telegram.candidate_store import (
     callback_key_for,
 )
 
-MATCHER_VERSION = 'profile-match.v2'
+MATCHER_VERSION = 'profile-match.v3'
 REGISTRY_VERSION = 1
 
 
@@ -444,7 +444,9 @@ class VacancyRegistry:
         profiles = [
             p for p in self.candidates.list_profiles(telegram_user_id) if p.is_active
         ]
-        if not profiles:
+        # A legacy owner can have several active rows. Preserve them during
+        # migration and suppress personal results until the owner explicitly picks.
+        if len(profiles) != 1:
             return []
         result = []
         for vacancy in self.list_vacancies():
@@ -467,17 +469,11 @@ class VacancyRegistry:
                 if row:
                     status = row['status']
                 else:
-                    path = (
-                        profile.direction_id,
-                        profile.specialization_id,
-                        profile.role_id,
-                    )
                     classification = next(
                         (
                             i
                             for i in decision.classifications
-                            if (i['direction_id'], i['specialization_id'], i['role_id'])
-                            == path
+                            if i['direction_id'] == profile.direction_id
                         ),
                         None,
                     )

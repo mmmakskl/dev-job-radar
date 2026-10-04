@@ -99,7 +99,6 @@ async def main() -> None:
         store,
         config.CANDIDATE_BOT_ALLOWED_USER_IDS,
         registry=registry,
-        profile_allowed_user_ids=profile_users,
         search=search,
     )
     heartbeat_path = Path(config.DATA_DIR) / 'admin' / 'candidate-heartbeat.json'

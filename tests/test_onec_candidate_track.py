@@ -2,7 +2,9 @@ import asyncio
 from dataclasses import replace
 
 from tg_vacancy_bot.candidate_catalog import CATALOG, validate_profile_path
-from tg_vacancy_bot.llm.universal import _catalog_prompt
+from tg_vacancy_bot.llm.universal import _catalog_prompt, _validate
+from tg_vacancy_bot.premium_search.analyzer import adapt_universal
+from tg_vacancy_bot.premium_search.templates import compose_query, list_templates
 from tg_vacancy_bot.pipeline.prefilter import (
     candidate_profile_reasons,
     universal_prefilter,
@@ -11,6 +13,7 @@ from tg_vacancy_bot.telegram.candidate_bot import CandidateBot
 from tg_vacancy_bot.telegram.candidate_store import CandidateStore
 from tests.test_candidate_bot import FakeBotApi, message
 from tests.test_candidate_integration import setup
+from tests.test_universal_analysis import _payload
 
 
 def test_onec_catalog_keeps_existing_ids_and_resolves_written_variants():
@@ -39,20 +42,94 @@ def test_onec_prefilter_and_classifier_instructions_cover_real_hiring_only():
         assert phrase in prompt
 
 
-def test_onec_profile_wizard_skips_primary_programming_language(tmp_path):
+def test_onec_profile_wizard_uses_role_neutral_catalog_steps(tmp_path):
     values = {
         'direction_id': 'onec',
-        'specialization_id': 'onec_development',
-        'role_id': 'onec_developer',
-        'preferences': {},
+        'specialization_id': '',
+        'role_id': '',
+        'preferences': {'stacks': []},
     }
-    assert 'primary_language' not in CandidateBot._basic_steps(values)
-    draft = {'wizard': 'basic', 'step': 'role_id', 'values': values}
+    steps = CandidateBot._basic_steps(values)
+    assert steps == [
+        'direction_id',
+        'stacks',
+        'seniority',
+        'formats',
+        'geography',
+        'preview',
+    ]
+    draft = {'wizard': 'basic', 'step': 'stacks', 'values': values}
     bot = CandidateBot(
         FakeBotApi(), CandidateStore(str(tmp_path / 'candidate.sqlite3')), {7}
     )
+    assert {'1c_enterprise', 'bsl', 'erp', 'zup'} <= {
+        key for key, _ in bot._choices(draft)
+    }
     bot._advance(draft)
     assert draft['step'] == 'seniority'
+
+
+def test_roleless_onec_profile_keeps_premium_templates_and_uses_direction_match(
+    tmp_path,
+):
+    store = CandidateStore(str(tmp_path / 'candidate.sqlite3'))
+    templates = list_templates(
+        {'direction_id': 'onec', 'role_id': '', 'preferences': {'stacks': []}}
+    )
+    developer = next(t for t in templates if t.id == 'role:onec_developer')
+    profile = store.create_profile(
+        7,
+        name='1С',
+        direction_id='onec',
+        specialization_id='',
+        role_id='',
+        preferences={'premium_template_id': developer.id},
+    )
+    assert (
+        store.get_profile(7, profile.profile_id).preferences['premium_template_id']
+        == developer.id
+    )
+    assert '1с разработчик' in compose_query(developer.id, profile).lower()
+
+    api = FakeBotApi()
+    bot = CandidateBot(api, store, {7})
+    asyncio.run(bot._show_profile(7, profile))
+    assert 'Premium-шаблоны' in {
+        button['text']
+        for row in api.messages[-1][2]['reply_markup']['inline_keyboard']
+        for button in row
+    }
+    asyncio.run(
+        bot.handle_update(
+            {
+                'callback_query': {
+                    'id': 'templates',
+                    'from': {'id': 7},
+                    'data': f'p:templates:{profile.profile_id}:{profile.version}',
+                }
+            }
+        )
+    )
+    template_labels = {
+        button['text'].casefold()
+        for row in api.messages[-1][2]['reply_markup']['inline_keyboard']
+        for button in row
+    }
+    assert '1с разработчик' in template_labels
+
+    decision = replace(
+        _validate(_payload()),
+        classifications=(
+            {
+                'direction_id': 'onec',
+                'specialization_id': 'onec_development',
+                'role_id': 'onec_developer',
+                'confidence': 96,
+            },
+        ),
+    )
+    result = adapt_universal(decision, profile_snapshot=vars(profile))
+    assert result.is_track_match and not result.needs_review
 
 
 def test_onec_match_appears_in_personal_feed_with_source_publication_time(tmp_path):

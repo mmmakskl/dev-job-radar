@@ -93,14 +93,89 @@ def test_profiles_versions_are_user_scoped_and_deletion_removes_history(tmp_path
     changed = store.update_profile(
         1, first.profile_id, name='Go backend', is_active=False
     )
-    assert changed.version == 2 and changed.is_active is False
+    assert changed.version == 3 and changed.is_active is False
     versions = store.get_profile_versions(1, first.profile_id)
-    assert len(versions) == 2
+    assert len(versions) == 3
     assert versions[0]['snapshot']['name'] == 'Go'
-    assert versions[1]['snapshot']['name'] == 'Go backend'
+    assert versions[1]['snapshot']['is_active'] is False
+    assert versions[2]['snapshot']['name'] == 'Go backend'
     assert store.get_profile_versions(2, first.profile_id) == []
     assert store.delete_profile(1, first.profile_id)
     assert store.get_profile_versions(1, first.profile_id) == []
+
+
+def test_profile_contract_keeps_legacy_data_and_requires_explicit_single_activation(
+    tmp_path,
+):
+    path = str(tmp_path / 'candidate.sqlite3')
+    store = CandidateStore(path)
+    legacy = store.create_profile(
+        1,
+        name='Legacy Go backend',
+        direction_id='development',
+        specialization_id='backend',
+        role_id='backend_developer',
+        preferences={'stacks': ['go'], 'timezone': 'Asia/Almaty'},
+    )
+    other = store.create_profile(
+        1,
+        name='Legacy QA',
+        direction_id='qa',
+        specialization_id='manual_qa',
+        role_id='manual_qa_engineer',
+        is_active=False,
+    )
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            'UPDATE candidate_profiles SET is_active=1 WHERE telegram_user_id=1'
+        )
+    reopened = CandidateStore(path)
+    assert reopened.get_active_profile_state(1) == 'ambiguous'
+    assert reopened.get_profile(1, legacy.profile_id) == legacy
+    preserved_other = reopened.get_profile(1, other.profile_id)
+    assert preserved_other.name == other.name
+    assert preserved_other.role_id == other.role_id
+    assert preserved_other.version == other.version
+    assert preserved_other.is_active is True
+
+    selected = reopened.activate_profile(1, legacy.profile_id)
+    assert selected == reopened.get_profile(1, legacy.profile_id)
+    assert reopened.get_active_profile(1) == selected
+    assert [p.profile_id for p in reopened.list_profiles(1) if p.is_active] == [
+        legacy.profile_id
+    ]
+    assert reopened.get_profile(1, other.profile_id).is_active is False
+    assert (
+        reopened.get_profile(1, legacy.profile_id).preferences['timezone']
+        == 'Asia/Almaty'
+    )
+
+
+def test_new_direction_profile_needs_no_hidden_role_and_validates_catalog_technologies(
+    tmp_path,
+):
+    store = CandidateStore(str(tmp_path / 'candidate.sqlite3'))
+    profile = store.create_profile(
+        1,
+        name='HR и подбор',
+        direction_id='hr_recruiting',
+        specialization_id='',
+        role_id='',
+        preferences={'stacks': ['sourcing']},
+        is_active=False,
+    )
+    assert profile.specialization_id == profile.role_id == ''
+    assert profile.preferences['stacks'] == ['sourcing']
+    with pytest.raises(ValueError):
+        store.create_profile(
+            1,
+            name='HR',
+            direction_id='hr_recruiting',
+            specialization_id='',
+            role_id='',
+            preferences={'stacks': ['go']},
+            is_active=False,
+        )
 
 
 def test_profile_optional_fields_path_stacks_and_timezone_validation(tmp_path):
@@ -326,3 +401,22 @@ def test_published_date_windows_boundaries_unknown_dates_and_saved_archive(tmp_p
     assert max_days >= 30
     assert store.set_older_days(1, min(14, max_days))
     assert not store.set_older_days(1, store.max_older_days() + 1)
+
+
+def test_older_window_normalizes_offset_timestamps_before_filtering(tmp_path):
+    store = CandidateStore(str(tmp_path / 'candidate.sqlite3'))
+    now = datetime(2026, 10, 4, 12, tzinfo=timezone.utc)
+    timestamp = (now - timedelta(days=3)).astimezone(
+        timezone(timedelta(hours=5, minutes=30))
+    )
+    store.register_vacancy(
+        vacancy_id='offset-date',
+        title='Offset date',
+        company=None,
+        summary=None,
+        post_link='https://t.me/jobs/offset',
+        apply_link=None,
+        published_at=timestamp.isoformat(timespec='seconds').replace('+05:30', '+0530'),
+    )
+    result = store.list_for_user(1, 'older', now=now, older_days=7)
+    assert [vacancy.vacancy_id for vacancy in result] == ['offset-date']

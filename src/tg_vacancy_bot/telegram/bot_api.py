@@ -35,6 +35,10 @@ class TelegramBotApi:
         """Ensures that Bot API updates are available to the long-polling worker."""
         await self._call('deleteWebhook', {'drop_pending_updates': False}, 20)
 
+    async def set_my_commands(self, commands: list[dict[str, str]]) -> None:
+        """Publish the commands implemented by the current candidate bot."""
+        await self._call('setMyCommands', {'commands': commands}, 20)
+
     async def send_message(
         self,
         chat_id: int | str,

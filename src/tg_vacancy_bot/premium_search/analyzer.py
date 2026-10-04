@@ -239,14 +239,13 @@ def adapt_universal(decision, profile_snapshot: dict | None = None) -> PremiumAn
         profile = CandidateProfile(**profile_snapshot)
         result = match_profile(decision, profile)
         matched = result.status == 'match' and profile.is_active
-        role_confidence = next(
+        role_confidence = max(
             (
                 item['confidence']
                 for item in decision.classifications
-                if (item['direction_id'], item['specialization_id'], item['role_id'])
-                == (profile.direction_id, profile.specialization_id, profile.role_id)
+                if item['direction_id'] == profile.direction_id
             ),
-            0,
+            default=0,
         )
         review = (
             review or result.status == 'review' or (matched and role_confidence < 90)
