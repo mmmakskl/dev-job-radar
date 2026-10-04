@@ -93,13 +93,12 @@ async def main() -> None:
         enabled=config.CANDIDATE_PROFILE_DELIVERY_ENABLED,
         allowed_user_ids=profile_users,
     )
+    # The personal feed follows CANDIDATE_BOT_ALLOWED_USER_IDS for every track.
     bot = CandidateBot(
         api,
         store,
         config.CANDIDATE_BOT_ALLOWED_USER_IDS,
         registry=registry,
-        profile_feed_enabled=config.CANDIDATE_PROFILE_FEED_ENABLED,
-        profile_allowed_user_ids=profile_users,
         search=search,
     )
     heartbeat_path = Path(config.DATA_DIR) / 'admin' / 'candidate-heartbeat.json'

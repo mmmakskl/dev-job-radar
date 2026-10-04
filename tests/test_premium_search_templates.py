@@ -26,8 +26,8 @@ def test_templates_cover_catalog_roles_and_role_stack_pairs():
     assert not expected_stacks - actual_stacks, sorted(expected_stacks - actual_stacks)
     assert not actual_roles - expected_roles
     assert not actual_stacks - expected_stacks
-    assert len(actual_roles) == 26
-    assert len(actual_stacks) == 117
+    assert len(actual_roles) == 29
+    assert len(actual_stacks) == 133
     assert len({item.id for item in _TEMPLATES}) == len(_TEMPLATES)
     for item in _TEMPLATES:
         assert item.label and item.main and item.ru and item.en and item.synonyms
@@ -76,6 +76,25 @@ def test_compose_query_language_parameters_and_length_validation():
         raise AssertionError('expected oversized query to raise ValueError')
 
 
+def test_onec_templates_cover_ecosystem_and_do_not_require_stack_selection():
+    profile = {'role_id': 'onec_developer', 'preferences': {'stacks': []}}
+    templates = list_templates(profile)
+    assert templates[0].id == 'role:onec_developer'
+    assert {item.stack_id for item in templates if item.kind == 'stack'} == {
+        '1c_enterprise',
+        'bsl',
+        'erp',
+        'zup',
+        'accounting',
+        'trade_management',
+    }
+    assert '1С:Предприятие' in templates[0].synonyms
+    assert 'BSL' in templates[0].synonyms
+    assert 'ЗУП' in templates[0].synonyms
+    assert 'Управление торговлей' in templates[0].synonyms
+    assert 'bsl' in compose_query('stack:onec_developer:bsl', profile).casefold()
+
+
 def test_versioned_data_file_matches_template_count():
     path = (
         Path(__file__).parents[1]
@@ -83,4 +102,5 @@ def test_versioned_data_file_matches_template_count():
     )
     payload = json.loads(path.read_text(encoding='utf-8'))
     assert payload['version'] == 1
+    assert payload['catalog_version'] == 2
     assert len(payload['templates']) == len(_TEMPLATES)

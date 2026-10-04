@@ -173,7 +173,7 @@ def test_start_has_feed_archive_profiles_and_access_is_limited(tmp_path):
     asyncio.run(bot.handle_update(message(1, '/start')))
     assert api.messages[-1][2]['reply_markup']['keyboard'] == [
         ['Новые · 24 часа', 'Ранее · за 7 дней'],
-        ['Сохранённые', 'Без даты'],
+        ['Сохранённые', 'Без даты', 'Для меня'],
         ['Профили'],
     ]
     asyncio.run(bot.handle_update(message(2, '/start')))
@@ -570,8 +570,6 @@ def test_ambiguous_legacy_active_profiles_require_explicit_selection(tmp_path):
         api,
         store,
         {1},
-        profile_feed_enabled=True,
-        profile_allowed_user_ids={1},
         registry=object(),
     )
     asyncio.run(bot.handle_update(message(1, 'Для меня')))

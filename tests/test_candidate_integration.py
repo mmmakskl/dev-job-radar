@@ -101,8 +101,6 @@ def test_feed_is_owner_scoped_current_confirmed_and_keeps_new_go_only(tmp_path):
         store,
         {1, 2},
         registry=registry,
-        profile_feed_enabled=True,
-        profile_allowed_user_ids={1, 2},
     )
     asyncio.run(bot.handle_update(message(1, 'Для меня')))
     assert len(api.messages) == 1
@@ -118,13 +116,13 @@ def test_feed_is_owner_scoped_current_confirmed_and_keeps_new_go_only(tmp_path):
     assert 'Сначала создайте профиль' in api.messages[-2][1]
 
 
-def test_personal_feed_requires_independent_rollout(tmp_path):
+def test_personal_feed_is_available_without_profile_rollout_allowlist(tmp_path):
     store, registry, _, decision = setup(tmp_path)
     ingest(registry, decision)
     api = FakeBotApi()
-    bot = CandidateBot(api, store, {1}, registry=registry, profile_feed_enabled=True)
+    bot = CandidateBot(api, store, {1}, registry=registry)
     asyncio.run(bot.handle_update(message(1, 'Для меня')))
-    assert 'недоступна' in api.messages[-1][1]
+    assert 'Backend' in api.messages[-1][1]
 
 
 def test_delivery_uses_only_the_selected_active_profile(tmp_path):
@@ -175,8 +173,6 @@ def test_profile_creation_activation_personal_and_older_feed_navigation(tmp_path
         store,
         {1},
         registry=registry,
-        profile_feed_enabled=True,
-        profile_allowed_user_ids={1},
     )
 
     asyncio.run(bot.handle_update(message(1, '/profiles')))
@@ -260,6 +256,17 @@ def test_profile_creation_activation_personal_and_older_feed_navigation(tmp_path
     asyncio.run(bot.handle_update(update))
     assert '2 / 2' in api.edits[-1][2]
     assert 'Go role 2' in api.edits[-1][2]
+
+
+def test_onec_profiles_never_trigger_automatic_personal_delivery():
+    from types import SimpleNamespace
+
+    profile = SimpleNamespace(
+        is_active=True,
+        direction_id='onec',
+        preferences={'delivery_mode': 'immediate'},
+    )
+    assert determining_profile(SimpleNamespace(matched_profiles=(profile,))) is None
 
 
 def test_hourly_eligibility_uses_winning_profile_local_hour(tmp_path):
@@ -511,8 +518,6 @@ def test_known_private_callback_cannot_be_saved_by_another_user(tmp_path, monkey
         store,
         {1, 2},
         registry=registry,
-        profile_feed_enabled=True,
-        profile_allowed_user_ids={1, 2},
     )
     asyncio.run(bot.handle_update(callback(2, f'v:s:{private.callback_key}')))
     assert 'недоступна' in api.answers[-1][1]

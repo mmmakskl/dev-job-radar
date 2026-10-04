@@ -60,17 +60,31 @@ def _profile_value(profile: Any, key: str, default: Any = None) -> Any:
 
 
 def list_templates(profile: Any) -> tuple[QueryTemplate, ...]:
-    """List the role template and selected stack templates for a profile."""
+    """List applicable role/stack query templates for a legacy or direction profile."""
     role_id = _profile_value(profile, 'role_id')
     if not isinstance(role_id, str):
         return ()
     preferences = _profile_value(profile, 'preferences', {}) or {}
     stacks = preferences.get('stacks', ()) if isinstance(preferences, dict) else ()
     selected = set(stacks or ())
+    roleless_onec = not role_id and _profile_value(profile, 'direction_id') == 'onec'
+    templates = (
+        tuple(t for t in _TEMPLATES if t.role_id.startswith('onec_'))
+        if roleless_onec
+        else _BY_ROLE.get(role_id, ())
+    )
+    if roleless_onec:
+        return tuple(
+            template
+            for template in templates
+            if template.kind == 'role' or template.stack_id in selected
+        )
     return tuple(
         template
-        for template in _BY_ROLE.get(role_id, ())
-        if template.kind == 'role' or template.stack_id in selected
+        for template in templates
+        if template.kind == 'role'
+        or template.stack_id in selected
+        or role_id.startswith('onec_')
     )
 
 
@@ -92,13 +106,24 @@ def compose_query(
     template = get_template(template_id)
     if template is None:
         raise ValueError('Неизвестный шаблон запроса')
-    if _profile_value(profile, 'role_id') != template.role_id:
-        raise ValueError('Шаблон не соответствует роли профиля')
+    role_id = _profile_value(profile, 'role_id')
+    roleless_onec = (
+        not role_id
+        and _profile_value(profile, 'direction_id') == 'onec'
+        and template.role_id.startswith('onec_')
+    )
+    if role_id != template.role_id and not roleless_onec:
+        raise ValueError('Шаблон не соответствует направлению профиля')
     preferences = _profile_value(profile, 'preferences', {}) or {}
     selected_stacks = (
         preferences.get('stacks', ()) if isinstance(preferences, dict) else ()
     )
-    if template.kind == 'stack' and template.stack_id not in (selected_stacks or ()):
+    if (
+        template.kind == 'stack'
+        and template.stack_id not in (selected_stacks or ())
+        and not template.role_id.startswith('onec_')
+        and not (roleless_onec and not selected_stacks)
+    ):
         raise ValueError('Стек шаблона не выбран в профиле')
     if language not in {'main', 'ru', 'en'}:
         raise ValueError('Язык должен быть main, ru или en')

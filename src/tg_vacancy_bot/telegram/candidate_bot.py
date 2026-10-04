@@ -144,6 +144,12 @@ ROLE_LABELS = {
         'привлекает аудиторию через цифровые каналы',
     ),
     'content_manager': ('Контент-менеджер', 'планирует и выпускает материалы'),
+    'onec_developer': ('Разработчик 1С', 'разрабатывает и сопровождает решения 1С'),
+    'onec_analyst_consultant': (
+        'Аналитик-консультант 1С',
+        'собирает требования и настраивает решения 1С',
+    ),
+    'onec_administrator': ('Администратор 1С', 'поддерживает платформу и базы 1С'),
 }
 SENIORITY_LABELS = {
     'intern': 'Intern',
@@ -179,6 +185,9 @@ SPECIALIZATION_LABELS = {
     'hr_management': 'Управление персоналом',
     'digital_marketing': 'Интернет-маркетинг',
     'content': 'Контент и редактура',
+    'onec_development': 'Разработка 1С',
+    'onec_analytics': 'Аналитика и консультирование 1С',
+    'onec_administration': 'Администрирование 1С',
 }
 GEOGRAPHY_CHOICES = [
     ('worldwide', 'Весь мир'),
@@ -196,6 +205,12 @@ TECHNOLOGY_LABELS = {
     'react_native': 'React Native',
     'embedded_linux': 'Embedded Linux',
     'power_bi': 'Power BI',
+    '1c_enterprise': '1С:Предприятие',
+    'bsl': 'Язык 1С (BSL)',
+    'erp': 'ERP',
+    'zup': '1С:ЗУП',
+    'accounting': '1С:Бухгалтерия',
+    'trade_management': '1С:Управление торговлей',
     'pytorch': 'PyTorch',
     'tensorflow': 'TensorFlow',
     'mlops': 'MLOps',
@@ -233,6 +248,7 @@ DIRECTION_LABELS = {
     'management': 'Менеджмент',
     'hr_recruiting': 'HR и подбор',
     'marketing_content': 'Маркетинг и контент',
+    'onec': 'Разработка и сопровождение 1С',
 }
 
 
@@ -350,24 +366,19 @@ class CandidateBot:
         allowed_user_ids: set[int],
         *,
         registry=None,
-        profile_feed_enabled: bool = False,
-        profile_allowed_user_ids: set[int] | None = None,
         search: CandidateSearch | None = None,
     ) -> None:
         self.api = api
         self.store = store
         self.allowed_user_ids = allowed_user_ids
         self.registry = registry
-        self.profile_feed_enabled = profile_feed_enabled
-        self.profile_allowed_user_ids = profile_allowed_user_ids or set()
         self.search = search
 
     def _keyboard(self, user_id: int) -> dict:
         days = self.store.get_older_days(user_id)
         first_row = ['Новые · 24 часа', f'Ранее · за {days} дней']
         second_row = ['Сохранённые', 'Без даты']
-        if self.profile_feed_enabled and user_id in self.profile_allowed_user_ids:
-            second_row.append('Для меня')
+        second_row.append('Для меня')
         return {
             'keyboard': [first_row, second_row, ['Профили']],
             'resize_keyboard': True,
@@ -404,11 +415,7 @@ class CandidateBot:
         self, user_id: int, bucket: str, index: int = 0, message_id: int | None = None
     ) -> bool:
         """Show one current card; navigation edits only the owner's private message."""
-        if bucket == 'for_me' and (
-            not self.profile_feed_enabled
-            or user_id not in self.profile_allowed_user_ids
-            or self.registry is None
-        ):
+        if bucket == 'for_me' and self.registry is None:
             if message_id is None:
                 await self.api.send_message(
                     user_id, 'Персональная выдача пока недоступна.'
@@ -639,11 +646,7 @@ class CandidateBot:
             ).fetchone()
         if row:
             return True
-        if (
-            self.profile_feed_enabled
-            and user_id in self.profile_allowed_user_ids
-            and self.registry is not None
-        ):
+        if user_id in self.allowed_user_ids and self.registry is not None:
             matches = await asyncio.to_thread(
                 self.registry.list_personal_matches, user_id
             )
@@ -909,7 +912,9 @@ class CandidateBot:
                 }
             ],
         ]
-        if self.store.get_active_profile(user_id) == profile and profile.role_id:
+        if self.store.get_active_profile(user_id) == profile and (
+            profile.role_id or profile.direction_id == 'onec'
+        ):
             if list_templates(profile):
                 rows.append(
                     [
@@ -1254,7 +1259,9 @@ class CandidateBot:
                     values.get('role_id', ''),
                     value,
                 )
-                self.store._clear_invalid_template(values['role_id'], preferences)
+                self.store._clear_invalid_template(
+                    values['role_id'], preferences, values['direction_id']
+                )
             values['preferences'] = self.store._validate_preferences(preferences)
 
     def _advance(self, draft: dict) -> None:

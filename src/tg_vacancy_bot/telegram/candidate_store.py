@@ -258,7 +258,7 @@ class CandidateStore:
         self._validate_profile_path(
             direction_id, specialization_id, role_id, preferences['stacks']
         )
-        self._clear_invalid_template(role_id, preferences)
+        self._clear_invalid_template(role_id, preferences, direction_id)
         name = name.strip()
         profile_id, now = uuid.uuid4().hex, utc_now()
         snapshot = {
@@ -358,7 +358,9 @@ class CandidateStore:
                 values['role_id'],
                 values['preferences'].get('stacks', []),
             )
-            self._clear_invalid_template(values['role_id'], values['preferences'])
+            self._clear_invalid_template(
+                values['role_id'], values['preferences'], values['direction_id']
+            )
             if values['is_active'] and not current.is_active:
                 self._deactivate_others(connection, telegram_user_id, profile_id)
             version, now = current.version + 1, utc_now()
@@ -391,12 +393,20 @@ class CandidateStore:
             )
 
     @staticmethod
-    def _clear_invalid_template(role_id: str, preferences: dict) -> None:
+    def _clear_invalid_template(
+        role_id: str, preferences: dict, direction_id: str = ''
+    ) -> None:
         from tg_vacancy_bot.premium_search.templates import list_templates
 
         if preferences.get('premium_template_id') not in {
             t.id
-            for t in list_templates({'role_id': role_id, 'preferences': preferences})
+            for t in list_templates(
+                {
+                    'role_id': role_id,
+                    'direction_id': direction_id,
+                    'preferences': preferences,
+                }
+            )
         }:
             preferences.pop('premium_template_id', None)
 
