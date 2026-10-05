@@ -172,8 +172,8 @@ def test_start_has_feed_archive_profiles_and_access_is_limited(tmp_path):
     bot = CandidateBot(api, store, {1})
     asyncio.run(bot.handle_update(message(1, '/start')))
     assert api.messages[-1][2]['reply_markup']['keyboard'] == [
-        ['Новые · 24 часа', 'Ранее · за 7 дней'],
-        ['Сохранённые', 'Без даты', 'Для меня'],
+        ['Go · Новые · 24 часа', 'Go · Ранее · за 7 дней'],
+        ['Сохранённые', 'Go · Без даты', 'Для меня · активный профиль'],
         ['Профили'],
     ]
     asyncio.run(bot.handle_update(message(2, '/start')))

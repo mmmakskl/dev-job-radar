@@ -376,9 +376,10 @@ class CandidateBot:
 
     def _keyboard(self, user_id: int) -> dict:
         days = self.store.get_older_days(user_id)
-        first_row = ['Новые · 24 часа', f'Ранее · за {days} дней']
-        second_row = ['Сохранённые', 'Без даты']
-        second_row.append('Для меня')
+        # Age-bucket screens read the legacy Go projection; profile matches
+        # come exclusively from the shared registry via the personal screen.
+        first_row = ['Go · Новые · 24 часа', f'Go · Ранее · за {days} дней']
+        second_row = ['Сохранённые', 'Go · Без даты', 'Для меня · активный профиль']
         return {
             'keyboard': [first_row, second_row, ['Профили']],
             'resize_keyboard': True,
@@ -407,7 +408,7 @@ class CandidateBot:
         rows.append([{'text': 'Ввести свой срок', 'callback_data': 'f:custom'}])
         await self.api.send_message(
             user_id,
-            f"Выберите срок. «Ранее» покажет объявления старше 24 часов и не старше выбранного срока. Сейчас доступно от 2 до {self.store.max_older_days()} дней — по самой старой дате в ленте.",
+            f"Выберите срок общей Go-ленты. «Ранее» покажет Go-объявления старше 24 часов и не старше выбранного срока. Сейчас доступно от 2 до {self.store.max_older_days()} дней — по самой старой дате в Go-ленте.",
             reply_markup={'inline_keyboard': rows},
         )
 
@@ -457,9 +458,9 @@ class CandidateBot:
                     'Подтверждённых совпадений активных профилей пока нет.'
                     if bucket == 'for_me'
                     else {
-                        'new': 'За последние 24 часа вакансий с подтверждённой датой публикации нет. Посмотрите более ранние или объявления без даты.',
-                        'older': f"За период от 24 часов до {_days_label(self.store.get_older_days(user_id))} вакансий нет. Можно выбрать другой срок или проверить «Новые».",
-                        'undated': 'Вакансий без достоверной даты публикации пока нет. Такие объявления не попадают в «Новые».',
+                        'new': 'В общей Go-ленте за последние 24 часа нет вакансий с подтверждённой датой публикации. Проверьте более ранние Go-вакансии, объявления без даты или «Для меня».',
+                        'older': f"В общей Go-ленте нет вакансий старше 24 часов и не старше {_days_label(self.store.get_older_days(user_id))}. Можно выбрать другой срок или открыть «Для меня».",
+                        'undated': 'В общей Go-ленте нет вакансий без достоверной даты публикации. Такие объявления не включаются в «Новые».',
                         'saved': 'Сохранённых вакансий пока нет. Сохраняйте интересные карточки кнопкой «Сохранить».',
                     }[bucket]
                 ),
@@ -469,7 +470,14 @@ class CandidateBot:
         if index < 0 or index >= len(cards):
             return False
         content, callback_key = cards[index]
-        content = f'<i>{index + 1} / {len(cards)}</i>\n\n{content}'
+        feed_title = {
+            'for_me': 'Для меня · активный профиль',
+            'new': 'Общая Go-лента · новые',
+            'older': 'Общая Go-лента · ранее',
+            'undated': 'Общая Go-лента · без даты',
+            'saved': 'Сохранённые вакансии',
+        }[bucket]
+        content = f'<i>{feed_title} · {index + 1} / {len(cards)}</i>\n\n{content}'
         keyboard = personal_keyboard(callback_key)
         if len(cards) > 1:
             controls = []
@@ -544,23 +552,23 @@ class CandidateBot:
             await self.api.send_message(
                 chat_id,
                 (
-                    'Выберите период ленты. Даты берутся из публикации источника; '
-                    'объявления без даты находятся отдельно.'
+                    'Выберите общую Go-ленту или совпадения активного профиля. '
+                    'Даты берутся из публикации источника; объявления без даты отдельно.'
                     if text == '/start'
-                    else 'Команды: /new — новые за 24 часа; /older — срок ранней ленты; '
-                    '/saved — сохранённые; /undated — без даты; /forme — по активному профилю; '
+                    else 'Команды: /new — общая Go-лента за 24 часа; /older — срок ранней Go-ленты; '
+                    '/saved — сохранённые; /undated — без даты общей Go-ленты; /forme — по активному профилю; '
                     '/profiles — профили; /cancel — отменить мастер.'
                 ),
                 reply_markup=self._keyboard(user_id),
             )
             return
-        if text in {'Для меня', '/forme'}:
+        if text in {'Для меня', 'Для меня · активный профиль', '/forme'}:
             await self._personal_feed(user_id)
             return
         if text in {'Профили', '/profiles'}:
             await self._profiles(user_id)
             return
-        if text in {'/new', 'Новые · 24 часа'}:
+        if text in {'/new', 'Новые · 24 часа', 'Go · Новые · 24 часа'}:
             await self._show_browser(user_id, 'new')
             return
         if text in {'/older'}:
@@ -569,7 +577,7 @@ class CandidateBot:
         if text in {'/saved', 'Сохранённые'}:
             await self._show_browser(user_id, 'saved')
             return
-        if text in {'/undated', 'Без даты'}:
+        if text in {'/undated', 'Без даты', 'Go · Без даты'}:
             await self._show_browser(user_id, 'undated')
             return
         if text in {'Отмена', '/cancel'} and self.store.get_profile_draft(user_id):
@@ -590,10 +598,10 @@ class CandidateBot:
             else:
                 await self.api.send_message(user_id, 'Настройка профиля отменена.')
             return
-        if text.startswith('Ранее'):
+        if text.startswith(('Ранее', 'Go · Ранее')):
             await self._show_age_choices(user_id)
             return
-        if text in {'Новые', '/new'}:
+        if text in {'Новые', '/new', 'Go · Новые · 24 часа'}:
             await self._show_browser(user_id, 'new')
             return
         if self.store.take_custom_days_request(user_id):
@@ -617,6 +625,7 @@ class CandidateBot:
             return
         if self.store.get_profile_draft(user_id) and text not in {
             'Новые · 24 часа',
+            'Go · Новые · 24 часа',
             'Сохранённые',
             '/new',
             '/saved',
@@ -630,7 +639,7 @@ class CandidateBot:
         if bucket is None:
             await self.api.send_message(
                 chat_id,
-                'Используйте кнопки «Новые», «Ранее», «Сохранённые», «Без даты» или «Профили».',
+                'Используйте «Go · Новые/Ранее» для общей Go-ленты, «Для меня» для совпадений активного профиля, а также «Сохранённые» и «Профили».',
                 reply_markup=self._keyboard(user_id),
             )
             return
