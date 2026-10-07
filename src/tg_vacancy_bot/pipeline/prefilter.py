@@ -44,6 +44,8 @@ _GENERAL_ROLE = re.compile(
     r"devops|sre|analyst|аналитик\w*|designer|дизайнер\w*|"
     r"recruiter|рекрутер\w*|hr|manager|менеджер\w*|marketer|маркетолог\w*|"
     r"редактор\w*|писатель|копирайтер\w*|креатор\w*|геймдизайнер\w*|"
+    r"руководител\w*\s+разработк\w*|"
+    r"специалист\s+по\s+(?:иб|информационной\s+безопасности|развитию\s+продаж)|"
     r"администратор\w*|архитектор\w*|художник\w*|таргетоолог\w*|"
     r"sales|support|поддержк\w*|seo|smm|pr|copywriter|creator|scientist|"
     r"architect|artist|writer|account)\b",

@@ -18,7 +18,8 @@ from telethon import TelegramClient
 from tg_vacancy_bot import config
 from tg_vacancy_bot.admin.telemetry import TelemetryStore
 from tg_vacancy_bot.admin.control import finish_action
-from tg_vacancy_bot.llm.universal import analyze_ingestion_text
+from tg_vacancy_bot.llm.universal import AnalysisUnavailable, analyze_ingestion_text
+from tg_vacancy_bot.pipeline.history_backfill import ingest_registry_history_post
 from tg_vacancy_bot.logging_config import configure_logging
 from tg_vacancy_bot.pipeline.dedupe_state import JsonlDedupeState
 from tg_vacancy_bot.pipeline.prefilter import contains_keywords, universal_prefilter
@@ -220,12 +221,93 @@ async def parse_history(
     }
 
 
+async def backfill_registry_history(
+    since: datetime | None = None, until: datetime | None = None
+) -> dict[str, int]:
+    """Fill the shared catalog registry from all configured Telegram sources."""
+    if config.LEGACY_GO_ANALYSIS:
+        raise RuntimeError('--registry-only requires universal catalog analysis')
+    config.validate_required_settings(require_sources=True, require_google_sheets=False)
+    await client.start()
+    await client.get_dialogs()
+    registry = VacancyRegistry(config.CANDIDATE_BOT_DB_PATH)
+    boundary = since or datetime.now(timezone.utc) - timedelta(days=config.HISTORY_DAYS)
+    counts: Counter[str] = Counter()
+
+    for channel_number, channel_identifier in enumerate(
+        config.TARGET_CHANNELS, start=1
+    ):
+        try:
+            logging.info('Реестр: обработка Telegram-источника %d', channel_number)
+            async for message in client.iter_messages(
+                channel_identifier, offset_date=datetime.now(), reverse=False
+            ):
+                if message.date < boundary:
+                    break
+                if until is not None and message.date >= until:
+                    continue
+                counts['received'] += 1
+                try:
+                    result = await ingest_registry_history_post(
+                        registry,
+                        text=message.text or '',
+                        post_link=get_message_link(message),
+                        published_at=message.date,
+                        channel_name=get_message_channel_name(message),
+                    )
+                except Exception as exc:
+                    if (
+                        isinstance(exc, AnalysisUnavailable)
+                        and str(exc) == 'daily_limit'
+                    ):
+                        logging.error(
+                            'Лимит Mistral достигнут после %d сообщений; повторите то же окно в следующий UTC-день',
+                            counts['received'],
+                        )
+                        raise
+                    counts['failed'] += 1
+                    logging.error(
+                        'Реестр: ошибка обработки сообщения (%s)', type(exc).__name__
+                    )
+                    continue
+                counts[result.status] += 1
+                counts['confirmed'] += int(result.confirmed)
+        except Exception as exc:
+            if isinstance(exc, AnalysisUnavailable) and str(exc) == 'daily_limit':
+                raise
+            counts['failed'] += 1
+            logging.error(
+                'Реестр: ошибка Telegram-источника %d (%s)',
+                channel_number,
+                type(exc).__name__,
+            )
+    report = {
+        key: counts[key]
+        for key in (
+            'received',
+            'prefilter_skipped',
+            'analyzed',
+            'reused',
+            'confirmed',
+            'unavailable',
+            'failed',
+        )
+    }
+    logging.info('Catalog registry history report: %s', report)
+    return report
+
+
 async def main() -> None:
     """Запускает history parser и гарантированно закрывает Telegram-клиент."""
     action_id = os.getenv('ADMIN_ACTION_ID')
     parser = argparse.ArgumentParser(description='Idempotent Telegram history replay')
     parser.add_argument('--since', help='Inclusive ISO date or UTC timestamp')
     parser.add_argument('--until', help='Exclusive ISO date or UTC timestamp')
+    parser.add_argument(
+        '--registry-only',
+        action='store_true',
+        help='Backfill all catalog directions into Candidate Bot without Go publication',
+    )
     parser.add_argument(
         '--hold-delivery',
         action='store_true',
@@ -251,7 +333,11 @@ async def main() -> None:
         hold.parent.mkdir(parents=True, exist_ok=True)
         hold.touch(exist_ok=True)
     try:
-        counts = await parse_history(since, until)
+        counts = await (
+            backfill_registry_history(since, until)
+            if args.registry_only
+            else parse_history(since, until)
+        )
         logging.info('History stage report: %s', counts)
         if action_id:
             finish_action(
