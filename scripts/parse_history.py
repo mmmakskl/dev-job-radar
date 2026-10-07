@@ -13,6 +13,7 @@ import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import AsyncIterator
 from telethon import TelegramClient
 
 from tg_vacancy_bot import config
@@ -44,6 +45,7 @@ configure_logging(
 )
 
 client: TelegramClient | None = None
+REGISTRY_MESSAGE_TIMEOUT_SECONDS = 1200
 
 
 def get_client() -> TelegramClient:
@@ -52,6 +54,21 @@ def get_client() -> TelegramClient:
     if client is None:
         client = TelegramClient(config.SESSION_NAME, config.API_ID, config.API_HASH)
     return client
+
+
+async def registry_messages(
+    telegram: TelegramClient, source: str | int
+) -> AsyncIterator:
+    """Keep a stalled Telegram source from blocking the full catalog replay."""
+    messages = telegram.iter_messages(source, offset_date=datetime.now(), reverse=False)
+    while True:
+        try:
+            message = await asyncio.wait_for(
+                anext(messages), timeout=REGISTRY_MESSAGE_TIMEOUT_SECONDS
+            )
+        except StopAsyncIteration:
+            return
+        yield message
 
 
 async def parse_history(
@@ -248,9 +265,7 @@ async def backfill_registry_history(
     ):
         try:
             logging.info('Реестр: обработка Telegram-источника %d', channel_number)
-            async for message in telegram.iter_messages(
-                channel_identifier, offset_date=datetime.now(), reverse=False
-            ):
+            async for message in registry_messages(telegram, channel_identifier):
                 if message.date < boundary:
                     break
                 if until is not None and message.date >= until:
@@ -303,6 +318,8 @@ async def backfill_registry_history(
         )
     }
     logging.info('Catalog registry history report: %s', report)
+    if counts['failed']:
+        raise RuntimeError('registry_history_incomplete')
     return report
 
 

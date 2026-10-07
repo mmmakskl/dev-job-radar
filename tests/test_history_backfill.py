@@ -169,3 +169,39 @@ def test_registry_history_scans_every_source_without_google_or_publication(
     assert counts['analyzed'] == 2
     assert counts['confirmed'] == 2
     assert ingest.await_count == 2
+
+
+def test_registry_history_times_out_stalled_source_and_reports_incomplete(
+    tmp_path, monkeypatch
+):
+    from scripts import parse_history as history
+
+    class StallingClient:
+        start = AsyncMock()
+        get_dialogs = AsyncMock()
+
+        async def iter_messages(self, source, **_kwargs):
+            if source == 'source_1':
+                await asyncio.sleep(3600)
+            yield SimpleNamespace(date=datetime.now(timezone.utc), text=source)
+
+    ingest = AsyncMock(return_value=BackfillResult('analyzed', confirmed=True))
+    monkeypatch.setattr(history, 'client', StallingClient())
+    monkeypatch.setattr(history, 'ingest_registry_history_post', ingest)
+    monkeypatch.setattr(history, 'REGISTRY_MESSAGE_TIMEOUT_SECONDS', 0.01)
+    monkeypatch.setattr(
+        history, 'get_message_link', lambda message: 'https://t.me/jobs/1'
+    )
+    monkeypatch.setattr(history, 'get_message_channel_name', lambda message: 'Jobs')
+    monkeypatch.setattr(history.config, 'TARGET_CHANNELS', ['source_1', 'source_2'])
+    monkeypatch.setattr(
+        history.config, 'CANDIDATE_BOT_DB_PATH', str(tmp_path / 'candidate.sqlite3')
+    )
+    monkeypatch.setattr(history.config, 'LEGACY_GO_ANALYSIS', False)
+    monkeypatch.setattr(
+        history.config, 'validate_required_settings', lambda **kwargs: None
+    )
+
+    with pytest.raises(RuntimeError, match='registry_history_incomplete'):
+        asyncio.run(history.backfill_registry_history())
+    ingest.assert_awaited_once()
