@@ -202,13 +202,14 @@ def test_profile_creation_activation_personal_and_older_feed_navigation(tmp_path
     )
     # Both source and personal views use publication time, while eligibility is
     # deliberately recent so it cannot accidentally substitute for it.
+    now = datetime.now(timezone.utc)
     for index, days in enumerate((2, 5), start=1):
-        published = NOW - timedelta(days=days)
+        published = now - timedelta(days=days)
         registry.ingest(
             vacancy_id=f'older_{index}',
             post_link=f'https://t.me/jobs/{index}',
             decision=decision,
-            eligible_at=NOW,
+            eligible_at=now,
             published_at=published.isoformat(),
         )
         store.register_vacancy(

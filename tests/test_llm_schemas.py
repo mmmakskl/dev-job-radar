@@ -1,9 +1,11 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
 
 from tg_vacancy_bot.llm import mistral
+from tg_vacancy_bot.llm.response_schemas import legacy_response_format
 from tg_vacancy_bot.llm.schemas import (
     InvalidAnalysisResultError,
     validate_analysis_result,
@@ -54,6 +56,26 @@ def test_valid_analysis_result_passes_and_normalizes() -> None:
     assert result.company == "Acme"
     assert result.required_stack == ["Go", "PostgreSQL"]
     assert result.preferred_stack == ["Kubernetes"]
+    assert result.primary_roles == ["Backend"]
+
+
+def test_primary_roles_objects_are_rejected() -> None:
+    with pytest.raises(InvalidAnalysisResultError, match="field=primary_roles"):
+        validate_analysis_result(valid_payload(primary_roles=[{"role": "Backend"}]))
+
+
+def test_legacy_response_schema_requires_string_roles_and_exact_fields() -> None:
+    response_format = legacy_response_format()
+    schema = response_format["json_schema"]["schema"]
+
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == set(valid_payload())
+    assert schema["properties"]["primary_roles"] == {
+        "type": "array",
+        "items": {"type": "string"},
+    }
 
 
 def test_missing_company_or_contact_uses_not_specified() -> None:
@@ -191,6 +213,36 @@ def test_invalid_json_schema_uses_bounded_retry(monkeypatch) -> None:
 
     assert asyncio.run(mistral.analyze_text("Go vacancy")) is None
     assert completions.calls == 2
+
+
+def test_legacy_analyzer_passes_schema_to_api(monkeypatch) -> None:
+    from tg_vacancy_bot.llm import universal
+
+    class FakeCompletions:
+        def __init__(self) -> None:
+            self.requests = []
+
+        async def create(self, **kwargs):
+            self.requests.append(kwargs)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps(valid_payload()))
+                    )
+                ]
+            )
+
+    completions = FakeCompletions()
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    fake_client.with_options = lambda **_kwargs: fake_client
+    monkeypatch.setattr(mistral, "client", fake_client)
+    monkeypatch.setattr(universal, "_claim_daily_call", lambda _limit: True)
+
+    result = asyncio.run(mistral.analyze_text("Go vacancy"))
+
+    assert result.primary_roles == ["Backend"]
+    assert len(completions.requests) == 1
+    assert completions.requests[0]["response_format"] == legacy_response_format()
 
 
 def test_legacy_analysis_respects_shared_daily_quota(monkeypatch) -> None:

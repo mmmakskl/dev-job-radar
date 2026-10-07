@@ -13,6 +13,7 @@ from tg_vacancy_bot.llm.schemas import (
     InvalidAnalysisResultError,
     validate_analysis_result,
 )
+from tg_vacancy_bot.llm.response_schemas import legacy_response_format
 from tg_vacancy_bot.models import VacancyAnalysis
 
 load_dotenv()
@@ -60,7 +61,7 @@ async def analyze_text(vacancy_text: str) -> VacancyAnalysis | None:
                         {"role": "system", "content": config.MISTRAL_SYSTEM_PROMPT},
                         {"role": "user", "content": vacancy_text},
                     ],
-                    response_format={"type": "json_object"},
+                    response_format=legacy_response_format(),
                     temperature=config.MISTRAL_TEMPERATURE,
                 )
             )

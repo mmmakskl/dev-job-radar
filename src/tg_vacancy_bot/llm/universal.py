@@ -10,6 +10,7 @@ from pathlib import Path
 
 from tg_vacancy_bot import config
 from tg_vacancy_bot.llm.schemas import InvalidAnalysisResultError
+from tg_vacancy_bot.llm.response_schemas import universal_response_format
 from tg_vacancy_bot.models import VacancyAnalysis
 
 SCHEMA_VERSION = "vacancy-analysis.v1"
@@ -212,7 +213,9 @@ async def analyze_universal_text(text: str) -> UniversalDecision:
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": text},
                 ],
-                response_format={"type": "json_object"},
+                response_format=universal_response_format(
+                    SCHEMA_VERSION, PROMPT_VERSION
+                ),
                 temperature=config.MISTRAL_TEMPERATURE,
             )
         )

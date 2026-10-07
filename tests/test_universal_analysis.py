@@ -11,6 +11,7 @@ from tg_vacancy_bot.llm.universal import (
     SCHEMA_VERSION,
     _validate,
 )
+from tg_vacancy_bot.llm.response_schemas import universal_response_format
 from tg_vacancy_bot.pipeline.prefilter import universal_prefilter
 
 CASES = json.loads(
@@ -64,6 +65,36 @@ def test_universal_contract_rejects_unknown_catalog_role():
         _validate(payload)
 
 
+def test_universal_contract_rejects_object_primary_roles():
+    payload = _payload()
+    payload['analysis']['primary_roles'] = [{'role_id': 'backend_developer'}]
+    with pytest.raises(ValueError, match='primary_roles'):
+        _validate(payload)
+
+
+def test_universal_response_schema_separates_roles_and_classifications():
+    response_format = universal_response_format(SCHEMA_VERSION, PROMPT_VERSION)
+    schema = response_format['json_schema']['schema']
+    analysis = schema['properties']['analysis']
+    classification = schema['properties']['classifications']['items']
+
+    assert response_format['type'] == 'json_schema'
+    assert response_format['json_schema']['strict'] is True
+    assert schema['additionalProperties'] is False
+    assert analysis['additionalProperties'] is False
+    assert classification['additionalProperties'] is False
+    assert set(schema['required']) == set(schema['properties'])
+    assert set(analysis['required']) == set(analysis['properties'])
+    assert set(classification['required']) == set(classification['properties'])
+    assert analysis['properties']['primary_roles'] == {
+        'type': 'array',
+        'items': {'type': 'string'},
+    }
+    assert classification['properties']['role_id'] == {'type': 'string'}
+    assert schema['properties']['schema_version']['enum'] == [SCHEMA_VERSION]
+    assert schema['properties']['prompt_version']['enum'] == [PROMPT_VERSION]
+
+
 def test_labeled_prefilter_report(capsys):
     false_positive = []
     false_negative = []
@@ -104,6 +135,9 @@ def test_universal_analyzer_uses_one_sdk_attempt(monkeypatch):
     assert result.analysis.is_match
     assert create.await_count == 1
     client.with_options.assert_called_once_with(max_retries=0)
+    assert create.await_args.kwargs['response_format'] == universal_response_format(
+        SCHEMA_VERSION, PROMPT_VERSION
+    )
 
 
 def test_quota_exhaustion_fails_closed_before_api(monkeypatch):

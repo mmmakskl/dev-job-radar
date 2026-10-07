@@ -1,11 +1,15 @@
 import asyncio
+import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 from tg_vacancy_bot.llm.schemas import validate_analysis_result
 from tg_vacancy_bot.pipeline.dedupe_state import JsonlDedupeState
 from tg_vacancy_bot.pipeline.processor import VacancyProcessor
 from tg_vacancy_bot.storage.vacancy_groups import VacancyGroupStore
 from tests.test_llm_schemas import valid_payload
+from tests.test_universal_analysis import _payload
 
 
 class DedupeStateSpy:
@@ -51,6 +55,58 @@ class LateDuplicateState(DedupeStateSpy):
 
     def release(self, owner: str) -> None:
         self.released.append(owner)
+
+
+def test_invalid_mistral_roles_never_reach_export(monkeypatch) -> None:
+    from tg_vacancy_bot.llm import mistral, universal
+
+    payload = _payload()
+    payload['analysis']['primary_roles'] = [{'role_id': 'backend_developer'}]
+    create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))
+            ]
+        )
+    )
+    configured = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
+    monkeypatch.setattr(
+        mistral,
+        '_get_client',
+        lambda: SimpleNamespace(with_options=Mock(return_value=configured)),
+    )
+    monkeypatch.setattr(universal, '_claim_daily_call', lambda _limit: True)
+
+    async def no_delay(_seconds: float) -> None:
+        return None
+
+    async def must_not_export(**_kwargs) -> bool:
+        raise AssertionError('invalid response reached Sheets')
+
+    monkeypatch.setattr('tg_vacancy_bot.pipeline.processor.asyncio.sleep', no_delay)
+    state = DedupeStateSpy()
+    processor = VacancyProcessor(
+        keyword_filter=lambda _text: True,
+        analyze_text=universal.analyze_universal_text,
+        append_to_sheet=must_not_export,
+        dedupe_state=state,
+    )
+
+    saved = asyncio.run(
+        processor.process_message(
+            'Hiring Go backend developer',
+            'Hiring Go backend developer',
+            'https://t.me/jobs/42',
+            datetime(2026, 7, 22, tzinfo=timezone.utc),
+            'jobs',
+        )
+    )
+
+    assert not saved
+    assert create.await_count == 1
+    assert state.marked == []
 
 
 def test_failed_sheet_export_is_not_marked(monkeypatch, tmp_path) -> None:
