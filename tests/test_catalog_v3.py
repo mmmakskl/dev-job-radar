@@ -7,6 +7,7 @@ from dataclasses import replace
 from tg_vacancy_bot.candidate_catalog import CATALOG, role_path
 from tg_vacancy_bot.llm.universal import (
     LEGACY_PROMPT_VERSION,
+    PREVIOUS_PROMPT_VERSION,
     PROMPT_VERSION,
     _validate,
     decision_from_dict,
@@ -201,6 +202,11 @@ def test_premium_catalog_uses_original_text_and_current_decision():
         decision, snapshot, source_text='Go backend developer, agency'
     ).is_track_match
     assert not adapt_universal(decision, snapshot).is_track_match
+    assert adapt_universal(
+        replace(decision, prompt_version=PREVIOUS_PROMPT_VERSION),
+        snapshot,
+        source_text='Go backend developer',
+    ).is_track_match
     assert not adapt_universal(
         replace(decision, prompt_version=LEGACY_PROMPT_VERSION),
         snapshot,
@@ -297,6 +303,17 @@ def test_registry_requires_current_analysis_and_source_text(tmp_path):
     )
     assert registry.get('jobs_2').prompt_version == LEGACY_PROMPT_VERSION
     assert [item.vacancy_id for item in registry.list_personal_matches(1)] == ['jobs_1']
+    previous = replace(decision, prompt_version=PREVIOUS_PROMPT_VERSION)
+    registry.ingest(
+        vacancy_id='jobs_3',
+        post_link='https://t.me/jobs/3',
+        decision=previous,
+        raw_text='Ищем Go backend developer',
+    )
+    assert {item.vacancy_id for item in registry.list_personal_matches(1)} == {
+        'jobs_1',
+        'jobs_3',
+    }
     assert PROMPT_VERSION != LEGACY_PROMPT_VERSION
 
 

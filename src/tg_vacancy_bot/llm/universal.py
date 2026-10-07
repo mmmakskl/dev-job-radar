@@ -16,7 +16,8 @@ from tg_vacancy_bot.models import VacancyAnalysis
 
 SCHEMA_VERSION = "vacancy-analysis.v1"
 LEGACY_PROMPT_VERSION = "catalog-classifier.v4"
-PROMPT_VERSION = "catalog-classifier.v5"
+PREVIOUS_PROMPT_VERSION = "catalog-classifier.v5"
+PROMPT_VERSION = "catalog-classifier.v6"
 
 
 class AnalysisUnavailable(RuntimeError):
@@ -56,6 +57,19 @@ def _catalog_prompt(catalog: dict) -> str:
     """Build the shared catalog classifier prompt from the versioned role data."""
     from tg_vacancy_bot.llm.schemas import EXPECTED_FIELDS
 
+    role_choices = [
+        {
+            'direction_id': direction['id'],
+            'direction': direction['label'],
+            'specialization_id': specialization['id'],
+            'role_id': role['id'],
+            'role': role['label'],
+            'aliases': role['synonyms'][1:4],
+        }
+        for direction in catalog['directions']
+        for specialization in direction['specializations']
+        for role in specialization['roles']
+    ]
     analysis_example = {key: None for key in sorted(EXPECTED_FIELDS)}
     analysis_example.update(
         is_match=True,
@@ -77,8 +91,9 @@ def _catalog_prompt(catalog: dict) -> str:
         "Reject training/course offers, license sales, resumes/CVs, and posts without an actual open role; do not "
         "classify a company selling 1C licenses as a vacancy unless it is explicitly hiring for a role. A course ad, "
         "CV, license offer, or ambiguous post is not accepted; mark uncertainty review. "
-        f"Return exact schema version {SCHEMA_VERSION} and prompt version {PROMPT_VERSION}. Catalog: "
-        + json.dumps(catalog, ensure_ascii=False)
+        f"Return exact schema version {SCHEMA_VERSION} and prompt version {PROMPT_VERSION}. "
+        "The following are all allowed role choices; use exact IDs when the role title or alias is present: "
+        + json.dumps(role_choices, ensure_ascii=False, separators=(',', ':'))
         + "\nJSON example: "
         + json.dumps(
             {
@@ -138,7 +153,9 @@ def _validate(payload: object, *, historical: bool = False) -> UniversalDecision
         raise InvalidAnalysisResultError("invalid_universal_schema")
     version = payload["prompt_version"]
     allowed_versions = (
-        {PROMPT_VERSION, LEGACY_PROMPT_VERSION} if historical else {PROMPT_VERSION}
+        {PROMPT_VERSION, PREVIOUS_PROMPT_VERSION, LEGACY_PROMPT_VERSION}
+        if historical
+        else {PROMPT_VERSION}
     )
     if payload["schema_version"] != SCHEMA_VERSION or version not in allowed_versions:
         raise InvalidAnalysisResultError("unsupported_analysis_version")

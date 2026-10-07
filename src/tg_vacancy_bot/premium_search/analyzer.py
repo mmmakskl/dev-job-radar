@@ -226,6 +226,7 @@ def adapt_universal(
 ) -> PremiumAnalysis:
     """Keep the complete decision while applying the destination's acceptance rules."""
     from tg_vacancy_bot.llm.universal import (
+        PREVIOUS_PROMPT_VERSION,
         PROMPT_VERSION,
         decision_to_dict,
         go_projection_accepted,
@@ -248,7 +249,10 @@ def adapt_universal(
         matched = (
             result.status == 'match'
             and profile.is_active
-            and (not current_profile or decision.prompt_version == PROMPT_VERSION)
+            and (
+                not current_profile
+                or decision.prompt_version in {PROMPT_VERSION, PREVIOUS_PROMPT_VERSION}
+            )
         )
         role_confidence = max(
             (

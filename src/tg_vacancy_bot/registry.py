@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from tg_vacancy_bot.candidate_catalog import PROFILE_CONTRACT
 from tg_vacancy_bot.llm.universal import (
+    PREVIOUS_PROMPT_VERSION,
     PROMPT_VERSION,
     SCHEMA_VERSION,
     UniversalDecision,
@@ -479,7 +480,9 @@ class VacancyRegistry:
                     profile.preferences.get('profile_contract') == PROFILE_CONTRACT
                 )
                 if current_contract and (
-                    vacancy.prompt_version != PROMPT_VERSION or not vacancy.raw_text
+                    vacancy.prompt_version
+                    not in {PROMPT_VERSION, PREVIOUS_PROMPT_VERSION}
+                    or not vacancy.raw_text
                 ):
                     continue
                 with self._connect() as c:

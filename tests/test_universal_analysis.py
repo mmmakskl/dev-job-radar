@@ -9,8 +9,10 @@ import pytest
 from tg_vacancy_bot.llm.universal import (
     PROMPT_VERSION,
     SCHEMA_VERSION,
+    _catalog_prompt,
     _validate,
 )
+from tg_vacancy_bot.candidate_catalog import CATALOG
 from tg_vacancy_bot.llm.response_schemas import universal_response_format
 from tg_vacancy_bot.pipeline.prefilter import universal_prefilter
 
@@ -47,6 +49,17 @@ def _payload():
         'reason_code': 'vacancy_match',
         'needs_review': False,
     }
+
+
+def test_compact_prompt_contains_every_catalog_role():
+    prompt = _catalog_prompt(CATALOG)
+    assert len(prompt) < 13_000
+    assert all(
+        role['id'] in prompt and role['label'] in prompt
+        for direction in CATALOG['directions']
+        for specialization in direction['specializations']
+        for role in specialization['roles']
+    )
 
 
 def test_universal_contract_and_versions_are_strict():
