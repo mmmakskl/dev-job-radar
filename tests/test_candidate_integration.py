@@ -211,6 +211,7 @@ def test_profile_creation_activation_personal_and_older_feed_navigation(tmp_path
             decision=decision,
             eligible_at=now,
             published_at=published.isoformat(),
+            raw_text='Ищем Go backend developer',
         )
         store.register_vacancy(
             vacancy_id=f'older_{index}',

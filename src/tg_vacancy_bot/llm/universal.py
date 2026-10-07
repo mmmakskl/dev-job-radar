@@ -15,7 +15,8 @@ from tg_vacancy_bot.llm.response_schemas import universal_response_format
 from tg_vacancy_bot.models import VacancyAnalysis
 
 SCHEMA_VERSION = "vacancy-analysis.v1"
-PROMPT_VERSION = "catalog-classifier.v4"
+LEGACY_PROMPT_VERSION = "catalog-classifier.v4"
+PROMPT_VERSION = "catalog-classifier.v5"
 
 
 class AnalysisUnavailable(RuntimeError):
@@ -30,11 +31,13 @@ class UniversalDecision:
     confidence: int
     reason_code: str
     needs_review: bool
+    prompt_version: str = PROMPT_VERSION
 
 
-def _catalog_roles() -> set[tuple[str, str, str]]:
-    path = Path(__file__).resolve().parents[1] / "data" / "it_roles.v1.json"
-    catalog = json.loads(path.read_text(encoding="utf-8"))
+def _catalog_roles(*, historical: bool = False) -> set[tuple[str, str, str]]:
+    from tg_vacancy_bot.candidate_catalog import CATALOG, LEGACY_CATALOG
+
+    catalog = LEGACY_CATALOG if historical else CATALOG
     return {
         (direction["id"], specialization["id"], role["id"])
         for direction in catalog["directions"]
@@ -121,7 +124,7 @@ def _claim_daily_call(limit: int) -> bool:
         return True
 
 
-def _validate(payload: object) -> UniversalDecision:
+def _validate(payload: object, *, historical: bool = False) -> UniversalDecision:
     if not isinstance(payload, dict) or set(payload) != {
         "schema_version",
         "prompt_version",
@@ -133,10 +136,11 @@ def _validate(payload: object) -> UniversalDecision:
         "needs_review",
     }:
         raise InvalidAnalysisResultError("invalid_universal_schema")
-    if (
-        payload["schema_version"] != SCHEMA_VERSION
-        or payload["prompt_version"] != PROMPT_VERSION
-    ):
+    version = payload["prompt_version"]
+    allowed_versions = (
+        {PROMPT_VERSION, LEGACY_PROMPT_VERSION} if historical else {PROMPT_VERSION}
+    )
+    if payload["schema_version"] != SCHEMA_VERSION or version not in allowed_versions:
         raise InvalidAnalysisResultError("unsupported_analysis_version")
     if (
         type(payload["is_vacancy"]) is not bool
@@ -151,7 +155,7 @@ def _validate(payload: object) -> UniversalDecision:
         or not payload["reason_code"].isidentifier()
     ):
         raise InvalidAnalysisResultError("invalid_reason_code")
-    roles = _catalog_roles()
+    roles = _catalog_roles(historical=version == LEGACY_PROMPT_VERSION)
     classifications = payload["classifications"]
     if not isinstance(classifications, list):
         raise InvalidAnalysisResultError("invalid_classifications")
@@ -193,6 +197,7 @@ def _validate(payload: object) -> UniversalDecision:
         confidence,
         payload["reason_code"],
         payload["needs_review"],
+        version,
     )
 
 
@@ -254,14 +259,14 @@ def decision_to_dict(decision: UniversalDecision) -> dict:
     return {
         **asdict(decision),
         'schema_version': SCHEMA_VERSION,
-        'prompt_version': PROMPT_VERSION,
+        'prompt_version': decision.prompt_version,
     }
 
 
 def decision_from_dict(payload: dict) -> UniversalDecision:
     """Validate and restore the same envelope used by the live classifier."""
     # JSON serialization also normalizes the immutable tuple to the wire list.
-    return _validate(json.loads(json.dumps(payload)))
+    return _validate(json.loads(json.dumps(payload)), historical=True)
 
 
 def go_projection_accepted(decision: UniversalDecision) -> bool:
@@ -277,7 +282,13 @@ def go_projection_accepted(decision: UniversalDecision) -> bool:
         and 'Go' in normalize_stack(decision.analysis.required_stack)
         and any(
             item['role_id']
-            in {'backend_developer', 'api_developer', 'devops_engineer', 'sre_engineer'}
+            in {
+                'backend_developer',
+                'devops_sre_engineer',
+                'api_developer',
+                'devops_engineer',
+                'sre_engineer',
+            }
             and item['confidence'] >= get_track('go').confidence_threshold
             for item in decision.classifications
         )

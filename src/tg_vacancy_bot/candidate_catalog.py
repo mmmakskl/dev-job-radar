@@ -6,12 +6,45 @@ from pathlib import Path
 CATALOG_PATH = Path(__file__).parent / 'data' / 'it_roles.v1.json'
 CATALOG = json.loads(CATALOG_PATH.read_text(encoding='utf-8'))
 CATALOG_VERSION = CATALOG['version']
+PROFILE_CONTRACT = 'catalog-v3'
+LEGACY_CATALOG = json.loads(
+    (CATALOG_PATH.parent / 'it_roles.v2.json').read_text(encoding='utf-8')
+)
+
+
+def roles_for_direction(direction_id: str) -> list[dict]:
+    """Return the public roles of one direction in display order."""
+    direction = next(
+        (item for item in CATALOG['directions'] if item['id'] == direction_id), None
+    )
+    if direction is None:
+        raise ValueError('Invalid profile direction')
+    return [
+        role
+        for specialization in direction['specializations']
+        for role in specialization['roles']
+    ]
+
+
+def role_path(role_id: str) -> tuple[str, str, str] | None:
+    """Resolve a current role ID to its direction and internal specialization."""
+    for direction in CATALOG['directions']:
+        for specialization in direction['specializations']:
+            for role in specialization['roles']:
+                if role['id'] == role_id:
+                    return direction['id'], specialization['id'], role_id
+    return None
+
+
+def migrate_legacy_role(role_id: str) -> tuple[str, str, str] | None:
+    """Map only roles with an unchanged meaning to the current catalog."""
+    return role_path(role_id)
 
 
 def resolve_alias(value: str) -> tuple[str, str] | None:
     """Resolve a Russian or English catalog label/alias to (kind, stable ID)."""
     normalized = value.strip().casefold()
-    for direction in CATALOG['directions']:
+    for direction in [*CATALOG['directions'], *LEGACY_CATALOG['directions']]:
         for label in [direction['id'], *direction['synonyms']]:
             if normalized == label.casefold():
                 return 'direction', direction['id']
@@ -50,7 +83,28 @@ def validate_profile_path(
         else None
     )
     if role is None:
-        raise ValueError('Invalid direction, specialization, role path')
+        legacy_direction = next(
+            (d for d in LEGACY_CATALOG['directions'] if d['id'] == direction_id),
+            None,
+        )
+        legacy_specialization = next(
+            (
+                s
+                for s in (legacy_direction or {}).get('specializations', [])
+                if s['id'] == specialization_id
+            ),
+            None,
+        )
+        role = next(
+            (
+                r
+                for r in (legacy_specialization or {}).get('roles', [])
+                if r['id'] == role_id
+            ),
+            None,
+        )
+        if role is None:
+            raise ValueError('Invalid direction, specialization, role path')
     allowed = role['stacks']
     invalid = set(stacks or []) - set(allowed)
     if invalid:

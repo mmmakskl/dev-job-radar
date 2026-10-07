@@ -7,6 +7,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Literal
 
+from tg_vacancy_bot.candidate_catalog import PROFILE_CONTRACT
 from tg_vacancy_bot.llm.universal import UniversalDecision
 from tg_vacancy_bot.models import NOT_SPECIFIED
 from tg_vacancy_bot.telegram.candidate_store import CandidateProfile
@@ -101,7 +102,10 @@ def _grade_range_matches(start: str, end: str, expected: list[str]) -> bool | No
 
 
 def match_profile(
-    decision: UniversalDecision, profile: CandidateProfile
+    decision: UniversalDecision,
+    profile: CandidateProfile,
+    *,
+    source_text: str | None = None,
 ) -> ProfileMatch:
     """Match one analyzed vacancy to one profile without I/O or confidence thresholds."""
     if decision.needs_review:
@@ -112,6 +116,8 @@ def match_profile(
         return ProfileMatch(
             "no_match", "not_a_vacancy", conflicting_fields=("is_vacancy",)
         )
+    if profile.preferences.get('profile_contract') == PROFILE_CONTRACT:
+        return _match_current(decision, profile, source_text)
 
     matched: list[str] = []
     missing: list[str] = []
@@ -220,6 +226,51 @@ def match_profile(
         tuple(dict.fromkeys(missing)),
         tuple(dict.fromkeys(conflicting)),
     )
+
+
+def _match_current(
+    decision: UniversalDecision,
+    profile: CandidateProfile,
+    source_text: str | None,
+) -> ProfileMatch:
+    """Match one selected role, grade and user text filters."""
+    if not any(
+        item['direction_id'] == profile.direction_id
+        and item['role_id'] == profile.role_id
+        for item in decision.classifications
+    ):
+        return ProfileMatch('no_match', 'role_conflict', conflicting_fields=('role',))
+
+    grades = _values(profile.preferences.get('seniority', []))
+    if grades:
+        overlap = _grade_range_matches(
+            decision.analysis.grade_from, decision.analysis.grade_to, grades
+        )
+        if overlap is None:
+            return ProfileMatch(
+                'review', 'grade_missing', missing_fields=('seniority',)
+            )
+        if not overlap:
+            return ProfileMatch(
+                'no_match', 'grade_conflict', conflicting_fields=('seniority',)
+            )
+
+    skills = _values(profile.preferences.get('required_skills', []))
+    excluded = _values(profile.preferences.get('excluded_skills', []))
+    if (skills or excluded) and not source_text:
+        return ProfileMatch(
+            'review', 'source_text_missing', missing_fields=('source_text',)
+        )
+    normalized_text = _norm(source_text or '')
+    if any(_contains_skill(normalized_text, word) for word in excluded):
+        return ProfileMatch(
+            'no_match', 'excluded_word', conflicting_fields=('excluded_skills',)
+        )
+    if skills and not any(_contains_skill(normalized_text, skill) for skill in skills):
+        return ProfileMatch(
+            'no_match', 'skill_missing', conflicting_fields=('required_skills',)
+        )
+    return ProfileMatch('match', 'criteria_match', matched_fields=('role',))
 
 
 def match_profiles(

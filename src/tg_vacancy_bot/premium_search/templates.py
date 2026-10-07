@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tg_vacancy_bot.candidate_catalog import CATALOG
 from tg_vacancy_bot.premium_search.tracks import normalize_query
 
 _DATA_PATH = Path(__file__).parent / 'data' / 'query_templates.v1.json'
@@ -52,6 +53,25 @@ for _template in _TEMPLATES:
     _BY_ROLE.setdefault(_template.role_id, ())
     _BY_ROLE[_template.role_id] += (_template,)
 
+for _direction in CATALOG['directions']:
+    for _specialization in _direction['specializations']:
+        for _role in _specialization['roles']:
+            if _role['id'] in _BY_ROLE:
+                continue
+            _label = _role['label']
+            _template = QueryTemplate(
+                id=f"role:{_role['id']}",
+                kind='role',
+                role_id=_role['id'],
+                label=_label,
+                main=f'"{_label}" вакансии',
+                ru=f'"{_label}" вакансии',
+                en=f'"{_role["synonyms"][1]}" jobs',
+                synonyms=tuple(_role['synonyms']),
+            )
+            _BY_ROLE[_role['id']] = (_template,)
+            _BY_ID[_template.id] = _template
+
 
 def _profile_value(profile: Any, key: str, default: Any = None) -> Any:
     if isinstance(profile, dict):
@@ -65,7 +85,14 @@ def list_templates(profile: Any) -> tuple[QueryTemplate, ...]:
     if not isinstance(role_id, str):
         return ()
     preferences = _profile_value(profile, 'preferences', {}) or {}
-    stacks = preferences.get('stacks', ()) if isinstance(preferences, dict) else ()
+    stacks = (
+        [
+            *preferences.get('stacks', ()),
+            *preferences.get('required_skills', ()),
+        ]
+        if isinstance(preferences, dict)
+        else ()
+    )
     selected = set(stacks or ())
     roleless_onec = not role_id and _profile_value(profile, 'direction_id') == 'onec'
     templates = (
@@ -116,7 +143,9 @@ def compose_query(
         raise ValueError('Шаблон не соответствует направлению профиля')
     preferences = _profile_value(profile, 'preferences', {}) or {}
     selected_stacks = (
-        preferences.get('stacks', ()) if isinstance(preferences, dict) else ()
+        [*preferences.get('stacks', ()), *preferences.get('required_skills', ())]
+        if isinstance(preferences, dict)
+        else ()
     )
     if (
         template.kind == 'stack'

@@ -12,6 +12,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from tg_vacancy_bot.candidate_catalog import (
     CATALOG_VERSION,
+    PROFILE_CONTRACT,
+    migrate_legacy_role,
+    role_path,
     validate_direction_stacks,
     validate_profile_path,
 )
@@ -70,6 +73,7 @@ class CandidateStore:
 
     def _migrate(self) -> None:
         with self._connect() as connection:
+            previous_version = connection.execute('PRAGMA user_version').fetchone()[0]
             connection.execute('PRAGMA journal_mode = WAL')
             connection.executescript('''
                 CREATE TABLE IF NOT EXISTS vacancies (
@@ -162,10 +166,99 @@ class CandidateStore:
                     JOIN vacancies v ON v.vacancy_id = a.vacancy_id
                     WHERE a.status='saved'
                 ''')
-            # Version 4 changes only the profile contract. Legacy role columns and
-            # rows are intentionally retained unchanged; role-neutral profiles use
-            # empty legacy fields and are validated by direction.
-            connection.execute('PRAGMA user_version = 4')
+            if previous_version < 5:
+                self._migrate_profiles_v3(connection)
+            connection.execute('PRAGMA user_version = 5')
+
+    @staticmethod
+    def _migrate_profiles_v3(connection: sqlite3.Connection) -> None:
+        """Version unambiguous profiles; preserve unresolved rows for editing."""
+        for row in connection.execute('SELECT * FROM candidate_profiles').fetchall():
+            preferences = json.loads(row['preferences_json'])
+            if preferences.get('profile_contract') == PROFILE_CONTRACT:
+                continue
+            path = migrate_legacy_role(row['role_id'])
+            if path is None:
+                preferences['needs_role_selection'] = True
+                version = row['current_version'] + 1
+                now = utc_now()
+                connection.execute(
+                    '''UPDATE candidate_profiles SET is_active=0,preferences_json=?,
+                    current_version=?,updated_at=? WHERE profile_id=?''',
+                    (
+                        json.dumps(preferences, ensure_ascii=False),
+                        version,
+                        now,
+                        row['profile_id'],
+                    ),
+                )
+                snapshot = {
+                    'name': row['name'],
+                    'direction_id': row['direction_id'],
+                    'specialization_id': row['specialization_id'],
+                    'role_id': row['role_id'],
+                    'preferences': preferences,
+                    'is_active': False,
+                    'catalog_version': CATALOG_VERSION,
+                }
+                connection.execute(
+                    'INSERT INTO candidate_profile_versions VALUES (?,?,?,?)',
+                    (
+                        row['profile_id'],
+                        version,
+                        json.dumps(snapshot, ensure_ascii=False),
+                        now,
+                    ),
+                )
+                continue
+            preferences['profile_contract'] = PROFILE_CONTRACT
+            preferences['required_skills'] = list(
+                dict.fromkeys(
+                    [
+                        *preferences.get('stacks', []),
+                        *preferences.get('required_skills', []),
+                    ]
+                )
+            )
+            preferences['stacks'] = []
+            if not (
+                path[0] == 'development'
+                and row['role_id'] == 'backend_developer'
+                and 'go' in {item.casefold() for item in preferences['required_skills']}
+            ):
+                preferences['delivery_mode'] = 'manual'
+            version = row['current_version'] + 1
+            now = utc_now()
+            connection.execute(
+                '''UPDATE candidate_profiles SET direction_id=?,specialization_id=?,
+                role_id=?,preferences_json=?,current_version=?,updated_at=?
+                WHERE profile_id=?''',
+                (
+                    *path,
+                    json.dumps(preferences, ensure_ascii=False),
+                    version,
+                    now,
+                    row['profile_id'],
+                ),
+            )
+            snapshot = {
+                'name': row['name'],
+                'direction_id': path[0],
+                'specialization_id': path[1],
+                'role_id': path[2],
+                'preferences': preferences,
+                'is_active': bool(row['is_active']),
+                'catalog_version': CATALOG_VERSION,
+            }
+            connection.execute(
+                'INSERT INTO candidate_profile_versions VALUES (?,?,?,?)',
+                (
+                    row['profile_id'],
+                    version,
+                    json.dumps(snapshot, ensure_ascii=False),
+                    now,
+                ),
+            )
 
     def _profile_from_row(self, row: sqlite3.Row) -> CandidateProfile:
         return CandidateProfile(
@@ -197,7 +290,14 @@ class CandidateStore:
         unknown = (
             set(values)
             - list_fields
-            - {'timezone', 'delivery_mode', 'premium_template_id', 'primary_language'}
+            - {
+                'timezone',
+                'delivery_mode',
+                'premium_template_id',
+                'primary_language',
+                'profile_contract',
+                'needs_role_selection',
+            }
         )
         if unknown:
             raise ValueError(f'Unsupported profile fields: {sorted(unknown)}')
@@ -208,6 +308,8 @@ class CandidateStore:
             ):
                 raise ValueError(f'{field} must be a list of non-empty strings')
             values[field] = list(dict.fromkeys(x.strip() for x in value))
+        if values.get('profile_contract') not in {None, PROFILE_CONTRACT}:
+            raise ValueError('Unsupported profile contract')
         primary_language = values.get('primary_language')
         allowed_languages = {
             'go',
@@ -255,8 +357,23 @@ class CandidateStore:
         if not isinstance(is_active, bool):
             raise ValueError('is_active must be a boolean')
         preferences = self._validate_preferences(preferences)
+        if preferences.get('profile_contract') == PROFILE_CONTRACT and role_path(
+            role_id
+        ) != (
+            direction_id,
+            specialization_id,
+            role_id,
+        ):
+            raise ValueError('Choose a role in the selected direction')
         self._validate_profile_path(
-            direction_id, specialization_id, role_id, preferences['stacks']
+            direction_id,
+            specialization_id,
+            role_id,
+            (
+                []
+                if preferences.get('profile_contract') == PROFILE_CONTRACT
+                else preferences['stacks']
+            ),
         )
         self._clear_invalid_template(role_id, preferences, direction_id)
         name = name.strip()
@@ -352,11 +469,23 @@ class CandidateStore:
                 raise ValueError('is_active must be a boolean')
             values['name'] = values['name'].strip()
             values['preferences'] = self._validate_preferences(values['preferences'])
+            if values['preferences'].get(
+                'profile_contract'
+            ) == PROFILE_CONTRACT and role_path(values['role_id']) != (
+                values['direction_id'],
+                values['specialization_id'],
+                values['role_id'],
+            ):
+                raise ValueError('Choose a role in the selected direction')
             self._validate_profile_path(
                 values['direction_id'],
                 values['specialization_id'],
                 values['role_id'],
-                values['preferences'].get('stacks', []),
+                (
+                    []
+                    if values['preferences'].get('profile_contract') == PROFILE_CONTRACT
+                    else values['preferences'].get('stacks', [])
+                ),
             )
             self._clear_invalid_template(
                 values['role_id'], values['preferences'], values['direction_id']
@@ -517,10 +646,20 @@ class CandidateStore:
         with self._connect() as connection:
             connection.execute('BEGIN IMMEDIATE')
             row = connection.execute(
-                'SELECT 1 FROM candidate_profiles WHERE telegram_user_id=? AND profile_id=?',
+                'SELECT * FROM candidate_profiles WHERE telegram_user_id=? AND profile_id=?',
                 (telegram_user_id, profile_id),
             ).fetchone()
             if row is None:
+                return None
+            if json.loads(row['preferences_json']).get('needs_role_selection'):
+                return None
+            if json.loads(row['preferences_json']).get(
+                'profile_contract'
+            ) == PROFILE_CONTRACT and role_path(row['role_id']) != (
+                row['direction_id'],
+                row['specialization_id'],
+                row['role_id'],
+            ):
                 return None
             self._deactivate_others(connection, telegram_user_id, profile_id)
             current = self.get_profile(telegram_user_id, profile_id)

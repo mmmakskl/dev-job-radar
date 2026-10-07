@@ -13,6 +13,7 @@ import sqlite3
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 
+from tg_vacancy_bot.candidate_catalog import PROFILE_CONTRACT
 from tg_vacancy_bot.llm.universal import (
     PROMPT_VERSION,
     SCHEMA_VERSION,
@@ -27,8 +28,8 @@ from tg_vacancy_bot.telegram.candidate_store import (
     callback_key_for,
 )
 
-MATCHER_VERSION = 'profile-match.v4'
-REGISTRY_VERSION = 1
+MATCHER_VERSION = 'profile-match.v5'
+REGISTRY_VERSION = 2
 
 
 def _timestamp(value: datetime | str | None) -> str | None:
@@ -64,6 +65,8 @@ class RegistryVacancy:
     decision: UniversalDecision | None
     analysis_id: int | None
     unavailable_reason: str | None
+    raw_text: str | None = None
+    prompt_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -175,6 +178,9 @@ class VacancyRegistry:
                     PRIMARY KEY(kind,key)
                 );
             ''')
+            self.candidates._add_column_if_missing(
+                c, 'registry_analyses', 'raw_text', 'TEXT'
+            )
             c.execute(
                 'INSERT OR IGNORE INTO registry_schema_versions VALUES (?,?)',
                 (REGISTRY_VERSION, _now()),
@@ -217,7 +223,11 @@ class VacancyRegistry:
             if decision
             else (unavailable_reason or 'legacy_no_analysis')
         )
-        digest = hashlib.sha256((serialized + reason).encode()).hexdigest()
+        digest = hashlib.sha256(
+            (
+                serialized + reason + hashlib.sha256(raw_text.encode()).hexdigest()
+            ).encode()
+        ).hexdigest()
         with self._connect() as c:
             c.execute('BEGIN IMMEDIATE')
             # Exact identity is safe across Premium/live imports. Text hashes are
@@ -317,7 +327,7 @@ class VacancyRegistry:
             c.execute(
                 '''INSERT OR IGNORE INTO registry_analyses
                    (vacancy_id,payload_hash,decision_json,status,confidence,reason_code,needs_review,
-                    schema_version,prompt_version,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                   schema_version,prompt_version,created_at,raw_text) VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
                 (
                     vacancy_id,
                     digest,
@@ -327,8 +337,9 @@ class VacancyRegistry:
                     reason,
                     int(decision.needs_review) if decision else 1,
                     SCHEMA_VERSION,
-                    PROMPT_VERSION,
+                    decision.prompt_version if decision else PROMPT_VERSION,
                     now,
+                    raw_text or None,
                 ),
             )
             analysis_id = c.execute(
@@ -402,7 +413,7 @@ class VacancyRegistry:
     def get(self, vacancy_id: str) -> RegistryVacancy | None:
         with self._connect() as c:
             row = c.execute(
-                '''SELECT v.*,a.decision_json,a.reason_code FROM registry_vacancies v
+                '''SELECT v.*,a.decision_json,a.reason_code,a.raw_text,a.prompt_version FROM registry_vacancies v
                 LEFT JOIN registry_analyses a ON a.analysis_id=v.latest_analysis_id
                 WHERE v.vacancy_id=?''',
                 (vacancy_id,),
@@ -425,12 +436,14 @@ class VacancyRegistry:
             decision,
             row['latest_analysis_id'],
             row['reason_code'] if decision is None else None,
+            row['raw_text'],
+            row['prompt_version'],
         )
 
     def list_vacancies(self, *, eligible_only: bool = True) -> list[RegistryVacancy]:
         with self._connect() as c:
             rows = c.execute(
-                '''SELECT v.*,a.decision_json,a.reason_code FROM registry_vacancies v
+                '''SELECT v.*,a.decision_json,a.reason_code,a.raw_text,a.prompt_version FROM registry_vacancies v
                 LEFT JOIN registry_analyses a ON a.analysis_id=v.latest_analysis_id'''
                 + (' WHERE v.eligible_at IS NOT NULL' if eligible_only else '')
                 + ' ORDER BY COALESCE(v.published_at,v.discovered_at) DESC,v.vacancy_id'
@@ -455,6 +468,13 @@ class VacancyRegistry:
                 continue
             matched = []
             for profile in profiles:
+                current_contract = (
+                    profile.preferences.get('profile_contract') == PROFILE_CONTRACT
+                )
+                if current_contract and (
+                    vacancy.prompt_version != PROMPT_VERSION or not vacancy.raw_text
+                ):
+                    continue
                 with self._connect() as c:
                     row = c.execute(
                         '''SELECT status FROM registry_profile_matches WHERE
@@ -474,10 +494,15 @@ class VacancyRegistry:
                             i
                             for i in decision.classifications
                             if i['direction_id'] == profile.direction_id
+                            and (
+                                not current_contract or i['role_id'] == profile.role_id
+                            )
                         ),
                         None,
                     )
-                    match = match_profile(decision, profile)
+                    match = match_profile(
+                        decision, profile, source_text=vacancy.raw_text
+                    )
                     if match.status == 'match' and (
                         decision.confidence < 90
                         or classification is None

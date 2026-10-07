@@ -428,7 +428,9 @@ class PremiumSearchService:
             from tg_vacancy_bot.llm.universal import analyze_universal_text
 
             return adapt_universal(
-                await analyze_universal_text(text), run['profile_snapshot']
+                await analyze_universal_text(text),
+                run['profile_snapshot'],
+                source_text=text,
             )
         return await self.analyzer(text)
 
@@ -497,7 +499,9 @@ class PremiumSearchService:
                 from tg_vacancy_bot.llm.universal import decision_from_dict
 
                 decision = adapt_universal(
-                    decision_from_dict(cached), run['profile_snapshot']
+                    decision_from_dict(cached),
+                    run['profile_snapshot'],
+                    source_text=result['raw_text'],
                 )
         attempts = 0 if decision is not None else 3
         for attempt in range(attempts):

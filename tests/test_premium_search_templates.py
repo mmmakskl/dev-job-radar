@@ -12,22 +12,15 @@ from tg_vacancy_bot.premium_search.templates import (
 
 def test_templates_cover_catalog_roles_and_role_stack_pairs():
     expected_roles = set()
-    expected_stacks = set()
     for direction in CATALOG['directions']:
         for specialization in direction['specializations']:
             for role in specialization['roles']:
                 expected_roles.add(role['id'])
-                expected_stacks.update((role['id'], stack) for stack in role['stacks'])
-    actual_roles = {item.role_id for item in _TEMPLATES if item.kind == 'role'}
-    actual_stacks = {
-        (item.role_id, item.stack_id) for item in _TEMPLATES if item.kind == 'stack'
-    }
-    assert not expected_roles - actual_roles, sorted(expected_roles - actual_roles)
-    assert not expected_stacks - actual_stacks, sorted(expected_stacks - actual_stacks)
-    assert not actual_roles - expected_roles
-    assert not actual_stacks - expected_stacks
-    assert len(actual_roles) == 29
-    assert len(actual_stacks) == 133
+    assert len(expected_roles) == 47
+    for role_id in expected_roles:
+        templates = list_templates({'role_id': role_id, 'preferences': {}})
+        assert templates and templates[0].id == f'role:{role_id}'
+        assert get_template(templates[0].id) is templates[0]
     assert len({item.id for item in _TEMPLATES}) == len(_TEMPLATES)
     for item in _TEMPLATES:
         assert item.label and item.main and item.ru and item.en and item.synonyms
@@ -50,6 +43,15 @@ def test_template_ids_lookup_and_profile_filtering():
     assert [item.id for item in list_templates({'role_id': 'backend_developer'})] == [
         'role:backend_developer'
     ]
+    current = {
+        'role_id': 'backend_developer',
+        'preferences': {'required_skills': ['go']},
+    }
+    assert [item.id for item in list_templates(current)] == [
+        'role:backend_developer',
+        'stack:backend_developer:go',
+    ]
+    assert compose_query('stack:backend_developer:go', current)
 
 
 def test_compose_query_language_parameters_and_length_validation():
@@ -102,5 +104,5 @@ def test_versioned_data_file_matches_template_count():
     )
     payload = json.loads(path.read_text(encoding='utf-8'))
     assert payload['version'] == 1
-    assert payload['catalog_version'] == 2
+    assert payload['catalog_version'] == 2  # archived curated templates
     assert len(payload['templates']) == len(_TEMPLATES)

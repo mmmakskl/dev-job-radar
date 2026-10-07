@@ -1,60 +1,1266 @@
 {
-  "version": 2,
+  "version": 3,
   "directions": [
-    {"id":"development","synonyms":["разработка","development","software engineering"],"specializations":[
-      {"id":"backend","synonyms":["бэкенд","backend","server-side"],"roles":[
-        {"id":"backend_developer","synonyms":["backend developer","бэкенд-разработчик","server developer"],"stacks":["go","python","java","kotlin","csharp","php","ruby","nodejs","rust","sql"]},
-        {"id":"api_developer","synonyms":["api developer","разработчик api"],"stacks":["go","python","java","nodejs","rust"]}]},
-      {"id":"frontend","synonyms":["фронтенд","frontend","web client"],"roles":[{"id":"frontend_developer","synonyms":["frontend developer","фронтенд-разработчик","web developer"],"stacks":["javascript","typescript","react","vue","angular"]}]},
-      {"id":"mobile","synonyms":["мобильная разработка","mobile"],"roles":[{"id":"mobile_developer","synonyms":["mobile developer","мобильный разработчик"],"stacks":["swift","kotlin","flutter","react_native"]}]},
-      {"id":"embedded","synonyms":["встроенные системы","embedded"],"roles":[{"id":"embedded_developer","synonyms":["embedded developer","embedded engineer","разработчик встраиваемых систем"],"stacks":["c","cpp","rust","embedded_linux"]}]}
-    ]},
-    {"id":"qa","synonyms":["тестирование","qa","quality assurance"],"specializations":[
-      {"id":"manual_qa","synonyms":["ручное тестирование","manual testing"],"roles":[{"id":"manual_qa_engineer","synonyms":["manual qa","тестировщик","инженер ручного тестирования"],"stacks":["web","mobile","api","sql"]}]},
-      {"id":"automation_qa","synonyms":["автоматизация тестирования","test automation"],"roles":[{"id":"automation_qa_engineer","synonyms":["automation qa","qa automation engineer","автотестировщик"],"stacks":["python","java","javascript","typescript","csharp","go"]}]}
-    ]},
-    {"id":"data_ai","synonyms":["данные и ии","data","ai","искусственный интеллект"],"specializations":[
-      {"id":"data_engineering","synonyms":["инженерия данных","data engineering"],"roles":[{"id":"data_engineer","synonyms":["data engineer","инженер данных"],"stacks":["python","sql","spark","kafka","airflow"]}]},
-      {"id":"data_science","synonyms":["наука о данных","data science"],"roles":[{"id":"data_scientist","synonyms":["data scientist","дата-сайентист"],"stacks":["python","r","sql","pytorch","tensorflow"]}]},
-      {"id":"machine_learning","synonyms":["машинное обучение","machine learning"],"roles":[{"id":"ml_engineer","synonyms":["ml engineer","инженер машинного обучения"],"stacks":["python","pytorch","tensorflow","mlops"]}]}
-    ]},
-    {"id":"analytics","synonyms":["аналитика","analytics"],"specializations":[
-      {"id":"product_analytics","synonyms":["продуктовая аналитика","product analytics"],"roles":[{"id":"product_analyst","synonyms":["product analyst","продуктовый аналитик"],"stacks":["sql","python","tableau","power_bi","metabase"]}]},
-      {"id":"business_analytics","synonyms":["бизнес-аналитика","business analysis"],"roles":[{"id":"business_analyst","synonyms":["business analyst","бизнес-аналитик","системный аналитик"],"stacks":["sql","uml","bpmn","api"]}]}
-    ]},
-    {"id":"design","synonyms":["дизайн","design"],"specializations":[
-      {"id":"product_design","synonyms":["продуктовый дизайн","product design","ux/ui"],"roles":[{"id":"product_designer","synonyms":["product designer","ux/ui дизайнер","продуктовый дизайнер"],"stacks":["figma","ux","ui","research"]}]},
-      {"id":"graphic_design","synonyms":["графический дизайн","graphic design"],"roles":[{"id":"graphic_designer","synonyms":["graphic designer","графический дизайнер"],"stacks":["figma","photoshop","illustrator","indesign"]}]}
-    ]},
-    {"id":"devops_admin","synonyms":["devops и администрирование","devops","администрирование"],"specializations":[
-      {"id":"devops","synonyms":["девопс","devops engineering"],"roles":[{"id":"devops_engineer","synonyms":["devops engineer","инженер devops"],"stacks":["linux","docker","kubernetes","terraform","ansible","aws","gcp"]}]},
-      {"id":"systems_admin","synonyms":["системное администрирование","systems administration"],"roles":[{"id":"systems_administrator","synonyms":["system administrator","sysadmin","системный администратор"],"stacks":["linux","windows","networking","postgresql"]}]},
-      {"id":"sre","synonyms":["надежность сервисов","site reliability engineering"],"roles":[{"id":"sre_engineer","synonyms":["sre","site reliability engineer","инженер надежности"],"stacks":["linux","kubernetes","prometheus","grafana","terraform"]}]}
-    ]},
-    {"id":"security","synonyms":["информационная безопасность","security","кибербезопасность"],"specializations":[
-      {"id":"application_security","synonyms":["безопасность приложений","application security","appsec"],"roles":[{"id":"appsec_engineer","synonyms":["appsec engineer","инженер безопасности приложений"],"stacks":["owasp","secure_code","sast","dast"]}]},
-      {"id":"security_operations","synonyms":["операционная безопасность","security operations","soc"],"roles":[{"id":"security_analyst","synonyms":["security analyst","soc analyst","аналитик soc"],"stacks":["siem","linux","incident_response","networking"]}]}
-    ]},
-    {"id":"management","synonyms":["менеджмент","management"],"specializations":[
-      {"id":"product_management","synonyms":["продуктовый менеджмент","product management"],"roles":[{"id":"product_manager","synonyms":["product manager","продакт-менеджер"],"stacks":["roadmaps","analytics","experiments"]}]},
-      {"id":"project_management","synonyms":["управление проектами","project management"],"roles":[{"id":"project_manager","synonyms":["project manager","менеджер проектов"],"stacks":["agile","scrum","kanban","planning"]}]},
-      {"id":"engineering_management","synonyms":["управление разработкой","engineering management"],"roles":[{"id":"engineering_manager","synonyms":["engineering manager","руководитель разработки"],"stacks":["people_management","delivery","architecture"]}]}
-    ]},
-    {"id":"hr_recruiting","synonyms":["hr","рекрутинг","human resources"],"specializations":[
-      {"id":"recruiting","synonyms":["подбор персонала","recruiting","talent acquisition"],"roles":[{"id":"it_recruiter","synonyms":["it recruiter","айти-рекрутер","технический рекрутер"],"stacks":["sourcing","interviewing","ats"]}]},
-      {"id":"hr_management","synonyms":["управление персоналом","hr management"],"roles":[{"id":"hr_manager","synonyms":["hr manager","менеджер по персоналу"],"stacks":["people_ops","performance","hr_analytics"]}]}
-    ]},
-    {"id":"marketing_content","synonyms":["маркетинг и контент","marketing","контент"],"specializations":[
-      {"id":"digital_marketing","synonyms":["digital marketing","цифровой маркетинг"],"roles":[{"id":"digital_marketer","synonyms":["digital marketer","интернет-маркетолог"],"stacks":["seo","sem","analytics","ads"]}]},
-      {"id":"content","synonyms":["контент-маркетинг","content marketing"],"roles":[{"id":"content_manager","synonyms":["content manager","контент-менеджер","редактор"],"stacks":["writing","seo","cms","social_media"]}]}
-    ]},
-    {"id":"onec","synonyms":["1с","1c","1с предприятие","1c enterprise","1с:предприятие","bsl","язык 1с","1с:erp","1с:зуп","1с:бухгалтерия","1с:управление торговлей","1с:унф","1с:документооборот","1с:розница","1с:комплексная автоматизация"],"specializations":[
-      {"id":"onec_development","synonyms":["разработка 1с","1c development","bsl development","разработка bsl"],"roles":[
-        {"id":"onec_developer","synonyms":["1с разработчик","разработчик 1с","1c developer","1c разработчик","bsl developer","разработчик bsl","программист 1с","программист 1c"],"stacks":["1c_enterprise","bsl","erp","zup","accounting","trade_management"]}]},
-      {"id":"onec_analytics","synonyms":["аналитика 1с","1c analysis","консультирование 1с","1c consulting"],"roles":[
-        {"id":"onec_analyst_consultant","synonyms":["1с аналитик","аналитик 1с","1с консультант","консультант 1с","1c analyst","1c consultant","аналитик bsl","консультант по 1с"],"stacks":["1c_enterprise","erp","zup","accounting","trade_management"]}]},
-      {"id":"onec_administration","synonyms":["администрирование 1с","1c administration"],"roles":[
-        {"id":"onec_administrator","synonyms":["администратор 1с","1с администратор","1c administrator","администратор 1c","администратор 1с предприятие"],"stacks":["1c_enterprise","erp","zup","accounting","trade_management"]}]}
-    ]}
+    {
+      "id": "content",
+      "label": "Контент",
+      "synonyms": [
+        "Контент",
+        "content"
+      ],
+      "specializations": [
+        {
+          "id": "technical_writer",
+          "synonyms": [
+            "Технический писатель",
+            "technical writer"
+          ],
+          "roles": [
+            {
+              "id": "technical_writer",
+              "label": "Технический писатель",
+              "synonyms": [
+                "Технический писатель",
+                "technical writer"
+              ],
+              "stacks": [
+                "documentation",
+                "api",
+                "markdown",
+                "docs_as_code"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "copywriter",
+          "synonyms": [
+            "Копирайтер",
+            "copywriter"
+          ],
+          "roles": [
+            {
+              "id": "copywriter",
+              "label": "Копирайтер",
+              "synonyms": [
+                "Копирайтер",
+                "copywriter"
+              ],
+              "stacks": [
+                "copywriting",
+                "seo",
+                "editing",
+                "landing_pages"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "content",
+          "synonyms": [
+            "Контент-менеджер",
+            "content manager"
+          ],
+          "roles": [
+            {
+              "id": "content_manager",
+              "label": "Контент-менеджер",
+              "synonyms": [
+                "Контент-менеджер",
+                "content manager",
+                "контент-менеджер",
+                "редактор"
+              ],
+              "stacks": [
+                "cms",
+                "seo",
+                "editing",
+                "content_strategy"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ugc_creator",
+          "synonyms": [
+            "UGC-креатор",
+            "ugc creator"
+          ],
+          "roles": [
+            {
+              "id": "ugc_creator",
+              "label": "UGC-креатор",
+              "synonyms": [
+                "UGC-креатор",
+                "ugc creator"
+              ],
+              "stacks": [
+                "ugc",
+                "video",
+                "social_media",
+                "editing"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "security",
+      "label": "Информационная безопасность",
+      "synonyms": [
+        "Информационная безопасность",
+        "security"
+      ],
+      "specializations": [
+        {
+          "id": "security_specialist",
+          "synonyms": [
+            "Специалист по ИБ",
+            "information security specialist"
+          ],
+          "roles": [
+            {
+              "id": "security_specialist",
+              "label": "Специалист по ИБ",
+              "synonyms": [
+                "Специалист по ИБ",
+                "information security specialist"
+              ],
+              "stacks": [
+                "siem",
+                "owasp",
+                "incident_response",
+                "sast"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gamedev",
+      "label": "Геймдев",
+      "synonyms": [
+        "Геймдев",
+        "gamedev"
+      ],
+      "specializations": [
+        {
+          "id": "game_developer",
+          "synonyms": [
+            "Разработчик игр",
+            "game developer"
+          ],
+          "roles": [
+            {
+              "id": "game_developer",
+              "label": "Разработчик игр",
+              "synonyms": [
+                "Разработчик игр",
+                "game developer"
+              ],
+              "stacks": [
+                "unity",
+                "unreal",
+                "csharp",
+                "cpp"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "game_designer",
+          "synonyms": [
+            "Геймдизайнер",
+            "game designer"
+          ],
+          "roles": [
+            {
+              "id": "game_designer",
+              "label": "Геймдизайнер",
+              "synonyms": [
+                "Геймдизайнер",
+                "game designer"
+              ],
+              "stacks": [
+                "game_design",
+                "unity",
+                "prototyping",
+                "balancing"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "support",
+      "label": "Поддержка и клиентский сервис",
+      "synonyms": [
+        "Поддержка и клиентский сервис",
+        "support"
+      ],
+      "specializations": [
+        {
+          "id": "customer_success_manager",
+          "synonyms": [
+            "Customer Succes менеджер",
+            "customer success manager"
+          ],
+          "roles": [
+            {
+              "id": "customer_success_manager",
+              "label": "Customer Succes менеджер",
+              "synonyms": [
+                "Customer Succes менеджер",
+                "customer success manager"
+              ],
+              "stacks": [
+                "crm",
+                "customer_success",
+                "onboarding",
+                "analytics"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "technical_support_engineer",
+          "synonyms": [
+            "Инженер технической поддержки",
+            "technical support engineer"
+          ],
+          "roles": [
+            {
+              "id": "technical_support_engineer",
+              "label": "Инженер технической поддержки",
+              "synonyms": [
+                "Инженер технической поддержки",
+                "technical support engineer"
+              ],
+              "stacks": [
+                "linux",
+                "sql",
+                "api",
+                "troubleshooting"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "qa",
+      "label": "Тестирование",
+      "synonyms": [
+        "Тестирование",
+        "qa"
+      ],
+      "specializations": [
+        {
+          "id": "qa_engineer",
+          "synonyms": [
+            "Инженер по тестированию (QA Engineer)",
+            "qa engineer"
+          ],
+          "roles": [
+            {
+              "id": "qa_engineer",
+              "label": "Инженер по тестированию (QA Engineer)",
+              "synonyms": [
+                "Инженер по тестированию (QA Engineer)",
+                "qa engineer"
+              ],
+              "stacks": [
+                "manual_testing",
+                "test_automation",
+                "api",
+                "sql",
+                "selenium"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "hr_recruiting",
+      "label": "HR",
+      "synonyms": [
+        "HR",
+        "hr_recruiting"
+      ],
+      "specializations": [
+        {
+          "id": "hr_management",
+          "synonyms": [
+            "HR-менеджер",
+            "hr manager"
+          ],
+          "roles": [
+            {
+              "id": "hr_manager",
+              "label": "HR-менеджер",
+              "synonyms": [
+                "HR-менеджер",
+                "hr manager",
+                "менеджер по персоналу"
+              ],
+              "stacks": [
+                "people_ops",
+                "performance",
+                "hr_analytics"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "recruiting",
+          "synonyms": [
+            "Рекрутер",
+            "recruiter"
+          ],
+          "roles": [
+            {
+              "id": "it_recruiter",
+              "label": "Рекрутер",
+              "synonyms": [
+                "Рекрутер",
+                "recruiter",
+                "it recruiter",
+                "айти-рекрутер",
+                "технический рекрутер"
+              ],
+              "stacks": [
+                "sourcing",
+                "interviewing",
+                "ats"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "analytics",
+      "label": "Аналитика",
+      "synonyms": [
+        "Аналитика",
+        "analytics"
+      ],
+      "specializations": [
+        {
+          "id": "systems_analyst",
+          "synonyms": [
+            "Системный аналитик",
+            "systems analyst"
+          ],
+          "roles": [
+            {
+              "id": "systems_analyst",
+              "label": "Системный аналитик",
+              "synonyms": [
+                "Системный аналитик",
+                "systems analyst"
+              ],
+              "stacks": [
+                "uml",
+                "bpmn",
+                "api",
+                "sql"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "business_analytics",
+          "synonyms": [
+            "Бизнес-аналитик",
+            "business analyst"
+          ],
+          "roles": [
+            {
+              "id": "business_analyst",
+              "label": "Бизнес-аналитик",
+              "synonyms": [
+                "Бизнес-аналитик",
+                "business analyst",
+                "бизнес-аналитик",
+                "системный аналитик"
+              ],
+              "stacks": [
+                "bpmn",
+                "sql",
+                "requirements",
+                "analytics"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "data_analyst",
+          "synonyms": [
+            "Дата-аналитик",
+            "data analyst"
+          ],
+          "roles": [
+            {
+              "id": "data_analyst",
+              "label": "Дата-аналитик",
+              "synonyms": [
+                "Дата-аналитик",
+                "data analyst"
+              ],
+              "stacks": [
+                "sql",
+                "python",
+                "power_bi",
+                "tableau"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "leadership_architecture",
+      "label": "Руководство и архитектура",
+      "synonyms": [
+        "Руководство и архитектура",
+        "leadership_architecture"
+      ],
+      "specializations": [
+        {
+          "id": "engineering_lead",
+          "synonyms": [
+            "Руководитель разработки",
+            "head of engineering"
+          ],
+          "roles": [
+            {
+              "id": "engineering_lead",
+              "label": "Руководитель разработки",
+              "synonyms": [
+                "Руководитель разработки",
+                "head of engineering"
+              ],
+              "stacks": [
+                "people_management",
+                "delivery",
+                "architecture"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "solutions_architect",
+          "synonyms": [
+            "Архитектор решений и ПО",
+            "solutions architect"
+          ],
+          "roles": [
+            {
+              "id": "solutions_architect",
+              "label": "Архитектор решений и ПО",
+              "synonyms": [
+                "Архитектор решений и ПО",
+                "solutions architect"
+              ],
+              "stacks": [
+                "architecture",
+                "system_design",
+                "cloud",
+                "api"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "design",
+      "label": "Дизайн",
+      "synonyms": [
+        "Дизайн",
+        "design"
+      ],
+      "specializations": [
+        {
+          "id": "product_design",
+          "synonyms": [
+            "Продуктовый дизайнер",
+            "product designer"
+          ],
+          "roles": [
+            {
+              "id": "product_designer",
+              "label": "Продуктовый дизайнер",
+              "synonyms": [
+                "Продуктовый дизайнер",
+                "product designer",
+                "ux/ui дизайнер",
+                "продуктовый дизайнер"
+              ],
+              "stacks": [
+                "figma",
+                "ux",
+                "research",
+                "prototyping"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ui_ux_designer",
+          "synonyms": [
+            "UI/UX дизайнер",
+            "ui ux designer"
+          ],
+          "roles": [
+            {
+              "id": "ui_ux_designer",
+              "label": "UI/UX дизайнер",
+              "synonyms": [
+                "UI/UX дизайнер",
+                "ui ux designer"
+              ],
+              "stacks": [
+                "figma",
+                "ux",
+                "ui",
+                "prototyping"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "graphic_design",
+          "synonyms": [
+            "Графический дизайнер",
+            "graphic designer"
+          ],
+          "roles": [
+            {
+              "id": "graphic_designer",
+              "label": "Графический дизайнер",
+              "synonyms": [
+                "Графический дизайнер",
+                "graphic designer",
+                "графический дизайнер"
+              ],
+              "stacks": [
+                "figma",
+                "photoshop",
+                "illustrator",
+                "indesign"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "web_designer",
+          "synonyms": [
+            "Веб-дизайнер",
+            "web designer"
+          ],
+          "roles": [
+            {
+              "id": "web_designer",
+              "label": "Веб-дизайнер",
+              "synonyms": [
+                "Веб-дизайнер",
+                "web designer"
+              ],
+              "stacks": [
+                "figma",
+                "html",
+                "css",
+                "webflow"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "motion_designer",
+          "synonyms": [
+            "Моушн-Дизайнер",
+            "motion designer"
+          ],
+          "roles": [
+            {
+              "id": "motion_designer",
+              "label": "Моушн-Дизайнер",
+              "synonyms": [
+                "Моушн-Дизайнер",
+                "motion designer"
+              ],
+              "stacks": [
+                "after_effects",
+                "animation",
+                "video",
+                "blender"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "three_d_artist",
+          "synonyms": [
+            "3D-художник",
+            "3d artist"
+          ],
+          "roles": [
+            {
+              "id": "three_d_artist",
+              "label": "3D-художник",
+              "synonyms": [
+                "3D-художник",
+                "3d artist"
+              ],
+              "stacks": [
+                "blender",
+                "maya",
+                "3d_modeling",
+                "rendering"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "devops_admin",
+      "label": "Администрирование",
+      "synonyms": [
+        "Администрирование",
+        "devops_admin"
+      ],
+      "specializations": [
+        {
+          "id": "devops_sre_engineer",
+          "synonyms": [
+            "DevOps / SRE инженер",
+            "devops sre engineer"
+          ],
+          "roles": [
+            {
+              "id": "devops_sre_engineer",
+              "label": "DevOps / SRE инженер",
+              "synonyms": [
+                "DevOps / SRE инженер",
+                "devops sre engineer"
+              ],
+              "stacks": [
+                "linux",
+                "docker",
+                "kubernetes",
+                "terraform",
+                "prometheus"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "systems_admin",
+          "synonyms": [
+            "Системный администратор",
+            "systems administrator"
+          ],
+          "roles": [
+            {
+              "id": "systems_administrator",
+              "label": "Системный администратор",
+              "synonyms": [
+                "Системный администратор",
+                "systems administrator",
+                "system administrator",
+                "sysadmin",
+                "системный администратор"
+              ],
+              "stacks": [
+                "linux",
+                "windows",
+                "networking",
+                "postgresql"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "marketing",
+      "label": "Маркетинг",
+      "synonyms": [
+        "Маркетинг",
+        "marketing"
+      ],
+      "specializations": [
+        {
+          "id": "marketer",
+          "synonyms": [
+            "Маркетолог",
+            "marketer"
+          ],
+          "roles": [
+            {
+              "id": "marketer",
+              "label": "Маркетолог",
+              "synonyms": [
+                "Маркетолог",
+                "marketer"
+              ],
+              "stacks": [
+                "analytics",
+                "ads",
+                "marketing_strategy",
+                "crm"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "seo_specialist",
+          "synonyms": [
+            "SEO-специалист",
+            "seo specialist"
+          ],
+          "roles": [
+            {
+              "id": "seo_specialist",
+              "label": "SEO-специалист",
+              "synonyms": [
+                "SEO-специалист",
+                "seo specialist"
+              ],
+              "stacks": [
+                "seo",
+                "search_console",
+                "analytics",
+                "content"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "smm_specialist",
+          "synonyms": [
+            "SMM-специалист",
+            "smm specialist"
+          ],
+          "roles": [
+            {
+              "id": "smm_specialist",
+              "label": "SMM-специалист",
+              "synonyms": [
+                "SMM-специалист",
+                "smm specialist"
+              ],
+              "stacks": [
+                "social_media",
+                "content",
+                "analytics",
+                "community"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "targeting_specialist",
+          "synonyms": [
+            "Таргетоолог",
+            "targeting specialist"
+          ],
+          "roles": [
+            {
+              "id": "targeting_specialist",
+              "label": "Таргетоолог",
+              "synonyms": [
+                "Таргетоолог",
+                "targeting specialist"
+              ],
+              "stacks": [
+                "ads",
+                "meta_ads",
+                "yandex_direct",
+                "analytics"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "pr_specialist",
+          "synonyms": [
+            "PR-специалист",
+            "pr specialist"
+          ],
+          "roles": [
+            {
+              "id": "pr_specialist",
+              "label": "PR-специалист",
+              "synonyms": [
+                "PR-специалист",
+                "pr specialist"
+              ],
+              "stacks": [
+                "public_relations",
+                "media",
+                "communications",
+                "events"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sales",
+      "label": "Продажи и развитие бизнеса",
+      "synonyms": [
+        "Продажи и развитие бизнеса",
+        "sales"
+      ],
+      "specializations": [
+        {
+          "id": "b2b_sales_manager",
+          "synonyms": [
+            "Менеджер по B2B-продажам",
+            "b2b sales manager"
+          ],
+          "roles": [
+            {
+              "id": "b2b_sales_manager",
+              "label": "Менеджер по B2B-продажам",
+              "synonyms": [
+                "Менеджер по B2B-продажам",
+                "b2b sales manager"
+              ],
+              "stacks": [
+                "b2b",
+                "crm",
+                "negotiation",
+                "prospecting"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "account_manager",
+          "synonyms": [
+            "Аккаунт-менеджер",
+            "account manager"
+          ],
+          "roles": [
+            {
+              "id": "account_manager",
+              "label": "Аккаунт-менеджер",
+              "synonyms": [
+                "Аккаунт-менеджер",
+                "account manager"
+              ],
+              "stacks": [
+                "crm",
+                "customer_success",
+                "negotiation",
+                "upselling"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sales_development_specialist",
+          "synonyms": [
+            "Специалист по развитию продаж",
+            "sales development representative"
+          ],
+          "roles": [
+            {
+              "id": "sales_development_specialist",
+              "label": "Специалист по развитию продаж",
+              "synonyms": [
+                "Специалист по развитию продаж",
+                "sales development representative"
+              ],
+              "stacks": [
+                "prospecting",
+                "crm",
+                "lead_generation",
+                "b2b"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "data_ai",
+      "label": "Данные и AI",
+      "synonyms": [
+        "Данные и AI",
+        "data_ai"
+      ],
+      "specializations": [
+        {
+          "id": "data_science",
+          "synonyms": [
+            "Data Scientist",
+            "data scientist"
+          ],
+          "roles": [
+            {
+              "id": "data_scientist",
+              "label": "Data Scientist",
+              "synonyms": [
+                "Data Scientist",
+                "data scientist",
+                "дата-сайентист"
+              ],
+              "stacks": [
+                "python",
+                "sql",
+                "pytorch",
+                "statistics"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "machine_learning",
+          "synonyms": [
+            "ML-инженер",
+            "ml engineer"
+          ],
+          "roles": [
+            {
+              "id": "ml_engineer",
+              "label": "ML-инженер",
+              "synonyms": [
+                "ML-инженер",
+                "ml engineer",
+                "инженер машинного обучения"
+              ],
+              "stacks": [
+                "python",
+                "pytorch",
+                "mlops",
+                "tensorflow"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "data_engineering",
+          "synonyms": [
+            "Дата-инженер",
+            "data engineer"
+          ],
+          "roles": [
+            {
+              "id": "data_engineer",
+              "label": "Дата-инженер",
+              "synonyms": [
+                "Дата-инженер",
+                "data engineer",
+                "инженер данных"
+              ],
+              "stacks": [
+                "python",
+                "sql",
+                "spark",
+                "airflow"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ai_engineer",
+          "synonyms": [
+            "AI-инженер",
+            "ai engineer"
+          ],
+          "roles": [
+            {
+              "id": "ai_engineer",
+              "label": "AI-инженер",
+              "synonyms": [
+                "AI-инженер",
+                "ai engineer"
+              ],
+              "stacks": [
+                "python",
+                "llm",
+                "rag",
+                "pytorch"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "management",
+      "label": "Менеджмент",
+      "synonyms": [
+        "Менеджмент",
+        "management"
+      ],
+      "specializations": [
+        {
+          "id": "project_management",
+          "synonyms": [
+            "Проджект-менеджер",
+            "project manager"
+          ],
+          "roles": [
+            {
+              "id": "project_manager",
+              "label": "Проджект-менеджер",
+              "synonyms": [
+                "Проджект-менеджер",
+                "project manager",
+                "менеджер проектов"
+              ],
+              "stacks": [
+                "agile",
+                "scrum",
+                "planning",
+                "jira"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "product_management",
+          "synonyms": [
+            "Продакт-менеджер",
+            "product manager"
+          ],
+          "roles": [
+            {
+              "id": "product_manager",
+              "label": "Продакт-менеджер",
+              "synonyms": [
+                "Продакт-менеджер",
+                "product manager",
+                "продакт-менеджер"
+              ],
+              "stacks": [
+                "roadmaps",
+                "analytics",
+                "experiments",
+                "discovery"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "delivery_manager",
+          "synonyms": [
+            "Деливери-менеджер",
+            "delivery manager"
+          ],
+          "roles": [
+            {
+              "id": "delivery_manager",
+              "label": "Деливери-менеджер",
+              "synonyms": [
+                "Деливери-менеджер",
+                "delivery manager"
+              ],
+              "stacks": [
+                "delivery",
+                "agile",
+                "planning",
+                "stakeholders"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "development",
+      "label": "Разработка",
+      "synonyms": [
+        "Разработка",
+        "development"
+      ],
+      "specializations": [
+        {
+          "id": "backend",
+          "synonyms": [
+            "Бэкенд разработчик",
+            "backend developer"
+          ],
+          "roles": [
+            {
+              "id": "backend_developer",
+              "label": "Бэкенд разработчик",
+              "synonyms": [
+                "Бэкенд разработчик",
+                "backend developer",
+                "бэкенд-разработчик",
+                "server developer"
+              ],
+              "stacks": [
+                "go",
+                "python",
+                "java",
+                "postgresql",
+                "api"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "frontend",
+          "synonyms": [
+            "Фронтенд разработчик",
+            "frontend developer"
+          ],
+          "roles": [
+            {
+              "id": "frontend_developer",
+              "label": "Фронтенд разработчик",
+              "synonyms": [
+                "Фронтенд разработчик",
+                "frontend developer",
+                "фронтенд-разработчик",
+                "web developer"
+              ],
+              "stacks": [
+                "javascript",
+                "typescript",
+                "react",
+                "vue"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "fullstack_developer",
+          "synonyms": [
+            "Фулстек разработчик",
+            "full stack developer"
+          ],
+          "roles": [
+            {
+              "id": "fullstack_developer",
+              "label": "Фулстек разработчик",
+              "synonyms": [
+                "Фулстек разработчик",
+                "full stack developer"
+              ],
+              "stacks": [
+                "javascript",
+                "typescript",
+                "react",
+                "nodejs"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "android_developer",
+          "synonyms": [
+            "Android разработчик",
+            "android developer"
+          ],
+          "roles": [
+            {
+              "id": "android_developer",
+              "label": "Android разработчик",
+              "synonyms": [
+                "Android разработчик",
+                "android developer"
+              ],
+              "stacks": [
+                "kotlin",
+                "java",
+                "android",
+                "jetpack_compose"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ios_developer",
+          "synonyms": [
+            "IOS разработчик",
+            "ios developer"
+          ],
+          "roles": [
+            {
+              "id": "ios_developer",
+              "label": "IOS разработчик",
+              "synonyms": [
+                "IOS разработчик",
+                "ios developer"
+              ],
+              "stacks": [
+                "swift",
+                "ios",
+                "swiftui",
+                "uikit"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "onec_development",
+          "synonyms": [
+            "1С разработчик",
+            "1c developer"
+          ],
+          "roles": [
+            {
+              "id": "onec_developer",
+              "label": "1С разработчик",
+              "synonyms": [
+                "1С разработчик",
+                "1c developer",
+                "1с разработчик",
+                "разработчик 1с",
+                "1c разработчик",
+                "bsl developer",
+                "разработчик bsl",
+                "программист 1с",
+                "программист 1c"
+              ],
+              "stacks": [
+                "1c_enterprise",
+                "bsl",
+                "erp",
+                "zup"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "erp_crm_developer",
+          "synonyms": [
+            "ERP/CRM разработчик",
+            "erp crm developer"
+          ],
+          "roles": [
+            {
+              "id": "erp_crm_developer",
+              "label": "ERP/CRM разработчик",
+              "synonyms": [
+                "ERP/CRM разработчик",
+                "erp crm developer"
+              ],
+              "stacks": [
+                "erp",
+                "crm",
+                "sql",
+                "api"
+              ]
+            }
+          ]
+        }
+      ]
+    }
   ]
 }

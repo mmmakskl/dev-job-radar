@@ -6,7 +6,13 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
-from tg_vacancy_bot.candidate_catalog import CATALOG, direction_stacks
+from tg_vacancy_bot.candidate_catalog import (
+    CATALOG,
+    PROFILE_CONTRACT,
+    direction_stacks,
+    role_path,
+    roles_for_direction,
+)
 from tg_vacancy_bot.premium_search.templates import compose_query, list_templates
 from tg_vacancy_bot.telegram.candidate_card_formatter import (
     format_card,
@@ -50,10 +56,10 @@ class CandidateBotApi(Protocol):
 
 PROFILE_STEPS = (
     'direction_id',
-    'stacks',
+    'role_id',
     'seniority',
-    'formats',
-    'geography',
+    'required_skills',
+    'excluded_skills',
     'preview',
 )
 STEP_LABELS = dict(
@@ -61,10 +67,10 @@ STEP_LABELS = dict(
         PROFILE_STEPS,
         (
             'Направление',
-            'Языки и технологии',
+            'Роль',
             'Грейд',
-            'Формат',
-            'География',
+            'Ключевые навыки',
+            'Исключить слова',
             'Предпросмотр',
         ),
     )
@@ -74,9 +80,9 @@ STEP_LABELS['premium_template_id'] = 'Premium-шаблон'
 STEP_LABELS.update(
     {
         'additional_languages': 'Дополнительные языки',
-        'required_skills': 'Обязательные навыки',
+        'required_skills': 'Ключевые навыки',
         'desired_skills': 'Желаемые навыки',
-        'excluded_skills': 'Исключения',
+        'excluded_skills': 'Исключить слова',
         'vacancy_languages': 'Язык текста вакансии',
         'legacy_stacks': 'Технологии из старого профиля',
     }
@@ -250,6 +256,15 @@ DIRECTION_LABELS = {
     'marketing_content': 'Маркетинг и контент',
     'onec': 'Разработка и сопровождение 1С',
 }
+DIRECTION_LABELS.update({item['id']: item['label'] for item in CATALOG['directions']})
+ROLE_LABELS.update(
+    {
+        role['id']: (role['label'], '')
+        for direction in CATALOG['directions']
+        for specialization in direction['specializations']
+        for role in specialization['roles']
+    }
+)
 
 
 def _technology_label(value: str) -> str:
@@ -335,6 +350,8 @@ def _language_choices(values: dict) -> list[tuple[str, str]]:
 def _profile_name(values: dict) -> str:
     if values.get('name'):
         return values['name']
+    if values.get('preferences', {}).get('profile_contract') == PROFILE_CONTRACT:
+        return ROLE_LABELS.get(values.get('role_id'), ('Профиль', ''))[0]
     direction = DIRECTION_LABELS.get(values.get('direction_id'), 'Профиль')
     preferences = values.get('preferences', {})
     technologies = preferences.get('stacks', [])
@@ -850,6 +867,16 @@ class CandidateBot:
                 (d['id'], DIRECTION_LABELS.get(d['id'], d['synonyms'][0]))
                 for d in directions
             ]
+        elif step == 'role_id':
+            return [
+                (role['id'], role['label'])
+                for role in roles_for_direction(values['direction_id'])
+            ]
+        elif step == 'required_skills':
+            return [
+                (item, _technology_label(item))
+                for item in direction_stacks(values['direction_id'])
+            ]
         elif step == 'stacks':
             return [
                 (item, _technology_label(item))
@@ -892,6 +919,29 @@ class CandidateBot:
                 else 'Активность: не выбран'
             ),
         ]
+        if prefs.get('profile_contract') == PROFILE_CONTRACT:
+            lines.append(
+                f"Роль: {ROLE_LABELS.get(values.get('role_id'), ('Требуется выбор роли', ''))[0]}"
+            )
+            lines.append(
+                'Грейд: '
+                + (
+                    ', '.join(
+                        SENIORITY_LABELS.get(item, item)
+                        for item in prefs.get('seniority', [])
+                    )
+                    or 'любой'
+                )
+            )
+            lines.append(
+                'Ключевые навыки: '
+                + (', '.join(prefs.get('required_skills', [])) or 'любые')
+            )
+            lines.append(
+                'Исключить слова: '
+                + (', '.join(prefs.get('excluded_skills', [])) or 'нет')
+            )
+            return '\n'.join(lines)[:3500]
         selected_stacks = list(prefs.get('stacks', []))
         selected_stacks.extend(
             item
@@ -947,16 +997,30 @@ class CandidateBot:
         profiles = self.store.list_profiles(user_id)
         rows = []
         for profile in profiles:
+            valid_role = role_path(profile.role_id) == (
+                profile.direction_id,
+                profile.specialization_id,
+                profile.role_id,
+            )
             rows.append(
                 [
                     {
-                        'text': f'{"●" if profile.is_active else "○"} {profile.name}',
+                        'text': (
+                            f'{"●" if profile.is_active else "○"} {profile.name}'
+                            + ('' if valid_role else ' · выберите роль')
+                        ),
                         'callback_data': f'p:view:{profile.profile_id}:{profile.version}',
                     },
-                    {
-                        'text': 'Выбрать активным',
-                        'callback_data': f'p:activate:{profile.profile_id}:{profile.version}',
-                    },
+                    *(
+                        [
+                            {
+                                'text': 'Выбрать активным',
+                                'callback_data': f'p:activate:{profile.profile_id}:{profile.version}',
+                            }
+                        ]
+                        if valid_role
+                        else []
+                    ),
                 ]
             )
         rows.append([{'text': 'Создать профиль', 'callback_data': 'p:new'}])
@@ -981,27 +1045,46 @@ class CandidateBot:
         await self.api.send_message(user_id, text, reply_markup=markup)
 
     async def _show_profile(self, user_id: int, profile: CandidateProfile) -> None:
+        valid_role = role_path(profile.role_id) == (
+            profile.direction_id,
+            profile.specialization_id,
+            profile.role_id,
+        )
         rows = [
-            [
-                {
-                    'text': (
-                        'Снять активность' if profile.is_active else 'Выбрать активным'
-                    ),
-                    'callback_data': f'p:toggle:{profile.profile_id}:{profile.version}',
-                }
-            ],
+            *(
+                [
+                    [
+                        {
+                            'text': (
+                                'Снять активность'
+                                if profile.is_active
+                                else 'Выбрать активным'
+                            ),
+                            'callback_data': f'p:toggle:{profile.profile_id}:{profile.version}',
+                        }
+                    ]
+                ]
+                if valid_role
+                else []
+            ),
             [
                 {
                     'text': 'Редактировать',
                     'callback_data': f'p:edit:{profile.profile_id}:{profile.version}',
                 }
             ],
-            [
-                {
-                    'text': 'Дополнительные настройки',
-                    'callback_data': f'p:advanced:{profile.profile_id}:{profile.version}',
-                }
-            ],
+            *(
+                [
+                    [
+                        {
+                            'text': 'Дополнительные настройки',
+                            'callback_data': f'p:advanced:{profile.profile_id}:{profile.version}',
+                        }
+                    ]
+                ]
+                if profile.preferences.get('profile_contract') != PROFILE_CONTRACT
+                else []
+            ),
             [
                 {
                     'text': 'Удалить профиль',
@@ -1062,8 +1145,10 @@ class CandidateBot:
                     'specialization_id': '',
                     'role_id': '',
                     'preferences': {
-                        'stacks': [],
-                        'delivery_mode': 'immediate',
+                        'profile_contract': PROFILE_CONTRACT,
+                        'required_skills': [],
+                        'excluded_skills': [],
+                        'delivery_mode': 'manual',
                         'timezone': 'Europe/Moscow',
                     },
                     'is_active': False,
@@ -1073,6 +1158,8 @@ class CandidateBot:
                 **values,
                 'preferences': dict(values.get('preferences', {})),
             }
+            values['preferences']['profile_contract'] = PROFILE_CONTRACT
+            values['preferences'].pop('needs_role_selection', None)
             if profile is not None:
                 preferences = values['preferences']
                 visible = list(preferences.get('stacks', []))
@@ -1148,20 +1235,18 @@ class CandidateBot:
             text = 'Проверьте профиль перед сохранением:\n\n' + self._profile_text(
                 draft['values']
             )
-            rows = [
-                [button('Сохранить профиль', 'save')],
-                [button('Дополнительные настройки', 'advanced')],
-            ]
+            rows = [[button('Сохранить профиль', 'save')]]
         else:
             hints = {
-                'direction_id': 'Выберите направление. Например: разработка или аналитика.',
+                'direction_id': 'Выберите одно направление.',
+                'role_id': 'Выберите одну роль в направлении.',
                 'stacks': 'Выберите любые подходящие языки и технологии из каталога. Пример: Go, PostgreSQL, Docker. Для HR и дизайна будут свои варианты.',
                 'seniority': 'Можно выбрать несколько уровней. Например: Middle и Senior.',
                 'formats': 'Можно выбрать несколько форматов. Например: удалённо и гибридно.',
                 'geography': 'Где ищете работу? Можно выбрать несколько стран или регионов.',
                 'additional_languages': 'Можно добавить языки помимо основного. Например: Python.',
-                'required_skills': self._required_skills_hint(draft['values']),
-                'excluded_skills': 'Какие технологии или условия исключить? Введите через запятую или пропустите.',
+                'required_skills': 'Выберите подсказки направления или введите свои навыки через запятую. Достаточно одного совпадения.',
+                'excluded_skills': 'Введите свои слова или фразы через запятую. Подсказок нет.',
                 'vacancy_languages': 'Язык текста объявления — русский, английский или любой. Это язык объявления, а не язык программирования.',
                 'legacy_stacks': 'Технологии из старых настроек. Это может быть Docker, PostgreSQL или язык; список уже участвует в matching.',
             }
@@ -1205,6 +1290,7 @@ class CandidateBot:
                 if step in {
                     'stacks',
                     'seniority',
+                    'required_skills',
                     'formats',
                     'geography',
                     'additional_languages',
@@ -1228,6 +1314,8 @@ class CandidateBot:
                 text += f"\nВыбрано: {', '.join(selected_labels)}"
             elif step in {'seniority', 'formats'}:
                 text += '\nВыбрано: Все (без ограничения)'
+            elif step == 'required_skills':
+                text += '\nВыбрано: любые навыки'
             elif step == 'stacks':
                 text += '\nВыбрано: без фильтра по языкам и технологиям'
         order = (
@@ -1287,15 +1375,34 @@ class CandidateBot:
     def _set_draft_value(self, draft: dict, value: str | list[str]) -> None:
         step, values = draft['step'], draft['values']
         if step == 'direction_id':
-            if values.get('direction_id') != value:
+            direction_changed = values.get('direction_id') != value
+            if direction_changed:
                 values['specialization_id'] = ''
                 values['role_id'] = ''
                 values['preferences']['stacks'] = []
+                values['preferences']['required_skills'] = []
+                values['preferences']['excluded_skills'] = []
                 values['preferences'].pop('primary_language', None)
                 values['preferences'].pop('additional_languages', None)
                 values['preferences'].pop('premium_template_id', None)
-                values['name'] = ''
+                if draft.get('profile_id') is None:
+                    values['name'] = ''
             values['direction_id'] = value
+            if direction_changed or draft.get('profile_id') is None:
+                values['preferences']['delivery_mode'] = 'manual'
+            draft['page'] = 0
+        elif step == 'role_id':
+            path = role_path(str(value))
+            if path is None or path[0] != values.get('direction_id'):
+                raise ValueError('Роль не относится к выбранному направлению.')
+            values['direction_id'], values['specialization_id'], values['role_id'] = (
+                path
+            )
+            values['preferences']['profile_contract'] = PROFILE_CONTRACT
+            values['preferences']['stacks'] = []
+            values['preferences'].pop('premium_template_id', None)
+            if draft.get('profile_id') is None:
+                values['name'] = ''
             draft['page'] = 0
         elif step in {'stacks', 'seniority', 'formats'}:
             key = step
@@ -1383,6 +1490,7 @@ class CandidateBot:
         try:
             if step in {
                 'direction_id',
+                'role_id',
                 'stacks',
                 'seniority',
                 'formats',
@@ -1404,6 +1512,17 @@ class CandidateBot:
                     if step in {'name', 'timezone', 'delivery_mode'}
                     else [x.strip() for x in text.split(',') if x.strip()]
                 )
+                if step == 'required_skills':
+                    value = list(
+                        dict.fromkeys(
+                            [
+                                *draft['values']['preferences'].get(
+                                    'required_skills', []
+                                ),
+                                *value,
+                            ]
+                        )
+                    )
                 self._set_draft_value(draft, value)
                 self._advance(draft)
             draft['error'] = ''
@@ -1475,7 +1594,7 @@ class CandidateBot:
                 if index < 0 or index >= len(choices):
                     return False
                 value = choices[index][0]
-                if step == 'direction_id':
+                if step in {'direction_id', 'role_id'}:
                     self._set_draft_value(draft, value)
                     self._advance(draft)
                 elif step in {'primary_language', 'vacancy_languages'}:
@@ -1549,12 +1668,15 @@ class CandidateBot:
             }:
                 if step == 'vacancy_languages':
                     draft['values']['preferences'].pop('vacancy_languages', None)
+                elif step in {'required_skills', 'excluded_skills'}:
+                    draft['values']['preferences'][step] = []
                 elif draft.get('profile_id') is None and step == 'primary_language':
                     draft['values']['preferences'].pop('primary_language', None)
                 self._advance(draft)
             elif action == 'next' and step in {
                 'stacks',
                 'seniority',
+                'required_skills',
                 'formats',
                 'geography',
                 'additional_languages',

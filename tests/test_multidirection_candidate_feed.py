@@ -29,7 +29,7 @@ TRACKS = (
         "react",
         "React",
     ),
-    ("qa", "qa", "manual_qa", "manual_qa_engineer", "api", "API"),
+    ("qa", "qa", "qa_engineer", "qa_engineer", "api", "API"),
     (
         "hr",
         "hr_recruiting",
@@ -40,7 +40,7 @@ TRACKS = (
     ),
     (
         "onec",
-        "onec",
+        "development",
         "onec_development",
         "onec_developer",
         "1c_enterprise",
@@ -97,9 +97,13 @@ def test_personal_feed_and_delivery_are_scoped_to_catalog_track(
         1,
         name=track,
         direction_id=direction,
-        specialization_id="",
-        role_id="",
-        preferences={"stacks": [stack.lower()], "delivery_mode": "immediate"},
+        specialization_id=specialization,
+        role_id=role,
+        preferences={
+            "profile_contract": "catalog-v3",
+            "required_skills": [stack.lower()],
+            "delivery_mode": "immediate" if track == "go" else "manual",
+        },
     )
     own = decision_for(direction, specialization, role, stack, f"{label} role")
     foreign = (
@@ -141,13 +145,13 @@ def test_personal_feed_and_delivery_are_scoped_to_catalog_track(
         enabled=True,
     )
     asyncio.run(worker.tick(datetime(2026, 10, 4, 12, tzinfo=timezone.utc)))
-    if track:
-        assert any(label in m[1] for m in api.messages)
-        with delivery_store.connect() as connection:
-            rows = connection.execute(
-                "SELECT vacancy_id,state FROM candidate_personal_deliveries"
-            ).fetchall()
-        assert [(row["vacancy_id"], row["state"]) for row in rows] == [("own", "sent")]
+    with delivery_store.connect() as connection:
+        rows = connection.execute(
+            "SELECT vacancy_id,state FROM candidate_personal_deliveries"
+        ).fetchall()
+    assert [(row["vacancy_id"], row["state"]) for row in rows] == (
+        [("own", "sent")] if track == "go" else []
+    )
     assert store.get_active_profile(1).profile_id == active.profile_id
 
 

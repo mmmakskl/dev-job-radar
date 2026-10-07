@@ -42,7 +42,11 @@ _HIRING_SIGNAL_PATTERNS = [
 _GENERAL_ROLE = re.compile(
     r"\b(?:developer|engineer|разработчик\w*|инженер\w*|qa|tester|"
     r"devops|sre|analyst|аналитик\w*|designer|дизайнер\w*|"
-    r"recruiter|рекрутер\w*|hr|manager|менеджер\w*|marketer|редактор\w*)\b",
+    r"recruiter|рекрутер\w*|hr|manager|менеджер\w*|marketer|маркетолог\w*|"
+    r"редактор\w*|писатель|копирайтер\w*|креатор\w*|геймдизайнер\w*|"
+    r"администратор\w*|архитектор\w*|художник\w*|таргетоолог\w*|"
+    r"sales|support|поддержк\w*|seo|smm|pr|copywriter|creator|scientist|"
+    r"architect|artist|writer|account)\b",
     re.IGNORECASE,
 )
 _COURSE_AD = re.compile(

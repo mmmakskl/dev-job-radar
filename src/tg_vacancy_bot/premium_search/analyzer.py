@@ -221,9 +221,15 @@ async def analyze_premium_text(text: str) -> PremiumAnalysis:
 PremiumAnalyzer = Callable[[str], Awaitable[PremiumAnalysis]]
 
 
-def adapt_universal(decision, profile_snapshot: dict | None = None) -> PremiumAnalysis:
+def adapt_universal(
+    decision, profile_snapshot: dict | None = None, *, source_text: str | None = None
+) -> PremiumAnalysis:
     """Keep the complete decision while applying the destination's acceptance rules."""
-    from tg_vacancy_bot.llm.universal import decision_to_dict, go_projection_accepted
+    from tg_vacancy_bot.llm.universal import (
+        PROMPT_VERSION,
+        decision_to_dict,
+        go_projection_accepted,
+    )
 
     matched = go_projection_accepted(decision)
     review = decision.needs_review
@@ -237,13 +243,19 @@ def adapt_universal(decision, profile_snapshot: dict | None = None) -> PremiumAn
         from tg_vacancy_bot.telegram.candidate_store import CandidateProfile
 
         profile = CandidateProfile(**profile_snapshot)
-        result = match_profile(decision, profile)
-        matched = result.status == 'match' and profile.is_active
+        result = match_profile(decision, profile, source_text=source_text)
+        current_profile = profile.preferences.get('profile_contract') == 'catalog-v3'
+        matched = (
+            result.status == 'match'
+            and profile.is_active
+            and (not current_profile or decision.prompt_version == PROMPT_VERSION)
+        )
         role_confidence = max(
             (
                 item['confidence']
                 for item in decision.classifications
                 if item['direction_id'] == profile.direction_id
+                and (not current_profile or item['role_id'] == profile.role_id)
             ),
             default=0,
         )

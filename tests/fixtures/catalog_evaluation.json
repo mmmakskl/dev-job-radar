@@ -179,7 +179,7 @@
       [
         "development",
         "backend",
-        "api_developer"
+        "backend_developer"
       ]
     ],
     "needs_review": false,
@@ -194,7 +194,7 @@
         "role": [
           "development",
           "backend",
-          "api_developer"
+          "backend_developer"
         ],
         "preferences": {},
         "status": "match"
@@ -203,7 +203,7 @@
         "role": [
           "development",
           "backend",
-          "api_developer"
+          "backend_developer"
         ],
         "preferences": {
           "stacks": [
@@ -393,8 +393,8 @@
     "roles": [
       [
         "qa",
-        "automation_qa",
-        "automation_qa_engineer"
+        "qa_engineer",
+        "qa_engineer"
       ]
     ],
     "needs_review": false,
@@ -408,8 +408,8 @@
       {
         "role": [
           "qa",
-          "automation_qa",
-          "automation_qa_engineer"
+          "qa_engineer",
+          "qa_engineer"
         ],
         "preferences": {},
         "status": "match"
@@ -417,8 +417,8 @@
       {
         "role": [
           "qa",
-          "automation_qa",
-          "automation_qa_engineer"
+          "qa_engineer",
+          "qa_engineer"
         ],
         "preferences": {
           "stacks": [
@@ -436,8 +436,8 @@
     "roles": [
       [
         "devops_admin",
-        "devops",
-        "devops_engineer"
+        "devops_sre_engineer",
+        "devops_sre_engineer"
       ]
     ],
     "needs_review": false,
@@ -452,8 +452,8 @@
       {
         "role": [
           "devops_admin",
-          "devops",
-          "devops_engineer"
+          "devops_sre_engineer",
+          "devops_sre_engineer"
         ],
         "preferences": {},
         "status": "match"
@@ -461,8 +461,8 @@
       {
         "role": [
           "devops_admin",
-          "devops",
-          "devops_engineer"
+          "devops_sre_engineer",
+          "devops_sre_engineer"
         ],
         "preferences": {
           "stacks": [
@@ -558,7 +558,7 @@
   },
   {
     "id": "multiple_roles",
-    "text": "Hiring backend developer and API developer for one Go service. Go required.",
+    "text": "Hiring backend developer and fullstack developer for one Go service. Go required.",
     "is_vacancy": true,
     "roles": [
       [
@@ -568,8 +568,8 @@
       ],
       [
         "development",
-        "backend",
-        "api_developer"
+        "fullstack_developer",
+        "fullstack_developer"
       ]
     ],
     "needs_review": false,
@@ -1002,8 +1002,8 @@
     "roles": [
       [
         "security",
-        "application_security",
-        "appsec_engineer"
+        "security_specialist",
+        "security_specialist"
       ]
     ],
     "needs_review": false,
@@ -1016,8 +1016,8 @@
       {
         "role": [
           "security",
-          "application_security",
-          "appsec_engineer"
+          "security_specialist",
+          "security_specialist"
         ],
         "preferences": {},
         "status": "match"
@@ -1025,8 +1025,8 @@
       {
         "role": [
           "security",
-          "application_security",
-          "appsec_engineer"
+          "security_specialist",
+          "security_specialist"
         ],
         "preferences": {
           "stacks": [
@@ -1044,8 +1044,8 @@
     "roles": [
       [
         "devops_admin",
-        "sre",
-        "sre_engineer"
+        "devops_sre_engineer",
+        "devops_sre_engineer"
       ]
     ],
     "needs_review": false,
@@ -1058,8 +1058,8 @@
       {
         "role": [
           "devops_admin",
-          "sre",
-          "sre_engineer"
+          "devops_sre_engineer",
+          "devops_sre_engineer"
         ],
         "preferences": {},
         "status": "match"
@@ -1067,8 +1067,8 @@
       {
         "role": [
           "devops_admin",
-          "sre",
-          "sre_engineer"
+          "devops_sre_engineer",
+          "devops_sre_engineer"
         ],
         "preferences": {
           "stacks": [
