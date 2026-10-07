@@ -122,11 +122,10 @@ def test_personal_feed_and_delivery_are_scoped_to_catalog_track(
     bot = CandidateBot(api, store, {1}, registry=registry)
     asyncio.run(bot.handle_update(message(1, "/start")))
     buttons = api.messages[-1][2]["reply_markup"]["keyboard"]
-    assert buttons[0] == ["Go · Новые · 24 часа", "Go · Ранее · за 7 дней"]
+    assert buttons[0] == ["Новые · 24 часа", "Ранее · за 7 дней"]
     assert buttons[1] == [
         "Сохранённые",
-        "Go · Без даты",
-        "Для меня · активный профиль",
+        "Без даты",
     ]
     asyncio.run(bot.handle_update(message(1, "Для меня · активный профиль")))
     assert "1 / 1" in api.messages[-1][1]
@@ -142,17 +141,7 @@ def test_personal_feed_and_delivery_are_scoped_to_catalog_track(
         enabled=True,
     )
     asyncio.run(worker.tick(datetime(2026, 10, 4, 12, tzinfo=timezone.utc)))
-    # OneC auto-delivery is intentionally disabled by the accepted rollout policy.
-    if track == "onec":
-        assert all("Go backend role" not in m[1] for m in api.messages)
-        with delivery_store.connect() as connection:
-            assert (
-                connection.execute(
-                    "SELECT 1 FROM candidate_personal_deliveries WHERE vacancy_id='own'"
-                ).fetchone()
-                is None
-            )
-    else:
+    if track:
         assert any(label in m[1] for m in api.messages)
         with delivery_store.connect() as connection:
             rows = connection.execute(

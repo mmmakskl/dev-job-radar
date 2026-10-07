@@ -91,7 +91,8 @@ async def main() -> None:
         registry,
         PersonalDeliveryStore(config.CANDIDATE_BOT_DB_PATH),
         enabled=config.CANDIDATE_PROFILE_DELIVERY_ENABLED,
-        allowed_user_ids=profile_users,
+        allowed_user_ids=config.CANDIDATE_BOT_ALLOWED_USER_IDS,
+        hold_path=str(Path(config.DATA_DIR) / 'candidate-delivery.hold'),
     )
     # The personal feed follows CANDIDATE_BOT_ALLOWED_USER_IDS for every track.
     bot = CandidateBot(

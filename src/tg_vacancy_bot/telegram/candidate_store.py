@@ -228,7 +228,7 @@ class CandidateStore:
             ZoneInfo(timezone_name)
         except (ZoneInfoNotFoundError, TypeError, ValueError):
             raise ValueError('timezone must be a valid IANA timezone') from None
-        mode = values.get('delivery_mode', 'manual')
+        mode = values.get('delivery_mode', 'immediate')
         if mode not in {'manual', 'immediate', 'hourly'}:
             raise ValueError('Invalid delivery mode')
         values['delivery_mode'] = mode
@@ -628,6 +628,30 @@ class CandidateStore:
     def delete_profile(self, telegram_user_id: int, profile_id: str) -> bool:
         with self._connect() as connection:
             connection.execute('PRAGMA foreign_keys=ON')
+            connection.execute('BEGIN IMMEDIATE')
+            owned = connection.execute(
+                'SELECT 1 FROM candidate_profiles WHERE profile_id=? AND telegram_user_id=?',
+                (profile_id, telegram_user_id),
+            ).fetchone()
+            if owned is None:
+                return False
+            has_match_cache = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='registry_profile_matches'"
+            ).fetchone()
+            if has_match_cache:
+                connection.execute(
+                    'DELETE FROM registry_profile_matches WHERE profile_id=?',
+                    (profile_id,),
+                )
+            row = connection.execute(
+                'SELECT draft_json FROM candidate_profile_drafts WHERE telegram_user_id=?',
+                (telegram_user_id,),
+            ).fetchone()
+            if row and json.loads(row['draft_json']).get('profile_id') == profile_id:
+                connection.execute(
+                    'DELETE FROM candidate_profile_drafts WHERE telegram_user_id=?',
+                    (telegram_user_id,),
+                )
             result = connection.execute(
                 'DELETE FROM candidate_profiles WHERE profile_id=? AND telegram_user_id=?',
                 (profile_id, telegram_user_id),
@@ -857,11 +881,13 @@ class CandidateStore:
         )
         return max(30, min(3650, age))
 
-    def set_older_days(self, telegram_user_id: int, days: int) -> bool:
+    def set_older_days(
+        self, telegram_user_id: int, days: int, *, max_days: int | None = None
+    ) -> bool:
         if (
             not isinstance(days, int)
             or isinstance(days, bool)
-            or not 2 <= days <= self.max_older_days()
+            or not 2 <= days <= (max_days or self.max_older_days())
         ):
             return False
         with self._connect() as connection:

@@ -70,8 +70,7 @@ def test_feed_saves_and_archive_is_private(tmp_path):
     bot.api = api
     asyncio.run(bot.handle_update(message(1, 'Новые · 24 часа')))
     assert len(api.messages) == 1
-    keyboard = api.messages[0][2]['reply_markup']['inline_keyboard']
-    assert [button['text'] for button in keyboard[0]] == ['Сохранить']
+    assert 'Персональная выдача пока недоступна' in api.messages[0][1]
     asyncio.run(bot.handle_update(callback(1, f'v:s:{items[0].callback_key}')))
     assert api.answers[-1] == ('cb', 'Сохранено.')
     assert [v.vacancy_id for v in store.list_for_user(1, 'saved')] == ['jobs_1']
@@ -85,31 +84,21 @@ def test_feed_navigation_edits_one_private_card_and_checks_owner(tmp_path):
     bot = CandidateBot(api, store, {1, 2})
     asyncio.run(bot.handle_update(message(1, 'Новые · 24 часа')))
     assert len(api.messages) == 1
-    assert '1 / 3' in api.messages[0][1]
-    assert 'Go 1' in api.messages[0][1]
-    buttons = api.messages[0][2]['reply_markup']['inline_keyboard']
-    next_data = next(
-        button['callback_data']
-        for row in buttons
-        for button in row
-        if button['text'] == '→'
-    )
-    assert len(next_data.encode()) <= 64
+    assert 'Персональная выдача пока недоступна' in api.messages[0][1]
+    next_data = 'b:new:1'
     navigation = callback(1, next_data)
     navigation['callback_query']['message'] = {
         'message_id': 1,
         'chat': {'id': 1, 'type': 'private'},
     }
     asyncio.run(bot.handle_update(navigation))
-    assert len(api.messages) == 1
-    assert api.edits[-1][0:2] == (1, 1)
-    assert '2 / 3' in api.edits[-1][2]
-    assert 'Go 2' in api.edits[-1][2]
+    assert len(api.edits) == 0
+    assert 'устарела' in api.answers[-1][1]
 
     forged = callback(2, next_data)
     forged['callback_query']['message'] = navigation['callback_query']['message']
     asyncio.run(bot.handle_update(forged))
-    assert len(api.edits) == 1
+    assert len(api.edits) == 0
     assert 'устарела' in api.answers[-1][1]
 
 
@@ -142,8 +131,7 @@ def test_age_filter_buttons_persist_custom_window_and_undated_explanation(tmp_pa
     asyncio.run(bot.handle_update(message(1, '15')))
     assert store.get_older_days(1) == 15
     asyncio.run(bot.handle_update(message(1, 'Без даты')))
-    assert 'Дата публикации неизвестна' in api.messages[-1][1]
-    assert '1 / 1' in api.messages[-1][1]
+    assert 'Персональная выдача пока недоступна' in api.messages[-1][1]
 
 
 def test_legacy_callbacks_are_ignored_without_writes_and_search_removed(tmp_path):
@@ -172,8 +160,8 @@ def test_start_has_feed_archive_profiles_and_access_is_limited(tmp_path):
     bot = CandidateBot(api, store, {1})
     asyncio.run(bot.handle_update(message(1, '/start')))
     assert api.messages[-1][2]['reply_markup']['keyboard'] == [
-        ['Go · Новые · 24 часа', 'Go · Ранее · за 7 дней'],
-        ['Сохранённые', 'Go · Без даты', 'Для меня · активный профиль'],
+        ['Новые · 24 часа', 'Ранее · за 7 дней'],
+        ['Сохранённые', 'Без даты'],
         ['Профили'],
     ]
     asyncio.run(bot.handle_update(message(2, '/start')))
@@ -255,7 +243,7 @@ def test_wizard_restart_back_validation_save_and_multiple_profiles(tmp_path):
     profile = store.list_profiles(1)[0]
     assert profile.name == 'Разработка · Go'
     assert profile.preferences['stacks'] == ['go']
-    assert profile.preferences['delivery_mode'] == 'manual'
+    assert profile.preferences['delivery_mode'] == 'immediate'
     assert len(store.get_profile_versions(1, profile.profile_id)) == 1
     assert store.get_profile_draft(1) is None
     asyncio.run(bot.handle_update(message(1, 'Профили')))
@@ -266,7 +254,7 @@ def test_wizard_restart_back_validation_save_and_multiple_profiles(tmp_path):
     complete_draft(bot, api, store)
     press(bot, api, 'Сохранить профиль')
     assert len(store.list_profiles(1)) == 2
-    assert store.list_profiles(1)[1].preferences['delivery_mode'] == 'manual'
+    assert store.list_profiles(1)[1].preferences['delivery_mode'] == 'immediate'
     assert store.list_profiles(2) == []
 
 
@@ -532,10 +520,10 @@ def test_every_main_menu_command_has_a_live_route(tmp_path):
     routes = {
         '/start': 'Выберите',
         '/help': 'Команды',
-        '/new': 'Опубликовано',
+        '/new': 'Персональная выдача пока недоступна',
         '/older': 'Выберите срок',
         '/saved': 'Сохранённых',
-        '/undated': 'без достоверной даты',
+        '/undated': 'Персональная выдача пока недоступна',
         '/profiles': 'Профили',
     }
     for command, expected in routes.items():

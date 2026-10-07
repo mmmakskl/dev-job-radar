@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from tg_vacancy_bot.candidate_catalog import CATALOG, direction_stacks
@@ -376,14 +376,26 @@ class CandidateBot:
 
     def _keyboard(self, user_id: int) -> dict:
         days = self.store.get_older_days(user_id)
-        # Age-bucket screens read the legacy Go projection; profile matches
-        # come exclusively from the shared registry via the personal screen.
-        first_row = ['Go · Новые · 24 часа', f'Go · Ранее · за {days} дней']
-        second_row = ['Сохранённые', 'Go · Без даты', 'Для меня · активный профиль']
+        first_row = ['Новые · 24 часа', f'Ранее · за {days} дней']
+        second_row = ['Сохранённые', 'Без даты']
         return {
             'keyboard': [first_row, second_row, ['Профили']],
             'resize_keyboard': True,
         }
+
+    def _max_older_days(self, user_id: int) -> int:
+        if self.registry is None:
+            return 30
+        dates = [
+            self.store._trusted_published_datetime(match.published_at)
+            for match in self.registry.list_personal_matches(user_id)
+        ]
+        ages = [
+            (datetime.now(timezone.utc) - value).days
+            for value in dates
+            if value is not None
+        ]
+        return max(30, min(3650, max(ages, default=0)))
 
     async def _personal_feed(self, user_id: int) -> None:
         state = self.store.get_active_profile_state(user_id)
@@ -408,7 +420,7 @@ class CandidateBot:
         rows.append([{'text': 'Ввести свой срок', 'callback_data': 'f:custom'}])
         await self.api.send_message(
             user_id,
-            f"Выберите срок общей Go-ленты. «Ранее» покажет Go-объявления старше 24 часов и не старше выбранного срока. Сейчас доступно от 2 до {self.store.max_older_days()} дней — по самой старой дате в Go-ленте.",
+            f"Выберите срок профильной выдачи. «Ранее» покажет совпадения старше 24 часов и не старше выбранного срока. Доступно от 2 до {self._max_older_days(user_id)} дней.",
             reply_markup={'inline_keyboard': rows},
         )
 
@@ -416,16 +428,58 @@ class CandidateBot:
         self, user_id: int, bucket: str, index: int = 0, message_id: int | None = None
     ) -> bool:
         """Show one current card; navigation edits only the owner's private message."""
-        if bucket == 'for_me' and self.registry is None:
+        if bucket in {'for_me', 'new', 'older', 'undated'} and self.registry is None:
             if message_id is None:
                 await self.api.send_message(
                     user_id, 'Персональная выдача пока недоступна.'
                 )
             return False
-        if bucket == 'for_me':
+        profile = self.store.get_active_profile(user_id)
+        if bucket in {'for_me', 'new', 'older', 'undated'} and profile is None:
+            if message_id is None:
+                await self._personal_feed(user_id)
+            return False
+        if bucket in {'for_me', 'new', 'older', 'undated'}:
             matches = await asyncio.to_thread(
                 self.registry.list_personal_matches, user_id
             )
+            now = datetime.now(timezone.utc)
+            cutoff = now - timedelta(hours=24)
+            older_cutoff = now - timedelta(days=self.store.get_older_days(user_id))
+            if bucket != 'for_me':
+                matches = [
+                    match
+                    for match in matches
+                    if (
+                        (
+                            bucket == 'undated'
+                            and self.store._trusted_published_datetime(
+                                match.published_at
+                            )
+                            is None
+                        )
+                        or (
+                            bucket == 'new'
+                            and (
+                                published := self.store._trusted_published_datetime(
+                                    match.published_at
+                                )
+                            )
+                            is not None
+                            and cutoff <= published <= now
+                        )
+                        or (
+                            bucket == 'older'
+                            and (
+                                published := self.store._trusted_published_datetime(
+                                    match.published_at
+                                )
+                            )
+                            is not None
+                            and older_cutoff <= published < cutoff
+                        )
+                    )
+                ]
             cards = [
                 (
                     format_card(
@@ -439,7 +493,7 @@ class CandidateBot:
                 )
                 for match in matches
             ]
-        elif bucket in {'new', 'older', 'undated', 'saved'}:
+        elif bucket == 'saved':
             days = self.store.get_older_days(user_id)
             cards = [
                 (vacancy_text(vacancy), vacancy.callback_key)
@@ -458,9 +512,9 @@ class CandidateBot:
                     'Подтверждённых совпадений активных профилей пока нет.'
                     if bucket == 'for_me'
                     else {
-                        'new': 'В общей Go-ленте за последние 24 часа нет вакансий с подтверждённой датой публикации. Проверьте более ранние Go-вакансии, объявления без даты или «Для меня».',
-                        'older': f"В общей Go-ленте нет вакансий старше 24 часов и не старше {_days_label(self.store.get_older_days(user_id))}. Можно выбрать другой срок или открыть «Для меня».",
-                        'undated': 'В общей Go-ленте нет вакансий без достоверной даты публикации. Такие объявления не включаются в «Новые».',
+                        'new': 'Новых подтверждённых совпадений за последние 24 часа нет.',
+                        'older': f"Подтверждённых совпадений за {_days_label(self.store.get_older_days(user_id))} нет.",
+                        'undated': 'Подтверждённых совпадений без достоверной даты нет.',
                         'saved': 'Сохранённых вакансий пока нет. Сохраняйте интересные карточки кнопкой «Сохранить».',
                     }[bucket]
                 ),
@@ -472,9 +526,9 @@ class CandidateBot:
         content, callback_key = cards[index]
         feed_title = {
             'for_me': 'Для меня · активный профиль',
-            'new': 'Общая Go-лента · новые',
-            'older': 'Общая Go-лента · ранее',
-            'undated': 'Общая Go-лента · без даты',
+            'new': 'Профиль · новые',
+            'older': 'Профиль · ранее',
+            'undated': 'Профиль · без даты',
             'saved': 'Сохранённые вакансии',
         }[bucket]
         content = f'<i>{feed_title} · {index + 1} / {len(cards)}</i>\n\n{content}'
@@ -483,11 +537,25 @@ class CandidateBot:
             controls = []
             if index > 0:
                 controls.append(
-                    {'text': '←', 'callback_data': f'b:{bucket}:{index - 1}'}
+                    {
+                        'text': '←',
+                        'callback_data': (
+                            f'b:{bucket}:{profile.profile_id}:{profile.version}:{index - 1}'
+                            if bucket != 'saved'
+                            else f'b:saved:{index - 1}'
+                        ),
+                    }
                 )
             if index + 1 < len(cards):
                 controls.append(
-                    {'text': '→', 'callback_data': f'b:{bucket}:{index + 1}'}
+                    {
+                        'text': '→',
+                        'callback_data': (
+                            f'b:{bucket}:{profile.profile_id}:{profile.version}:{index + 1}'
+                            if bucket != 'saved'
+                            else f'b:saved:{index + 1}'
+                        ),
+                    }
                 )
             keyboard['inline_keyboard'].append(controls)
         if message_id is None:
@@ -552,11 +620,11 @@ class CandidateBot:
             await self.api.send_message(
                 chat_id,
                 (
-                    'Выберите общую Go-ленту или совпадения активного профиля. '
+                    'Выберите совпадения активного профиля. '
                     'Даты берутся из публикации источника; объявления без даты отдельно.'
                     if text == '/start'
-                    else 'Команды: /new — общая Go-лента за 24 часа; /older — срок ранней Go-ленты; '
-                    '/saved — сохранённые; /undated — без даты общей Go-ленты; /forme — по активному профилю; '
+                    else 'Команды: /new — новые за 24 часа; /older — срок ранней выдачи; '
+                    '/saved — сохранённые; /undated — совпадения без даты; /forme — все совпадения; '
                     '/profiles — профили; /cancel — отменить мастер.'
                 ),
                 reply_markup=self._keyboard(user_id),
@@ -609,7 +677,9 @@ class CandidateBot:
                 days = int(text)
             except ValueError:
                 days = -1
-            if self.store.set_older_days(user_id, days):
+            if self.store.set_older_days(
+                user_id, days, max_days=self._max_older_days(user_id)
+            ):
                 await self.api.send_message(
                     user_id,
                     f'Срок изменён: {_days_label(days)}.',
@@ -620,7 +690,7 @@ class CandidateBot:
                 self.store.request_custom_days(user_id)
                 await self.api.send_message(
                     user_id,
-                    f"Введите целое число от 2 до {self.store.max_older_days()} дней.",
+                    f"Введите целое число от 2 до {self._max_older_days(user_id)} дней.",
                 )
             return
         if self.store.get_profile_draft(user_id) and text not in {
@@ -674,15 +744,25 @@ class CandidateBot:
         if not isinstance(data, str):
             return
         parts = data.split(':')
-        if len(parts) == 3 and parts[0] == 'b':
+        if parts[0] == 'b' and len(parts) in {3, 5}:
             source = callback.get('message') or {}
             chat = source.get('chat') or {}
             try:
-                index = int(parts[2])
+                index = int(parts[-1])
             except ValueError:
                 index = -1
+            profile = self.store.get_active_profile(user_id)
+            current = (
+                len(parts) == 3
+                and parts[1] == 'saved'
+                or len(parts) == 5
+                and profile is not None
+                and parts[2] == profile.profile_id
+                and parts[3] == str(profile.version)
+            )
             valid = (
-                chat.get('type') == 'private'
+                current
+                and chat.get('type') == 'private'
                 and chat.get('id') == user_id
                 and isinstance(source.get('message_id'), int)
                 and await self._show_browser(
@@ -704,7 +784,9 @@ class CandidateBot:
                 days = int(parts[2])
             except ValueError:
                 days = -1
-            valid = self.store.set_older_days(user_id, days)
+            valid = self.store.set_older_days(
+                user_id, days, max_days=self._max_older_days(user_id)
+            )
             await self.api.answer_callback_query(
                 callback_id, 'Срок сохранён.' if valid else 'Недопустимый срок.'
             )
@@ -721,7 +803,7 @@ class CandidateBot:
             await self.api.answer_callback_query(callback_id, 'Введите число дней.')
             await self.api.send_message(
                 user_id,
-                f"Введите срок от 2 до {self.store.max_older_days()} дней. Значение сохранится для следующих запусков.",
+                f"Введите срок от 2 до {self._max_older_days(user_id)} дней. Значение сохранится для следующих запусков.",
             )
             return
         if parts[0] in {'p', 'w'}:
@@ -920,6 +1002,12 @@ class CandidateBot:
                     'callback_data': f'p:advanced:{profile.profile_id}:{profile.version}',
                 }
             ],
+            [
+                {
+                    'text': 'Удалить профиль',
+                    'callback_data': f'p:delete:{profile.profile_id}:{profile.version}',
+                }
+            ],
         ]
         if self.store.get_active_profile(user_id) == profile and (
             profile.role_id or profile.direction_id == 'onec'
@@ -975,7 +1063,7 @@ class CandidateBot:
                     'role_id': '',
                     'preferences': {
                         'stacks': [],
-                        'delivery_mode': 'manual',
+                        'delivery_mode': 'immediate',
                         'timezone': 'Europe/Moscow',
                     },
                     'is_active': False,
@@ -1486,6 +1574,34 @@ class CandidateBot:
         if profile is None or parts[3] != str(profile.version):
             return False
         action = parts[1]
+        if action == 'delete':
+            await self.api.send_message(
+                user_id,
+                f'Удалить профиль «{profile.name}»? Сохранённые вакансии и история отправок останутся.',
+                reply_markup={
+                    'inline_keyboard': [
+                        [
+                            {
+                                'text': 'Да, удалить',
+                                'callback_data': f'p:confirm:{profile.profile_id}:{profile.version}',
+                            },
+                            {
+                                'text': 'Отмена',
+                                'callback_data': f'p:view:{profile.profile_id}:{profile.version}',
+                            },
+                        ]
+                    ]
+                },
+            )
+            return True
+        if action == 'confirm':
+            if not self.store.delete_profile(user_id, profile.profile_id):
+                return False
+            await self.api.send_message(
+                user_id, 'Профиль удалён. Для новой выдачи выберите активный профиль.'
+            )
+            await self._profiles(user_id)
+            return True
         if action == 'activate':
             selected = self.store.activate_profile(user_id, profile.profile_id)
             if selected is None:

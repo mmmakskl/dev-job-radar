@@ -242,7 +242,7 @@ def test_profile_creation_activation_personal_and_older_feed_navigation(tmp_path
     asyncio.run(bot.handle_update(message(1, 'Ранее · за 7 дней')))
     press(bot, api, '7 дней')
     assert '1 / 2' in api.messages[-1][1]
-    assert 'Go role 1' in api.messages[-1][1]
+    assert 'Go engineer' in api.messages[-1][1]
     older_next = next(
         button['callback_data']
         for row in api.messages[-1][2]['reply_markup']['inline_keyboard']
@@ -256,18 +256,19 @@ def test_profile_creation_activation_personal_and_older_feed_navigation(tmp_path
     }
     asyncio.run(bot.handle_update(update))
     assert '2 / 2' in api.edits[-1][2]
-    assert 'Go role 2' in api.edits[-1][2]
+    assert 'Go engineer' in api.edits[-1][2]
 
 
-def test_onec_profiles_never_trigger_automatic_personal_delivery():
+def test_onec_profiles_trigger_automatic_personal_delivery():
     from types import SimpleNamespace
 
     profile = SimpleNamespace(
         is_active=True,
+        profile_id='onec-profile',
         direction_id='onec',
         preferences={'delivery_mode': 'immediate'},
     )
-    assert determining_profile(SimpleNamespace(matched_profiles=(profile,))) is None
+    assert determining_profile(SimpleNamespace(matched_profiles=(profile,))) is profile
 
 
 def test_hourly_eligibility_uses_winning_profile_local_hour(tmp_path):

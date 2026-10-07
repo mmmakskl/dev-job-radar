@@ -274,6 +274,7 @@ def format_hourly_digest(
     window_end: datetime,
     now: datetime,
     timezone: str = "Europe/Moscow",
+    history: bool = False,
 ) -> tuple[RenderedMessage, ...]:
     """Pack unique vacancies between whole records; return each page's identities.
 
@@ -301,9 +302,13 @@ def format_hourly_digest(
     if not unique:
         return ()
     header = (
-        "<b>Часовая сводка</b>\n"
-        f"Период: {_exact(end - timedelta(hours=1), zone)} — {_exact(end, zone)}\n"
-        f"Уникальных вакансий: {len(unique)}"
+        f"<b>История вакансий</b>\nУникальных вакансий: {len(unique)}"
+        if history
+        else (
+            "<b>Часовая сводка</b>\n"
+            f"Период: {_exact(end - timedelta(hours=1), zone)} — {_exact(end, zone)}\n"
+            f"Уникальных вакансий: {len(unique)}"
+        )
     )
     pages: list[RenderedMessage] = []
     text, ids = header, []

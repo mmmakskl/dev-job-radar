@@ -87,6 +87,7 @@ class VacancyProcessor:
         self.group_store = group_store
         self.registry = registry
         self.keyword_matches = 0
+        self.analysis_calls = 0
         self.saved_matches = 0
         self._persistence_lock = asyncio.Lock()
 
@@ -233,9 +234,11 @@ class VacancyProcessor:
         )
         unavailable_reason = None
         try:
-            analyzed = (
-                existing if existing is not None else await self.analyze_text(text)
-            )
+            if existing is None:
+                self.analysis_calls += 1
+                analyzed = await self.analyze_text(text)
+            else:
+                analyzed = existing
         except AnalysisUnavailable as exc:
             analyzed = None
             unavailable_reason = str(exc)

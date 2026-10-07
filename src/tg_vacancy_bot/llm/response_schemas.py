@@ -30,13 +30,15 @@ def _object_schema(properties: dict) -> dict:
     }
 
 
-def _analysis_schema() -> dict:
+def _analysis_schema(*, universal: bool = False) -> dict:
     properties = {}
     for field in sorted(EXPECTED_FIELDS):
         if field == "is_match":
             properties[field] = {"type": "boolean"}
         elif field in _LIST_FIELDS:
             properties[field] = {"type": "array", "items": {"type": "string"}}
+            if universal and field in {"primary_roles", "specializations"}:
+                properties[field]["maxItems"] = 0
         elif field in _NUMBER_FIELDS:
             properties[field] = {"type": ["number", "null"]}
         elif field in _TEXT_FIELDS:
@@ -72,7 +74,7 @@ def universal_response_format(schema_version: str, prompt_version: str) -> dict:
             "prompt_version": {"type": "string", "enum": [prompt_version]},
             "is_vacancy": {"type": "boolean"},
             "classifications": {"type": "array", "items": classification},
-            "analysis": _analysis_schema(),
+            "analysis": _analysis_schema(universal=True),
             "confidence": {"type": "integer", "minimum": 0, "maximum": 100},
             "reason_code": {"type": "string"},
             "needs_review": {"type": "boolean"},

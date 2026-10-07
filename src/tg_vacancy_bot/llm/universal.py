@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -14,7 +15,7 @@ from tg_vacancy_bot.llm.response_schemas import universal_response_format
 from tg_vacancy_bot.models import VacancyAnalysis
 
 SCHEMA_VERSION = "vacancy-analysis.v1"
-PROMPT_VERSION = "catalog-classifier.v3"
+PROMPT_VERSION = "catalog-classifier.v4"
 
 
 class AnalysisUnavailable(RuntimeError):
@@ -66,6 +67,8 @@ def _catalog_prompt(catalog: dict) -> str:
         "the supplied catalog; include all supported roles, not just the primary one. Extract required and preferred "
         "technology stack separately, grade, work format, hiring geography, vacancy text language (distinct from "
         "programming languages), and supported skills in the analysis fields. Use null/empty values when unknown; "
+        "The catalog classifications are only in classifications. Set analysis.primary_roles and "
+        "analysis.specializations to empty arrays; never put role objects in analysis. "
         "never infer missing facts. Treat 1C, 1С:Предприятие, BSL/Язык 1С and its configurations (ERP, ЗУП, "
         "Бухгалтерия, Управление торговлей) as evidence for catalog 1C roles only when the post describes hiring. "
         "Reject training/course offers, license sales, resumes/CVs, and posts without an actual open role; do not "
@@ -220,8 +223,14 @@ async def analyze_universal_text(text: str) -> UniversalDecision:
             )
         )
         return _validate(json.loads(response.choices[0].message.content or "null"))
+    except InvalidAnalysisResultError as exc:
+        field = re.search(r'field=([a-z_]+)', str(exc))
+        reason = f'invalid_schema_{field.group(1)}' if field else 'invalid_schema'
+        raise AnalysisUnavailable(reason) from None
+    except (ValueError, TypeError, KeyError, IndexError):
+        raise AnalysisUnavailable('invalid_response') from None
     except Exception as exc:
-        raise AnalysisUnavailable(type(exc).__name__) from None
+        raise AnalysisUnavailable(f'api_{type(exc).__name__}') from None
 
 
 async def analyze_universal_compat(text: str) -> VacancyAnalysis | None:

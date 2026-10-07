@@ -57,13 +57,14 @@ PYTHONPATH=src venv/bin/python scripts/shadow_analysis.py \
 набора ролей и флага review. Replay не доказывает происхождение ответов:
 рядом с отчётом следует сохранять модель, дату и способ получения predictions.
 
-## Будущий ограниченный shadow-run
+## Ограниченный shadow-run и релизный барьер
 
 Только при отдельном решении выполнить живую оценку:
 
 ```bash
 PYTHONPATH=src venv/bin/python scripts/shadow_analysis.py \
-  --live --max-examples 30 --max-calls 10
+  --live --model mistral-large-2512 --corpus /secure/path/real_posts.json \
+  --max-examples 30 --max-calls 10
 ```
 
 Без `--live` вызовы невозможны; с `--live` требуется положительный `--max-calls`.
@@ -74,3 +75,13 @@ PYTHONPATH=src venv/bin/python scripts/shadow_analysis.py \
 Нулевые экспорты и рассылки гарантируются отсутствием таких зависимостей в
 runner; он вызывает только анализатор. Перед расширением allowlist нужны
 ручная проверка ошибок, независимая выборка и отдельная калибровка порогов.
+На 2026-10-07 локальный ключ вернул `PermissionDeniedError` для четырёх
+ограниченных проб Java, HR, Go и 1С. Production-ключ также вернул HTTP 403
+`tier_not_allowed` даже на коротком запросе к `mistral-large-2512`:
+модель недоступна текущему тарифу. На production моделью по умолчанию остаётся
+`ministral-3b-2512`, автоматическая личная доставка выключена, все три сервиса
+healthy. В реестре на момент сверки было 731 `unavailable`, 20 `available`,
+5 `review` анализов и 12 записей с `eligible_at`; эти числа включают историю
+анализов, а не только последние решения. Валидность и качество большой модели
+на реальных постах не подтверждены. Production-релиз и backfill остаются закрыты
+до доступа к модели и успешной контрольной выборки.

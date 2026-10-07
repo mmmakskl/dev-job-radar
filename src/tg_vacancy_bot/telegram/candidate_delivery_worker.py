@@ -8,6 +8,7 @@ import sqlite3
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from tg_vacancy_bot.telegram.bot_api import BotApiRejected
 from tg_vacancy_bot.telegram.candidate_card_formatter import (
@@ -39,9 +40,7 @@ def determining_profile(match):
     automatic = [
         p
         for p in match.matched_profiles
-        if p.is_active
-        and p.direction_id != 'onec'
-        and p.preferences.get('delivery_mode') in {'immediate', 'hourly'}
+        if p.is_active and p.preferences.get('delivery_mode') in {'immediate', 'hourly'}
     ]
     return min(
         automatic,
@@ -200,9 +199,11 @@ class CandidateDeliveryWorker:
         *,
         allowed_user_ids: set[int],
         enabled: bool = False,
+        hold_path: str | None = None,
     ):
         self.api, self.registry, self.store = api, registry, store
         self.allowed_user_ids, self.enabled = allowed_user_ids, enabled
+        self.hold_path = hold_path
 
     async def run(self, shutdown: asyncio.Event) -> None:
         while not shutdown.is_set():
@@ -216,7 +217,7 @@ class CandidateDeliveryWorker:
                 pass
 
     async def tick(self, now: datetime | None = None) -> None:
-        if not self.enabled:
+        if not self.enabled or (self.hold_path and Path(self.hold_path).exists()):
             return
         now = now or datetime.now(timezone.utc)
         for user_id in sorted(self.allowed_user_ids):
@@ -317,6 +318,83 @@ class CandidateDeliveryWorker:
                                     ),
                                     message_id=message_id,
                                 )
+
+    async def deliver_history(self, now: datetime | None = None) -> dict[str, int]:
+        """Send unsent confirmed matches as durable digest pages during a hold."""
+        now = now or datetime.now(timezone.utc)
+        counts = {'pages_sent': 0, 'vacancies_sent': 0, 'unknown': 0}
+        for user_id in sorted(self.allowed_user_ids):
+            matches = await asyncio.to_thread(
+                self.registry.list_personal_matches, user_id
+            )
+            pending = []
+            excluded = self.store.excluded_keys(user_id, now)
+            for match in matches:
+                if determining_profile(match) is None:
+                    continue
+                if delivery_key(user_id, match.vacancy_id) not in excluded:
+                    pending.append(match)
+            if not pending:
+                continue
+            profile = determining_profile(pending[0])
+            zone = profile.preferences.get('timezone', 'Europe/Moscow')
+            pages = format_hourly_digest(
+                tuple(personal_card(match) for match in pending),
+                now=now,
+                window_end=now,
+                timezone=zone,
+                history=True,
+            )
+            for page in pages:
+                current = {
+                    match.vacancy_id: match
+                    for match in await asyncio.to_thread(
+                        self.registry.list_personal_matches, user_id
+                    )
+                    if determining_profile(match) is not None
+                }
+                cards = tuple(
+                    personal_card(current[item])
+                    for item in page.vacancy_ids
+                    if item in current
+                )
+                if not cards:
+                    continue
+                fresh = format_hourly_digest(
+                    cards, now=now, window_end=now, timezone=zone, history=True
+                )[0]
+                expected = {
+                    item: current[item].matched_profiles for item in fresh.vacancy_ids
+                }
+                token, ids = self.store.reserve(
+                    user_id, fresh.vacancy_ids, now, expected_profiles=expected
+                )
+                if not ids:
+                    continue
+                claimed = tuple(card for card in cards if card.vacancy_id in ids)
+                rendered = format_hourly_digest(
+                    claimed, now=now, window_end=now, timezone=zone, history=True
+                )[0]
+                if not self.store.transition(token, 'reserved', 'sending'):
+                    continue
+                try:
+                    response = await self.api.send_message(
+                        user_id, rendered.text, parse_mode='HTML'
+                    )
+                except BotApiRejected:
+                    self.store.transition(token, 'sending', 'pending')
+                    continue
+                except BaseException:
+                    self.store.transition(token, 'sending', 'unknown')
+                    counts['unknown'] += len(ids)
+                    raise
+                message_id = response.get('message_id')
+                state = 'sent' if isinstance(message_id, int) else 'unknown'
+                self.store.transition(token, 'sending', state, message_id=message_id)
+                counts['pages_sent' if state == 'sent' else 'unknown'] += 1
+                if state == 'sent':
+                    counts['vacancies_sent'] += len(ids)
+        return counts
 
     @staticmethod
     def _pages(cards, mode, zone, now, end):

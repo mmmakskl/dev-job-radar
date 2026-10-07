@@ -5,11 +5,14 @@
 """
 
 import asyncio
+import argparse
+from collections import Counter
 import logging
 import os
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from telethon import TelegramClient
 
 from tg_vacancy_bot import config
@@ -27,6 +30,7 @@ from tg_vacancy_bot.storage.sheets import (
 )
 from tg_vacancy_bot.storage.vacancy_groups import VacancyGroupStore
 from tg_vacancy_bot.telegram.links import (
+    build_vacancy_id,
     get_message_channel_name,
     get_message_link,
 )
@@ -42,8 +46,10 @@ configure_logging(
 client = TelegramClient(config.SESSION_NAME, config.API_ID, config.API_HASH)
 
 
-async def parse_history() -> dict[str, int]:
-    """Парсит историю сообщений за последнюю неделю."""
+async def parse_history(
+    since: datetime | None = None, until: datetime | None = None
+) -> dict[str, int]:
+    """Re-run a bounded history window safely using stable source IDs."""
     config.validate_required_settings(require_sources=True)
 
     # Сначала подключаем Telegram: при занятой session не обращаемся к другим API.
@@ -86,13 +92,21 @@ async def parse_history() -> dict[str, int]:
     logging.info("✅ Telegram-сессия подключена")
 
     # Вычисляем дату недели назад (с timezone для корректного сравнения)
-    one_week_ago = datetime.now(timezone.utc) - timedelta(days=config.HISTORY_DAYS)
+    one_week_ago = since or datetime.now(timezone.utc) - timedelta(
+        days=config.HISTORY_DAYS
+    )
     logging.info(f"📅 Парсим сообщения с {one_week_ago.strftime('%Y-%m-%d %H:%M:%S')}")
 
     total_messages = 0
     total_filtered = 0
     total_matched = 0
     total_failed = 0
+    analyzed = 0
+    confirmed = 0
+    registered = 0
+    published = 0
+    unresolved = 0
+    unavailable_reasons: Counter[str] = Counter()
 
     # Итерируем по каждому каналу
     for channel_number, channel_identifier in enumerate(
@@ -112,6 +126,8 @@ async def parse_history() -> dict[str, int]:
                 # Проверяем дату сообщения
                 if message.date < one_week_ago:
                     break
+                if until is not None and message.date >= until:
+                    continue
 
                 total_messages += 1
                 channel_messages += 1
@@ -119,6 +135,12 @@ async def parse_history() -> dict[str, int]:
                 post_link = get_message_link(message)
                 try:
                     text = message.text or ''
+                    vacancy_id = build_vacancy_id(post_link)
+                    published_before = (
+                        processor.registry.candidates.channel_delivery_state(vacancy_id)
+                    )
+                    before = processor.analysis_calls
+                    before_prefilter = processor.keyword_matches
                     await processor.process_message(
                         text,
                         text,
@@ -126,6 +148,27 @@ async def parse_history() -> dict[str, int]:
                         message.date,
                         get_message_channel_name(message),
                     )
+                    analyzed += processor.analysis_calls - before
+                    entry = (
+                        processor.registry.get(vacancy_id)
+                        if processor.keyword_matches > before_prefilter
+                        else None
+                    )
+                    if entry is not None:
+                        registered += 1
+                        if entry.decision is not None and entry.eligible_at is not None:
+                            confirmed += 1
+                        elif entry.unavailable_reason:
+                            unresolved += 1
+                            unavailable_reasons[entry.unavailable_reason] += 1
+                    if (
+                        published_before != 'published'
+                        and processor.registry.candidates.channel_delivery_state(
+                            vacancy_id
+                        )
+                        == 'published'
+                    ):
+                        published += 1
                 except Exception as error:
                     total_failed += 1
                     logging.error(
@@ -161,20 +204,55 @@ async def parse_history() -> dict[str, int]:
         f"   Релевантных вакансий найдено: {total_matched}\n"
         f"   Результаты сохранены в Google Таблицу"
     )
+    logging.info('History unavailable reasons: %s', dict(unavailable_reasons))
     return {
         'received': total_messages,
         'created': total_matched,
         'updated': 0,
         'skipped': max(0, total_messages - total_matched - total_failed),
         'failed': total_failed,
+        'prefilter_passed': total_filtered,
+        'analyzed': analyzed,
+        'confirmed': confirmed,
+        'registered': registered,
+        'published': published,
+        'unresolved': unresolved + total_failed,
     }
 
 
 async def main() -> None:
     """Запускает history parser и гарантированно закрывает Telegram-клиент."""
     action_id = os.getenv('ADMIN_ACTION_ID')
+    parser = argparse.ArgumentParser(description='Idempotent Telegram history replay')
+    parser.add_argument('--since', help='Inclusive ISO date or UTC timestamp')
+    parser.add_argument('--until', help='Exclusive ISO date or UTC timestamp')
+    parser.add_argument(
+        '--hold-delivery',
+        action='store_true',
+        help='Keep automatic personal delivery paused for digest reconciliation',
+    )
+    args = parser.parse_args()
+
+    def parse_boundary(value: str | None) -> datetime | None:
+        if value is None:
+            return None
+        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return (
+            parsed.replace(tzinfo=timezone.utc)
+            if parsed.tzinfo is None
+            else parsed.astimezone(timezone.utc)
+        )
+
+    since, until = parse_boundary(args.since), parse_boundary(args.until)
+    if since and until and since >= until:
+        parser.error('--since must precede --until')
+    if args.hold_delivery:
+        hold = Path(config.DATA_DIR) / 'candidate-delivery.hold'
+        hold.parent.mkdir(parents=True, exist_ok=True)
+        hold.touch(exist_ok=True)
     try:
-        counts = await parse_history()
+        counts = await parse_history(since, until)
+        logging.info('History stage report: %s', counts)
         if action_id:
             finish_action(
                 action_id,

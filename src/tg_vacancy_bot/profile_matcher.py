@@ -130,7 +130,7 @@ def match_profile(
     checks = (
         (
             "stacks",
-            [*(_values(analysis.required_stack)), *(_values(analysis.preferred_stack))],
+            _values(analysis.required_stack),
             [
                 *preferences.get("stacks", []),
                 *preferences.get("additional_languages", []),

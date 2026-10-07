@@ -21,6 +21,7 @@ def main() -> None:
     )
     parser.add_argument('--max-examples', type=int, default=30)
     parser.add_argument('--max-calls', type=int, default=0)
+    parser.add_argument('--model', default=None, help='Model for this live probe only')
     parser.add_argument(
         '--live',
         action='store_true',
@@ -31,8 +32,14 @@ def main() -> None:
         parser.error('--live requires --max-calls > 0 and excludes --predictions')
     if not args.live and args.max_calls:
         parser.error('--max-calls requires --live')
+    if args.model and not args.live:
+        parser.error('--model requires --live')
     analyzer = None
     if args.live:
+        if args.model:
+            from tg_vacancy_bot import config
+
+            config.MISTRAL_MODEL = args.model
         from tg_vacancy_bot.llm.universal import analyze_universal_text
 
         analyzer = analyze_universal_text

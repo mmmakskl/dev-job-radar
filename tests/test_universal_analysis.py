@@ -89,6 +89,7 @@ def test_universal_response_schema_separates_roles_and_classifications():
     assert analysis['properties']['primary_roles'] == {
         'type': 'array',
         'items': {'type': 'string'},
+        'maxItems': 0,
     }
     assert classification['properties']['role_id'] == {'type': 'string'}
     assert schema['properties']['schema_version']['enum'] == [SCHEMA_VERSION]
