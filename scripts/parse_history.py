@@ -43,8 +43,15 @@ configure_logging(
     data_dir=config.DATA_DIR,
 )
 
-# Инициализация клиента
-client = TelegramClient(config.SESSION_NAME, config.API_ID, config.API_HASH)
+client: TelegramClient | None = None
+
+
+def get_client() -> TelegramClient:
+    """Create the Telegram client only after runtime settings are validated."""
+    global client
+    if client is None:
+        client = TelegramClient(config.SESSION_NAME, config.API_ID, config.API_HASH)
+    return client
 
 
 async def parse_history(
@@ -52,9 +59,10 @@ async def parse_history(
 ) -> dict[str, int]:
     """Re-run a bounded history window safely using stable source IDs."""
     config.validate_required_settings(require_sources=True)
+    telegram = get_client()
 
     # Сначала подключаем Telegram: при занятой session не обращаемся к другим API.
-    await client.start()
+    await telegram.start()
 
     # Google Таблица читается только один раз за время работы процесса.
     dedupe_state = JsonlDedupeState(
@@ -87,9 +95,9 @@ async def parse_history(
     )
 
     # Принудительно кэшируем диалоги для корректной работы с приватными каналами
-    await client.get_dialogs()
+    await telegram.get_dialogs()
 
-    await client.get_me()
+    await telegram.get_me()
     logging.info("✅ Telegram-сессия подключена")
 
     # Вычисляем дату недели назад (с timezone для корректного сравнения)
@@ -121,7 +129,7 @@ async def parse_history(
             matched_before = processor.saved_matches
 
             # Получаем сообщения за последнюю неделю
-            async for message in client.iter_messages(
+            async for message in telegram.iter_messages(
                 channel_identifier, offset_date=datetime.now(), reverse=False
             ):
                 # Проверяем дату сообщения
@@ -228,8 +236,9 @@ async def backfill_registry_history(
     if config.LEGACY_GO_ANALYSIS:
         raise RuntimeError('--registry-only requires universal catalog analysis')
     config.validate_required_settings(require_sources=True, require_google_sheets=False)
-    await client.start()
-    await client.get_dialogs()
+    telegram = get_client()
+    await telegram.start()
+    await telegram.get_dialogs()
     registry = VacancyRegistry(config.CANDIDATE_BOT_DB_PATH)
     boundary = since or datetime.now(timezone.utc) - timedelta(days=config.HISTORY_DAYS)
     counts: Counter[str] = Counter()
@@ -239,7 +248,7 @@ async def backfill_registry_history(
     ):
         try:
             logging.info('Реестр: обработка Telegram-источника %d', channel_number)
-            async for message in client.iter_messages(
+            async for message in telegram.iter_messages(
                 channel_identifier, offset_date=datetime.now(), reverse=False
             ):
                 if message.date < boundary:
@@ -361,7 +370,7 @@ async def main() -> None:
         else:
             raise
     finally:
-        if client.is_connected():
+        if client is not None and client.is_connected():
             await client.disconnect()
     if os.getenv('ADMIN_HISTORY_RESTART') == '1':
         os.execv(sys.executable, [sys.executable, 'scripts/run_live.py'])
