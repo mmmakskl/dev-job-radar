@@ -537,7 +537,7 @@ def test_wizard_replaces_uneditable_message_and_persists_new_message_id(tmp_path
     press(bot, api, 'Создать профиль')
     old_id = store.get_profile_draft(1)['message_id']
     api.edit_message_text = AsyncMock(side_effect=BotApiError('message is too old'))
-    press(bot, api, 'Контент')
+    press(bot, api, 'Разработка')
     draft = store.get_profile_draft(1)
     assert len(api.messages) == 3
     assert draft['message_id'] == 3 and draft['message_id'] != old_id
