@@ -64,6 +64,14 @@ def callback(user_id, data, callback_id='cb'):
     }
 
 
+def test_cancel_without_draft_replies_explicitly(tmp_path):
+    store, _ = make_store(tmp_path)
+    api = FakeBotApi()
+    bot = CandidateBot(api, store, {1})
+    asyncio.run(bot.handle_update(message(1, '/cancel')))
+    assert api.messages[-1][1] == 'Нет активной настройки профиля.'
+
+
 def test_feed_saves_and_archive_is_private(tmp_path):
     store, items = make_store(tmp_path, 2)
     api, bot = FakeBotApi(), CandidateBot(FakeBotApi(), store, {1, 2})

@@ -82,6 +82,23 @@ GRADE_ORDER = {
     grade: index
     for index, grade in enumerate(('intern', 'junior', 'middle', 'senior', 'lead'))
 }
+TITLE_GRADE_ALIASES = {
+    'intern': ('intern', 'стажер', 'стажёр'),
+    'junior': ('junior', 'джуниор'),
+    'middle': ('middle', 'mid-level', 'мидл'),
+    'senior': ('senior', 'сеньор', 'синьор'),
+    'lead': ('lead', 'лид'),
+}
+
+
+def _explicit_title_grades(title: str) -> set[str]:
+    """Use grade words stated in the title when structured grade fields are empty."""
+    normalized = _norm(title)
+    return {
+        grade
+        for grade, aliases in TITLE_GRADE_ALIASES.items()
+        if any(_contains_skill(normalized, _norm(alias)) for alias in aliases)
+    }
 
 
 def _grade_range_matches(start: str, end: str, expected: list[str]) -> bool | None:
@@ -247,9 +264,12 @@ def _match_current(
             decision.analysis.grade_from, decision.analysis.grade_to, grades
         )
         if overlap is None:
-            return ProfileMatch(
-                'review', 'grade_missing', missing_fields=('seniority',)
-            )
+            title_grades = _explicit_title_grades(decision.analysis.title)
+            if not title_grades:
+                return ProfileMatch(
+                    'review', 'grade_missing', missing_fields=('seniority',)
+                )
+            overlap = bool(title_grades & set(grades))
         if not overlap:
             return ProfileMatch(
                 'no_match', 'grade_conflict', conflicting_fields=('seniority',)

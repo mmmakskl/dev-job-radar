@@ -21,6 +21,7 @@ from tg_vacancy_bot.llm.universal import (
     decision_to_dict,
     decision_from_dict,
 )
+from tg_vacancy_bot.llm.schemas import InvalidAnalysisResultError
 from tg_vacancy_bot.models import VacancyAnalysis
 from tg_vacancy_bot.telegram.candidate_store import (
     CandidateProfile,
@@ -28,7 +29,7 @@ from tg_vacancy_bot.telegram.candidate_store import (
     callback_key_for,
 )
 
-MATCHER_VERSION = 'profile-match.v5'
+MATCHER_VERSION = 'profile-match.v6'
 REGISTRY_VERSION = 2
 
 
@@ -422,11 +423,13 @@ class VacancyRegistry:
 
     @staticmethod
     def _vacancy(row: sqlite3.Row) -> RegistryVacancy:
-        decision = (
-            decision_from_payload(json.loads(row['decision_json']))
-            if row['decision_json']
-            else None
-        )
+        decision = None
+        invalid_saved_analysis = False
+        if row['decision_json']:
+            try:
+                decision = decision_from_payload(json.loads(row['decision_json']))
+            except (InvalidAnalysisResultError, ValueError, TypeError):
+                invalid_saved_analysis = True
         return RegistryVacancy(
             row['vacancy_id'],
             row['post_link'],
@@ -435,7 +438,11 @@ class VacancyRegistry:
             row['eligible_at'],
             decision,
             row['latest_analysis_id'],
-            row['reason_code'] if decision is None else None,
+            (
+                'invalid_saved_analysis'
+                if invalid_saved_analysis
+                else row['reason_code'] if decision is None else None
+            ),
             row['raw_text'],
             row['prompt_version'],
         )

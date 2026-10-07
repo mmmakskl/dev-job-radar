@@ -665,8 +665,11 @@ class CandidateBot:
         if text in {'/undated', 'Без даты', 'Go · Без даты'}:
             await self._show_browser(user_id, 'undated')
             return
-        if text in {'Отмена', '/cancel'} and self.store.get_profile_draft(user_id):
+        if text in {'Отмена', '/cancel'}:
             draft = self.store.get_profile_draft(user_id)
+            if draft is None:
+                await self.api.send_message(user_id, 'Нет активной настройки профиля.')
+                return
             self.store.finish_profile_draft(
                 user_id, draft['token'], draft['revision'], save=False
             )

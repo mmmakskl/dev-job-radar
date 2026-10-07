@@ -1,5 +1,7 @@
 """Current candidate catalog, profile migration and raw-text matching."""
 
+import asyncio
+import json
 from dataclasses import replace
 
 from tg_vacancy_bot.candidate_catalog import CATALOG, role_path
@@ -13,6 +15,8 @@ from tg_vacancy_bot.profile_matcher import match_profile
 from tg_vacancy_bot.premium_search.analyzer import adapt_universal
 from tg_vacancy_bot.registry import VacancyRegistry
 from tg_vacancy_bot.telegram.candidate_store import CandidateProfile, CandidateStore
+from tg_vacancy_bot.telegram.candidate_bot import CandidateBot
+from tests.test_candidate_bot import FakeBotApi, message
 from tests.test_universal_analysis import _payload
 
 EXPECTED_DIRECTIONS = [
@@ -159,6 +163,33 @@ def test_role_grade_any_skill_and_excluded_phrase_use_original_text():
     )
 
 
+def test_explicit_title_grade_is_used_when_grade_fields_are_empty():
+    decision = _decision()
+    profile = _current_profile(seniority=['middle', 'senior'], required_skills=['go'])
+    unknown = replace(
+        decision,
+        analysis=replace(
+            decision.analysis,
+            grade_from='Не указано',
+            grade_to='Не указано',
+            title='Senior Backend Go разработчик',
+        ),
+    )
+    assert match_profile(unknown, profile, source_text='Go developer').status == 'match'
+    junior = replace(
+        unknown, analysis=replace(unknown.analysis, title='Junior Backend Go')
+    )
+    assert (
+        match_profile(junior, profile, source_text='Go developer').reason_code
+        == 'grade_conflict'
+    )
+    untitled = replace(unknown, analysis=replace(unknown.analysis, title='Backend Go'))
+    assert (
+        match_profile(untitled, profile, source_text='Senior Go developer').reason_code
+        == 'grade_missing'
+    )
+
+
 def test_premium_catalog_uses_original_text_and_current_decision():
     decision = _decision()
     profile = _current_profile(required_skills=['Go'], excluded_skills=['agency'])
@@ -267,3 +298,39 @@ def test_registry_requires_current_analysis_and_source_text(tmp_path):
     assert registry.get('jobs_2').prompt_version == LEGACY_PROMPT_VERSION
     assert [item.vacancy_id for item in registry.list_personal_matches(1)] == ['jobs_1']
     assert PROMPT_VERSION != LEGACY_PROMPT_VERSION
+
+
+def test_unsupported_historical_analysis_does_not_block_personal_feed(tmp_path):
+    registry = VacancyRegistry(str(tmp_path / 'registry.sqlite3'))
+    registry.candidates.create_profile(
+        1,
+        name='Backend',
+        direction_id='development',
+        specialization_id='backend',
+        role_id='backend_developer',
+        preferences={'profile_contract': 'catalog-v3', 'required_skills': ['go']},
+    )
+    decision = _decision()
+    for number in (1, 2):
+        registry.ingest(
+            vacancy_id=f'jobs_{number}',
+            post_link=f'https://t.me/jobs/{number}',
+            decision=decision,
+            raw_text='Middle Go backend developer',
+        )
+    with registry._connect() as connection:
+        row = connection.execute(
+            "SELECT analysis_id,decision_json FROM registry_analyses WHERE vacancy_id='jobs_1'"
+        ).fetchone()
+        payload = json.loads(row['decision_json'])
+        payload['prompt_version'] = 'catalog-classifier.v3'
+        connection.execute(
+            'UPDATE registry_analyses SET decision_json=?,prompt_version=? WHERE analysis_id=?',
+            (json.dumps(payload), payload['prompt_version'], row['analysis_id']),
+        )
+    assert registry.get('jobs_1').unavailable_reason == 'invalid_saved_analysis'
+    assert [item.vacancy_id for item in registry.list_personal_matches(1)] == ['jobs_2']
+    api = FakeBotApi()
+    bot = CandidateBot(api, registry.candidates, {1}, registry=registry)
+    asyncio.run(bot.handle_update(message(1, '/forme')))
+    assert api.messages and 'jobs/2' in api.messages[-1][1]
