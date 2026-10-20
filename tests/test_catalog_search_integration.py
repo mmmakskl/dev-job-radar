@@ -4,7 +4,6 @@ import asyncio
 import json
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -27,9 +26,6 @@ def enabled(monkeypatch):
     monkeypatch.setenv('PREMIUM_GLOBAL_SEARCH_ENABLED', 'true')
     monkeypatch.setattr(config, 'CANDIDATE_BOT_ALLOWED_USER_IDS', [1, 2])
     monkeypatch.setattr(config, 'CANDIDATE_CATALOG_SEARCH_ENABLED', True, raising=False)
-    monkeypatch.setattr(
-        config, 'CANDIDATE_PROFILE_ALLOWED_USER_IDS', [1, 2], raising=False
-    )
 
 
 def universal_decision(required=('Python',), preferred=(), **changes):
@@ -91,7 +87,7 @@ def test_catalog_requests_are_owner_scoped_and_idempotent(tmp_path, monkeypatch)
         store.create_run(**params)
 
 
-def test_catalog_end_to_end_preview_is_private_and_keeps_source_date(
+def test_catalog_end_to_end_saves_shared_vacancy_and_keeps_source_date(
     tmp_path, monkeypatch
 ):
     enabled(monkeypatch)
@@ -99,7 +95,9 @@ def test_catalog_end_to_end_preview_is_private_and_keeps_source_date(
     svc, premium, processor, telegram, legacy, sheets = setup(
         tmp_path, [message(text='Hiring Python backend developer', date=published)]
     )
-    processor.registry = SimpleNamespace(ingest=AsyncMock())
+    from tg_vacancy_bot.registry import VacancyRegistry
+
+    processor.registry = VacancyRegistry(str(tmp_path / 'candidate.sqlite3'))
     llm = AsyncMock(return_value=universal_decision())
     monkeypatch.setattr(universal, 'analyze_universal_text', llm)
     store = SearchStore(str(tmp_path / 'search.sqlite3'))
@@ -131,15 +129,21 @@ def test_catalog_end_to_end_preview_is_private_and_keeps_source_date(
         await service._premium()
 
     asyncio.run(scenario())
+    assert (
+        premium.list_results(premium.list_runs()[0]['search_run_id'], status='saved')[
+            'total'
+        ]
+        == 1
+    )
     items = store.list_results(run['id'], owner='candidate:1')['items']
     assert len(items) == 1
     assert items[0]['timestamp'] == published.isoformat()
-    assert items[0]['publication_status'] == 'preview'
+    assert items[0]['publication_status'] == 'saved'
     assert len(premium.list_runs()) == 1
     assert llm.await_count == 1
     legacy.assert_not_awaited()
     sheets.assert_not_awaited()
-    processor.registry.ingest.assert_not_called()
+    assert processor.registry.get(items[0]['vacancy_id']) is not None
     assert telegram.calls
 
 
@@ -172,6 +176,64 @@ def test_catalog_child_isolated_and_cancelled_with_parent(tmp_path, monkeypatch)
     children = {run['owner']: run for run in premium.list_runs()}
     assert children['candidate:1']['status'] == 'cancelled'
     assert children['candidate:2']['status'] == 'queued'
+
+
+def test_candidate_quota_exhaustion_is_reported_on_parent_search(tmp_path, monkeypatch):
+    enabled(monkeypatch)
+    search = SearchStore(str(tmp_path / 'search.sqlite3'))
+    premium = PremiumSearchStore(str(tmp_path / 'premium.sqlite3'))
+    profile_data = asdict(profile(stacks=['Go']))
+    premium.create_run(
+        query='previous search',
+        track='catalog',
+        owner='candidate:1',
+        profile_snapshot=profile_data,
+    )
+    service = SearchService(
+        search, None, candidate_path='unused', premium_store=premium
+    )
+    run = search.create_run(
+        query='new search',
+        sources=['premium'],
+        track='catalog',
+        owner='candidate:1',
+        profile_snapshot=profile_data,
+    )
+    asyncio.run(service._premium())
+    state = search.get_run(run['id'])['source_states']['premium']
+    assert state['status'] == 'failed'
+    assert state['reason'] == 'weekly_search_quota_exhausted'
+
+
+def test_profile_search_stops_after_valid_vacancy_limit(tmp_path, monkeypatch):
+    from tg_vacancy_bot.registry import VacancyRegistry
+
+    enabled(monkeypatch)
+    service, store, processor, _, _, _ = setup(
+        tmp_path,
+        [
+            message(mid=1, text='Hiring Go backend developer'),
+            message(mid=2, text='Hiring Go platform engineer'),
+        ],
+    )
+    processor.registry = VacancyRegistry(str(tmp_path / 'candidate.sqlite3'))
+    monkeypatch.setattr(
+        universal,
+        'analyze_universal_text',
+        AsyncMock(return_value=universal_decision(['Go'])),
+    )
+    run = store.create_run(
+        query='Golang',
+        track='catalog',
+        result_limit=1,
+        owner='candidate:1',
+        profile_snapshot=asdict(profile(stacks=['Go'])),
+    )
+    asyncio.run(service.tick())
+    completed = store.get_run(run['search_run_id'])
+    assert completed['metrics']['llm_analyzed'] == 1
+    assert completed['metrics']['saved'] == 1
+    assert store.list_results(run['search_run_id'], status='pending')['total'] == 1
 
 
 def test_catalog_matching_is_not_shared_between_profiles(tmp_path, monkeypatch):
@@ -211,7 +273,7 @@ def test_revoked_catalog_run_does_not_contact_telegram(tmp_path, monkeypatch):
         owner='candidate:1',
         profile_snapshot=asdict(profile()),
     )
-    monkeypatch.setattr(config, 'CANDIDATE_PROFILE_ALLOWED_USER_IDS', [])
+    monkeypatch.setattr(config, 'CANDIDATE_BOT_ALLOWED_USER_IDS', [])
     asyncio.run(service.tick())
     assert (
         premium.get_run(run['search_run_id'])['error_reason'] == 'catalog_unavailable'
@@ -458,9 +520,12 @@ def test_candidate_refresh_never_retargets_admin_action(tmp_path, monkeypatch):
     assert restored.get_item(admin_item)['premium_result_id'] == 'admin-result'
 
 
-def test_candidate_preview_does_not_suppress_later_admin_search(tmp_path, monkeypatch):
+def test_catalog_save_deduplicates_later_admin_search(tmp_path, monkeypatch):
     enabled(monkeypatch)
-    service, store, _, _, _, _ = setup(tmp_path, [message()])
+    from tg_vacancy_bot.registry import VacancyRegistry
+
+    service, store, processor, _, _, _ = setup(tmp_path, [message()])
+    processor.registry = VacancyRegistry(str(tmp_path / 'candidate.sqlite3'))
     monkeypatch.setattr(
         universal,
         'analyze_universal_text',
@@ -476,8 +541,7 @@ def test_candidate_preview_does_not_suppress_later_admin_search(tmp_path, monkey
     assert store.list_results(private['search_run_id'])['total'] == 1
     shared = store.create_run(query='Golang')
     asyncio.run(service.tick())
-    assert store.list_results(shared['search_run_id'])['total'] == 1
-    assert store.list_results(shared['search_run_id'], status='duplicate')['total'] == 0
+    assert store.list_results(shared['search_run_id'])['total'] == 0
 
 
 def test_candidate_preview_cannot_be_published_through_shared_actions(

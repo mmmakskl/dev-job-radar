@@ -4,7 +4,7 @@ import { PremiumSearchPanel, premiumStates } from './premium-search-panel';
 import { premiumApi, type PremiumRun, type PremiumResult } from '../lib/api';
 
 vi.mock('../lib/api',()=>({premiumApi:{runs:vi.fn(),run:vi.fn(),results:vi.fn(),create:vi.fn(),cancel:vi.fn(),action:vi.fn()}}));
-const capabilities={enabled:true,publisher_configured:true,tracks:[{key:'go',label:'Go / Golang',confidence_threshold:90}]};
+const capabilities={enabled:true,publisher_configured:true,weekly_search_limit:5,catalog_profile_filters:false,profile_directions:[],tracks:[{key:'go',label:'Go / Golang',confidence_threshold:90}]};
 const run:PremiumRun={search_run_id:'run1',query:'Golang',track:'go',mode:'preview',status:'completed',phase:'finished',cancel_requested:0,retry_at:null,error_reason:null,quota:{remains:5},metrics:{found:4,llm_analyzed:2},include_review:true,created_at:'2026-09-11T12:00:00Z'};
 const result:PremiumResult={can_persist:true,result_id:'r1',post_link:'https://t.me/public_jobs/1',channel_username:'public_jobs',channel_name:'Public jobs',published_at:'2026-09-11T12:00:00Z',title:'Go developer',company:'Company',summary:'Backend role',status:'accepted',decision_reason:'llm_accepted',confidence:95,go_role_strength:'primary',language:'ru',group_id:null,action_state:'idle',action_error:null,delivery_state:'pending'};
 beforeEach(()=>{vi.resetAllMocks();vi.mocked(premiumApi.runs).mockResolvedValue({items:[run]});vi.mocked(premiumApi.run).mockResolvedValue(run);vi.mocked(premiumApi.results).mockResolvedValue({items:[result],total:1,offset:0,limit:25});vi.mocked(premiumApi.create).mockResolvedValue(run);vi.mocked(premiumApi.action).mockResolvedValue({item:{...result,action_state:'queued'},restart_required:false});});

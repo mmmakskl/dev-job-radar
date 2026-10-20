@@ -60,6 +60,12 @@ class ActiveRunError(ValueError):
         self.run_id = run_id
 
 
+class WeeklyQuotaError(ValueError):
+    def __init__(self, limit: int):
+        super().__init__('Недельный лимит Premium-поисков исчерпан')
+        self.limit = limit
+
+
 class PremiumSearchStore:
     def __init__(self, path: str):
         self.path = path
@@ -119,6 +125,7 @@ class PremiumSearchStore:
                     'quota_json': "TEXT NOT NULL DEFAULT '{}'",
                     'llm_calls': 'INTEGER NOT NULL DEFAULT 0',
                     'rate_limit_waits': 'INTEGER NOT NULL DEFAULT 0',
+                    'quota_subject': 'TEXT',
                 },
                 'premium_search_results': {
                     'apply_urls_json': "TEXT NOT NULL DEFAULT '[]'",
@@ -219,6 +226,8 @@ class PremiumSearchStore:
         owner: str = 'admin',
         client_request_id: str | None = None,
         profile_snapshot: dict | None = None,
+        quota_subject: str | None = None,
+        weekly_limit: int | None = None,
     ) -> dict:
         query = normalize_query(query)
         get_track(track)
@@ -241,6 +250,8 @@ class PremiumSearchStore:
                 owner.split(':')[1]
             ) or not profile_snapshot.get('is_active'):
                 raise ValueError('Catalog profile owner mismatch')
+            if owner.startswith('candidate:') and quota_subject is None:
+                quota_subject, weekly_limit = owner, 1
         run_id = str(uuid.uuid4())
         with self._connect() as c:
             c.execute('BEGIN IMMEDIATE')
@@ -251,6 +262,14 @@ class PremiumSearchStore:
                 ).fetchone()
                 if previous:
                     return self._run(previous)
+            if quota_subject and weekly_limit:
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+                used = c.execute(
+                    'SELECT COUNT(*) FROM premium_search_runs WHERE quota_subject=? AND created_at>=?',
+                    (quota_subject, cutoff),
+                ).fetchone()[0]
+                if used >= weekly_limit:
+                    raise WeeklyQuotaError(weekly_limit)
             existing = c.execute(
                 "SELECT search_run_id FROM premium_search_runs WHERE normalized_query=? AND track=? AND owner=? AND status IN ('queued','running')",
                 (query.casefold(), track, owner),
@@ -258,8 +277,8 @@ class PremiumSearchStore:
             if existing:
                 raise ActiveRunError(existing[0])
             c.execute(
-                '''INSERT INTO premium_search_runs(search_run_id,query,normalized_query,track,mode,result_limit,period_days,status,include_review,created_at,updated_at,owner,client_request_id,profile_snapshot_json)
-                      VALUES(?,?,?,?,?,?,?,'queued',?,?,?,?,?,?)''',
+                '''INSERT INTO premium_search_runs(search_run_id,query,normalized_query,track,mode,result_limit,period_days,status,include_review,created_at,updated_at,owner,client_request_id,profile_snapshot_json,quota_subject)
+                      VALUES(?,?,?,?,?,?,?,'queued',?,?,?,?,?,?,?)''',
                 (
                     run_id,
                     query,
@@ -274,6 +293,7 @@ class PremiumSearchStore:
                     owner,
                     client_request_id,
                     json.dumps(profile_snapshot) if profile_snapshot else None,
+                    quota_subject,
                 ),
             )
             self._metrics(c, run_id)
@@ -790,6 +810,7 @@ class PremiumSearchStore:
             run = self.get_run(result['search_run_id'])
             result['can_persist'] = bool(
                 not run['owner'].startswith('candidate:')
+                and run['track'] != 'catalog'
                 and result['raw_text']
                 and result['post_link']
                 and result['channel_name']

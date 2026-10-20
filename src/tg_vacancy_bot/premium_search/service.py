@@ -183,15 +183,37 @@ class PremiumSearchService:
         self.store.recover()
         self.store.cleanup()
         cleanup_at = asyncio.get_running_loop().time() + 86400
+        source_retry_at = asyncio.get_running_loop().time() + 300
         while not shutdown.is_set():
-            if asyncio.get_running_loop().time() >= cleanup_at:
+            loop_time = asyncio.get_running_loop().time()
+            if loop_time >= cleanup_at:
                 self.store.cleanup()
-                cleanup_at = asyncio.get_running_loop().time() + 86400
+                cleanup_at = loop_time + 86400
+            if loop_time >= source_retry_at:
+                await self._retry_pending_sources()
+                source_retry_at = loop_time + 300
             await self.tick()
             try:
                 await asyncio.wait_for(shutdown.wait(), timeout=1)
             except asyncio.TimeoutError:
                 pass
+
+    async def _retry_pending_sources(self) -> None:
+        if not self.settings_store:
+            return
+        for source in self.settings_store.list_sources():
+            if (
+                'premium' in source.get('origins', [])
+                and source.get('verification_status') != 'verified'
+                and not source.get('administrator_disabled')
+            ):
+                await self._track_catalog_source(
+                    {
+                        'telegram_chat_id': source['telegram_id'],
+                        'channel_username': source.get('username'),
+                        'channel_name': source.get('title'),
+                    }
+                )
 
     async def tick(self) -> None:
         if self._lock.locked():
@@ -309,6 +331,13 @@ class PremiumSearchService:
                 await self._priority(run_id)
                 if result['status'] == 'pending':
                     await self._evaluate(run, result)
+                if run['track'] == 'catalog':
+                    metrics = self.store.get_run(run_id)['metrics']
+                    if (
+                        metrics['accepted'] + metrics['saved'] + metrics['published']
+                        >= run['result_limit']
+                    ):
+                        break
             # Publish only after all candidates have been scored and ranked.
             for result in self.store.ranked_results(run_id):
                 current = self.store.get_result(result['result_id'])
@@ -436,7 +465,9 @@ class PremiumSearchService:
 
     async def _evaluate(self, run: dict, result: dict) -> None:
         rid = result['result_id']
-        private_preview = run['owner'].startswith('candidate:')
+        private_preview = (
+            run['owner'].startswith('candidate:') and run['track'] != 'catalog'
+        )
         group_store = (
             None
             if private_preview or not result['published_at']
@@ -452,6 +483,11 @@ class PremiumSearchService:
             else None
         )
         duplicate = None if private_preview else self.store.duplicate(result)
+        registry_duplicate = (
+            self.processor.registry.get(result['vacancy_id'])
+            if not private_preview and self.processor.registry is not None
+            else None
+        )
         exact = (
             not private_preview
             and self.processor.dedupe_state
@@ -459,7 +495,7 @@ class PremiumSearchService:
                 result['post_link'], result['text_hash'], result['vacancy_id']
             )
         )
-        if group or duplicate or exact:
+        if group or duplicate or registry_duplicate or exact:
             group_id = (
                 group['group_id']
                 if group
@@ -487,6 +523,8 @@ class PremiumSearchService:
                 decision_reason='exact_duplicate',
                 group_id=group_id,
             )
+            if run['track'] == 'catalog' and registry_duplicate:
+                await self._track_catalog_source(result)
             return
         decision = None
         from tg_vacancy_bot import config
@@ -601,6 +639,79 @@ class PremiumSearchService:
             summary=decision.analysis.summary,
             group_id=group_id,
         )
+        if run['track'] == 'catalog' and status == 'accepted':
+            await self._save(self.store.get_result(rid), publish=False)
+            await self._track_catalog_source(self.store.get_result(rid))
+
+    async def _track_catalog_source(self, result: dict) -> None:
+        """Join a public source from the bot-owned session and enable monitoring."""
+        if not self.settings_store or not result.get('channel_username'):
+            return
+        username = result['channel_username']
+        if not _USERNAME.fullmatch(username):
+            return
+        existing = next(
+            (
+                item
+                for item in self.settings_store.list_sources()
+                if item.get('telegram_id') == str(result.get('telegram_chat_id'))
+                or (item.get('username') or '').casefold() == username.casefold()
+            ),
+            None,
+        )
+        if existing and existing.get('administrator_disabled'):
+            return
+        if (
+            existing
+            and existing.get('enabled')
+            and existing.get('verification_status') == 'verified'
+        ):
+            return
+        source = self.settings_store.upsert_source(
+            int(result['telegram_chat_id']),
+            username=username,
+            title=result['channel_name'],
+            chat_type='channel',
+            origin='premium',
+            verification_status='unverified',
+            enabled=False,
+        )
+        if source.get('administrator_disabled'):
+            return
+        try:
+            for attempt in range(3):
+                try:
+                    entity = await self.client.get_entity(username)
+                    try:
+                        await self.client(
+                            functions.channels.JoinChannelRequest(channel=entity)
+                        )
+                    except errors.UserAlreadyParticipantError:
+                        pass
+                    break
+                except Exception:
+                    if attempt == 2:
+                        raise
+                    await asyncio.sleep(2**attempt)
+            source = self.settings_store.mark_source_verified(
+                source['id'],
+                telegram_id=utils.get_peer_id(entity),
+                username=username,
+                title=result['channel_name'],
+                chat_type='channel',
+            )
+            if source.get('administrator_disabled'):
+                return
+            from tg_vacancy_bot.admin.control import request_action
+
+            request_action('restart', str(self.settings_store.directory.parent))
+            self.telemetry.record('premium_source_auto_tracked')
+        except Exception:
+            # The accepted vacancy is already in the shared registry. Leave the
+            # source untracked so an operator can retry after Telegram access is fixed.
+            self.telemetry.record_error(
+                'premium_source_join', 'Premium: source_join_failed'
+            )
 
     def _structured_duplicate(self, result: dict, decision) -> dict | None:
         if not result['published_at']:
@@ -739,9 +850,8 @@ class PremiumSearchService:
 
     async def _save(self, result: dict, publish: bool) -> None:
         rid = result['result_id']
-        if self.store.get_run(result['search_run_id'])['owner'].startswith(
-            'candidate:'
-        ):
+        run = self.store.get_run(result['search_run_id'])
+        if run['owner'].startswith('candidate:') and run['track'] != 'catalog':
             raise ValueError('private_preview')
         decision = parse_premium_analysis(result['analysis'])
         from tg_vacancy_bot.llm.universal import decision_from_dict
@@ -751,6 +861,31 @@ class PremiumSearchService:
             if decision.universal_decision
             else None
         )
+        if run['track'] == 'catalog':
+            if universal is None or self.processor.registry is None:
+                raise ValueError('save_failed')
+            saved = await self.processor.persist_registry_only(
+                raw_text=result['raw_text'],
+                post_link=result['post_link'],
+                published_at=(
+                    datetime.fromisoformat(result['published_at'])
+                    if result['published_at']
+                    else None
+                ),
+                channel_name=result['channel_name'],
+                universal_decision=universal,
+                vacancy_id=result['vacancy_id'],
+            )
+            if not saved.saved:
+                raise ValueError('save_failed')
+            self.store.update_result(
+                rid,
+                status='saved',
+                vacancy_id=saved.vacancy_id,
+                action_state='idle',
+                action_error=None,
+            )
+            return
         from tg_vacancy_bot.llm.universal import go_projection_accepted
 
         if universal is not None and not go_projection_accepted(universal):
