@@ -60,6 +60,7 @@ PROFILE_STEPS = (
     'seniority',
     'required_skills',
     'excluded_skills',
+    'delivery_mode',
     'preview',
 )
 STEP_LABELS = dict(
@@ -71,6 +72,7 @@ STEP_LABELS = dict(
             'Грейд',
             'Ключевые навыки',
             'Исключить слова',
+            'Уведомления',
             'Предпросмотр',
         ),
     )
@@ -83,6 +85,7 @@ STEP_LABELS.update(
         'required_skills': 'Ключевые навыки',
         'desired_skills': 'Желаемые навыки',
         'excluded_skills': 'Исключить слова',
+        'delivery_mode': 'Уведомления',
         'vacancy_languages': 'Язык текста вакансии',
         'legacy_stacks': 'Технологии из старого профиля',
     }
@@ -457,9 +460,20 @@ class CandidateBot:
                 await self._personal_feed(user_id)
             return False
         if bucket in {'for_me', 'new', 'older', 'undated'}:
-            matches = await asyncio.to_thread(
-                self.registry.list_personal_matches, user_id
-            )
+            if bucket == 'for_me':
+                matches = await asyncio.to_thread(
+                    self.registry.list_personal_matches,
+                    user_id,
+                    limit=1,
+                    offset=index,
+                )
+                total = await asyncio.to_thread(
+                    self.registry.count_personal_matches, user_id
+                )
+            else:
+                matches = await asyncio.to_thread(
+                    self.registry.list_personal_matches, user_id
+                )
             now = datetime.now(timezone.utc)
             cutoff = now - timedelta(hours=24)
             older_cutoff = now - timedelta(days=self.store.get_older_days(user_id))
@@ -497,8 +511,15 @@ class CandidateBot:
                         )
                     )
                 ]
-            cards = [
-                (
+            if bucket != 'for_me':
+                total = len(matches)
+            if not total:
+                selected_card = None
+            elif index < 0 or index >= total:
+                return False
+            else:
+                match = matches[0] if bucket == 'for_me' else matches[index]
+                selected_card = (
                     format_card(
                         personal_card(match),
                         now=datetime.now(timezone.utc),
@@ -508,8 +529,6 @@ class CandidateBot:
                     ),
                     match.callback_key,
                 )
-                for match in matches
-            ]
         elif bucket == 'saved':
             days = self.store.get_older_days(user_id)
             cards = [
@@ -518,9 +537,11 @@ class CandidateBot:
                     user_id, bucket, older_days=days
                 )
             ]
+            total = len(cards)
+            selected_card = cards[index] if 0 <= index < total else None
         else:
             return False
-        if not cards:
+        if not total:
             if message_id is not None:
                 return False
             await self.api.send_message(
@@ -538,9 +559,9 @@ class CandidateBot:
                 reply_markup=self._keyboard(user_id),
             )
             return True
-        if index < 0 or index >= len(cards):
+        if selected_card is None:
             return False
-        content, callback_key = cards[index]
+        content, callback_key = selected_card
         feed_title = {
             'for_me': 'Для меня · активный профиль',
             'new': 'Профиль · новые',
@@ -548,9 +569,9 @@ class CandidateBot:
             'undated': 'Профиль · без даты',
             'saved': 'Сохранённые вакансии',
         }[bucket]
-        content = f'<i>{feed_title} · {index + 1} / {len(cards)}</i>\n\n{content}'
+        content = f'<i>{feed_title} · {index + 1} / {total}</i>\n\n{content}'
         keyboard = personal_keyboard(callback_key)
-        if len(cards) > 1:
+        if total > 1:
             controls = []
             if index > 0:
                 controls.append(
@@ -563,7 +584,7 @@ class CandidateBot:
                         ),
                     }
                 )
-            if index + 1 < len(cards):
+            if index + 1 < total:
                 controls.append(
                     {
                         'text': '→',
@@ -880,6 +901,11 @@ class CandidateBot:
                 (item, _technology_label(item))
                 for item in direction_stacks(values['direction_id'])
             ]
+        elif step == 'delivery_mode':
+            return [
+                ('immediate', 'Сразу для каждой вакансии'),
+                ('hourly', 'Почасовая сводка'),
+            ]
         elif step == 'stacks':
             return [
                 (item, _technology_label(item))
@@ -923,6 +949,12 @@ class CandidateBot:
             ),
         ]
         if prefs.get('profile_contract') == PROFILE_CONTRACT:
+            mode_label = {
+                'immediate': 'сразу',
+                'hourly': 'почасовая сводка',
+                'manual': 'только ручная лента',
+            }.get(prefs.get('delivery_mode', 'manual'), 'только ручная лента')
+            lines.append(f'Уведомления: {mode_label}')
             lines.append(
                 f"Роль: {ROLE_LABELS.get(values.get('role_id'), ('Требуется выбор роли', ''))[0]}"
             )
@@ -1151,7 +1183,7 @@ class CandidateBot:
                         'profile_contract': PROFILE_CONTRACT,
                         'required_skills': [],
                         'excluded_skills': [],
-                        'delivery_mode': 'manual',
+                        'delivery_mode': 'immediate',
                         'timezone': 'Europe/Moscow',
                     },
                     'is_active': False,
@@ -1214,6 +1246,7 @@ class CandidateBot:
             *prefix,
             'required_skills',
             'excluded_skills',
+            'delivery_mode',
             'vacancy_languages',
             'preview',
         ]
@@ -1250,6 +1283,7 @@ class CandidateBot:
                 'additional_languages': 'Можно добавить языки помимо основного. Например: Python.',
                 'required_skills': 'Выберите подсказки направления или введите свои навыки через запятую. Достаточно одного совпадения.',
                 'excluded_skills': 'Введите свои слова или фразы через запятую. Подсказок нет.',
+                'delivery_mode': 'Выберите мгновенные уведомления или одну почасовую сводку для этого профиля.',
                 'vacancy_languages': 'Язык текста объявления — русский, английский или любой. Это язык объявления, а не язык программирования.',
                 'legacy_stacks': 'Технологии из старых настроек. Это может быть Docker, PostgreSQL или язык; список уже участвует в matching.',
             }
@@ -1307,6 +1341,7 @@ class CandidateBot:
                     'primary_language',
                     'required_skills',
                     'excluded_skills',
+                    'delivery_mode',
                 }:
                     rows.append([button('Пропустить', 'skip')])
             if selected:
@@ -1391,8 +1426,6 @@ class CandidateBot:
                 if draft.get('profile_id') is None:
                     values['name'] = ''
             values['direction_id'] = value
-            if direction_changed or draft.get('profile_id') is None:
-                values['preferences']['delivery_mode'] = 'manual'
             draft['page'] = 0
         elif step == 'role_id':
             path = role_path(str(value))
@@ -1434,6 +1467,11 @@ class CandidateBot:
             if not value or not str(value).strip():
                 raise ValueError('Имя не может быть пустым.')
             values['name'] = value
+        elif step == 'delivery_mode':
+            if value not in {'immediate', 'hourly'}:
+                raise ValueError('Выберите режим уведомлений кнопкой.')
+            preferences = {**values['preferences'], step: value}
+            values['preferences'] = self.store._validate_preferences(preferences)
         elif step == 'primary_language':
             preferences = {**values['preferences'], step: value}
             values['preferences'] = self.store._validate_preferences(preferences)
@@ -1498,6 +1536,7 @@ class CandidateBot:
                 'seniority',
                 'formats',
                 'preview',
+                'delivery_mode',
             }:
                 raise ValueError('Используйте кнопки текущего шага.')
             if step == 'geography' and '__custom__' in draft['values'][
@@ -1600,7 +1639,7 @@ class CandidateBot:
                 if step in {'direction_id', 'role_id'}:
                     self._set_draft_value(draft, value)
                     self._advance(draft)
-                elif step in {'primary_language', 'vacancy_languages'}:
+                elif step in {'primary_language', 'vacancy_languages', 'delivery_mode'}:
                     self._set_draft_value(draft, value)
                     self._advance(draft)
                 elif step == 'geography' and value == '__custom__':
@@ -1668,11 +1707,15 @@ class CandidateBot:
                 'vacancy_languages',
                 'required_skills',
                 'excluded_skills',
+                'delivery_mode',
             }:
                 if step == 'vacancy_languages':
                     draft['values']['preferences'].pop('vacancy_languages', None)
                 elif step in {'required_skills', 'excluded_skills'}:
                     draft['values']['preferences'][step] = []
+                elif step == 'delivery_mode':
+                    # Skipping keeps the current mode; new profiles default to immediate.
+                    pass
                 elif draft.get('profile_id') is None and step == 'primary_language':
                     draft['values']['preferences'].pop('primary_language', None)
                 self._advance(draft)

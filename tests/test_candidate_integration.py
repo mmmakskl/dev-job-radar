@@ -125,6 +125,33 @@ def test_personal_feed_is_available_without_profile_rollout_allowlist(tmp_path):
     assert 'Backend' in api.messages[-1][1]
 
 
+def test_personal_browser_formats_only_the_selected_card(tmp_path, monkeypatch):
+    store, registry, _, decision = setup(tmp_path)
+    for index in range(5):
+        registry.ingest(
+            vacancy_id=f'jobs_{index}',
+            post_link=f'https://t.me/jobs/{index}',
+            decision=decision,
+            eligible_at=NOW,
+            published_at='2020-01-01T00:00:00+00:00',
+        )
+    api = FakeBotApi()
+    bot = CandidateBot(api, store, {1}, registry=registry)
+    formatted = []
+
+    def format_selected(card, **_kwargs):
+        formatted.append(card.vacancy_id)
+        return f'card:{card.vacancy_id}'
+
+    monkeypatch.setattr(
+        'tg_vacancy_bot.telegram.candidate_bot.format_card', format_selected
+    )
+    asyncio.run(bot._show_browser(1, 'for_me', index=2))
+
+    assert len(formatted) == 1
+    assert '3 / 5' in api.messages[-1][1]
+
+
 def test_delivery_uses_only_the_selected_active_profile(tmp_path):
     store, registry, manual, decision = setup(tmp_path, 'manual')
     ingest(registry, decision)

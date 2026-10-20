@@ -154,6 +154,67 @@ def test_universal_analyzer_uses_one_sdk_attempt(monkeypatch):
     )
 
 
+def test_universal_analyzer_retries_transient_api_error(monkeypatch):
+    from tg_vacancy_bot.llm import mistral
+    from tg_vacancy_bot.llm import universal
+
+    create = AsyncMock(
+        side_effect=[
+            TimeoutError(),
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content=json.dumps(_payload()))
+                    )
+                ]
+            ),
+        ]
+    )
+    configured = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
+    monkeypatch.setattr(
+        mistral,
+        '_get_client',
+        lambda: SimpleNamespace(with_options=Mock(return_value=configured)),
+    )
+    calls = []
+    monkeypatch.setattr(
+        universal, '_claim_daily_call', lambda _limit: calls.append(1) or True
+    )
+    monkeypatch.setattr(universal.asyncio, 'sleep', AsyncMock())
+
+    result = asyncio.run(universal.analyze_universal_text('Hiring backend developer'))
+
+    assert result.analysis.is_match
+    assert create.await_count == 2
+    assert len(calls) == 2
+
+
+def test_universal_analyzer_does_not_retry_invalid_response(monkeypatch):
+    from tg_vacancy_bot.llm import mistral
+    from tg_vacancy_bot.llm import universal
+
+    create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='not json'))]
+        )
+    )
+    configured = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
+    monkeypatch.setattr(
+        mistral,
+        '_get_client',
+        lambda: SimpleNamespace(with_options=Mock(return_value=configured)),
+    )
+    monkeypatch.setattr(universal, '_claim_daily_call', lambda _limit: True)
+
+    with pytest.raises(universal.AnalysisUnavailable, match='invalid_response'):
+        asyncio.run(universal.analyze_universal_text('Hiring backend developer'))
+    assert create.await_count == 1
+
+
 def test_quota_exhaustion_fails_closed_before_api(monkeypatch):
     from tg_vacancy_bot.llm import universal
 

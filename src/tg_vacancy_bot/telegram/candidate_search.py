@@ -189,7 +189,27 @@ class CandidateSearch:
     async def _status(self, user_id: int, intent: dict) -> None:
         run = self.searches.get_run(intent['run_id'], f'candidate:{user_id}')
         source = run['source_states'].get('premium', {})
-        text = f"Поиск: {run['status']}\nTelegram Premium: {source.get('status', 'queued')}"
+        confirmed = self.searches.list_results(run['id'], offset=0, limit=100)
+        accepted = confirmed['total']
+        phases = {
+            'queued': 'в очереди',
+            'searching': 'получаем сообщения',
+            'collecting': 'получаем сообщения',
+            'analyzing': 'проверяем вакансии',
+            'llm_retry': 'повторяем временно неудачный запрос',
+            'publishing': 'завершаем',
+        }
+        phase = phases.get(run.get('phase'), run.get('phase', ''))
+        text = (
+            f"Поиск: {run['status']}"
+            + (
+                f" · {phase}"
+                if run['status'] in {'queued', 'running'} and phase
+                else ''
+            )
+            + f"\nTelegram Premium: {source.get('status', 'queued')}"
+            + f"\nПодтверждено результатов: {accepted}"
+        )
         if source.get('reason'):
             reason = source['reason']
             message = (

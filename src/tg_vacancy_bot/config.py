@@ -109,14 +109,14 @@ TEXT_HASH_TTL_DAYS = (
     else int(os.getenv('TEXT_HASH_TTL_DAYS', '30'))
 )
 
-# Очередь live listener. Для последовательного rate limit рекомендуется 1 worker.
+# Очередь live listener. Три ограниченных worker уменьшают ожидание анализа.
 LIVE_QUEUE_MAXSIZE = (
     _MANAGED.filters.queue_maxsize
     if _MANAGED
     else int(os.getenv('LIVE_QUEUE_MAXSIZE', '1000'))
 )
 LIVE_WORKERS = (
-    _MANAGED.filters.workers if _MANAGED else int(os.getenv('LIVE_WORKERS', '1'))
+    _MANAGED.filters.workers if _MANAGED else int(os.getenv('LIVE_WORKERS', '3'))
 )
 
 # Уведомления о сохранённых вакансиях в Telegram-канал.

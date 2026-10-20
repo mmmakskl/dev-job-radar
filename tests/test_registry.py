@@ -96,6 +96,57 @@ def test_shared_analysis_current_profile_versions_and_owner_isolation(tmp_path):
         )
 
 
+def test_warm_personal_match_lookup_uses_bounded_sqlite_connections(tmp_path):
+    registry = VacancyRegistry(str(tmp_path / 'candidate.db'))
+    profile(registry)
+    for index in range(30):
+        registry.ingest(
+            vacancy_id=f'jobs_{index}',
+            post_link=f'https://t.me/jobs/{index}',
+            decision=(
+                decision() if index % 3 == 0 else replace(decision(), is_vacancy=False)
+            ),
+        )
+    expected = len(registry.list_personal_matches(1))
+
+    original_connect = registry._connect
+    calls = 0
+
+    def counted_connect():
+        nonlocal calls
+        calls += 1
+        return original_connect()
+
+    registry._connect = counted_connect
+    result = registry.list_personal_matches(1)
+
+    assert len(result) == expected == 10
+    assert calls <= 2
+
+
+def test_pending_personal_matches_exclude_already_sent_vacancies(tmp_path):
+    from tg_vacancy_bot.telegram.candidate_delivery_worker import PersonalDeliveryStore
+
+    registry = VacancyRegistry(str(tmp_path / 'candidate.db'))
+    profile(registry)
+    for index in range(2):
+        registry.ingest(
+            vacancy_id=f'jobs_{index}',
+            post_link=f'https://t.me/jobs/{index}',
+            decision=decision(),
+        )
+    PersonalDeliveryStore(registry.path)
+    with registry._connect() as connection:
+        connection.execute(
+            '''INSERT INTO candidate_personal_deliveries
+            (telegram_user_id,vacancy_id,state,updated_at) VALUES(1,'jobs_0','sent','now')'''
+        )
+
+    matches = registry.list_personal_matches(1, pending_only=True)
+
+    assert [match.vacancy_id for match in matches] == ['jobs_1']
+
+
 @pytest.mark.parametrize(
     'mode', ['review', 'low', 'role_low', 'unavailable', 'negative']
 )

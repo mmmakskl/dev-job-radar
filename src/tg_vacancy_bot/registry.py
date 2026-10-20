@@ -128,6 +128,8 @@ class VacancyRegistry:
                 );
                 CREATE INDEX IF NOT EXISTS registry_source_link
                     ON registry_sources(post_link);
+                CREATE INDEX IF NOT EXISTS registry_eligible_latest
+                    ON registry_vacancies(eligible_at, latest_analysis_id);
                 CREATE TABLE IF NOT EXISTS registry_analyses (
                     analysis_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     vacancy_id TEXT NOT NULL REFERENCES registry_vacancies(vacancy_id),
@@ -163,6 +165,8 @@ class VacancyRegistry:
                     created_at TEXT NOT NULL,
                     PRIMARY KEY(analysis_id,profile_id,profile_version,matcher_version)
                 );
+                CREATE INDEX IF NOT EXISTS registry_profile_matches_lookup
+                    ON registry_profile_matches(profile_id,profile_version,matcher_version,status,analysis_id);
                 CREATE TABLE IF NOT EXISTS registry_projections (
                     vacancy_id TEXT NOT NULL REFERENCES registry_vacancies(vacancy_id),
                     projection TEXT NOT NULL,
@@ -458,8 +462,20 @@ class VacancyRegistry:
             ).fetchall()
         return [self._vacancy(row) for row in rows]
 
-    def list_personal_matches(self, telegram_user_id: int) -> list[RegistryMatch]:
-        """Owner-scoped confirmed matches, recomputed locally after profile edits."""
+    def list_personal_matches(
+        self,
+        telegram_user_id: int,
+        *,
+        vacancy_ids: set[str] | None = None,
+        pending_only: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[RegistryMatch]:
+        """Owner-scoped confirmed matches, recomputed locally after profile edits.
+
+        Missing cache rows are filled in one batch. Warm reads use one indexed
+        join instead of opening a connection for each vacancy.
+        """
         from tg_vacancy_bot.profile_matcher import ProfileMatch, match_profile
 
         profiles = [
@@ -469,98 +485,163 @@ class VacancyRegistry:
         # migration and suppress personal results until the owner explicitly picks.
         if len(profiles) != 1:
             return []
-        result = []
-        for vacancy in self.list_vacancies():
-            decision = vacancy.decision
-            if decision is None:
-                continue
-            matched = []
-            for profile in profiles:
-                current_contract = (
-                    profile.preferences.get('profile_contract') == PROFILE_CONTRACT
-                )
+        if vacancy_ids is not None and not vacancy_ids:
+            return []
+        profile = profiles[0]
+        current_contract = (
+            profile.preferences.get('profile_contract') == PROFILE_CONTRACT
+        )
+        with self._connect() as c:
+            # Profile edits create a new immutable version. Compute only rows
+            # missing that exact version, in one read/write transaction.
+            missing_query = '''SELECT v.*,a.decision_json,a.reason_code,a.raw_text,a.prompt_version
+                FROM registry_vacancies v JOIN registry_analyses a
+                  ON a.analysis_id=v.latest_analysis_id
+                WHERE v.eligible_at IS NOT NULL AND a.decision_json IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM registry_profile_matches m
+                    WHERE m.analysis_id=a.analysis_id AND m.profile_id=?
+                      AND m.profile_version=? AND m.matcher_version=?)'''
+            missing_parameters: list[object] = [
+                profile.profile_id,
+                profile.version,
+                MATCHER_VERSION,
+            ]
+            if vacancy_ids is not None:
+                marks = ','.join('?' for _ in vacancy_ids)
+                missing_query += f' AND v.vacancy_id IN ({marks})'
+                missing_parameters.extend(sorted(vacancy_ids))
+            missing = c.execute(missing_query, missing_parameters).fetchall()
+            for row in missing:
                 if current_contract and (
-                    vacancy.prompt_version
+                    row['prompt_version']
                     not in {PROMPT_VERSION, PREVIOUS_PROMPT_VERSION}
-                    or not vacancy.raw_text
+                    or not row['raw_text']
                 ):
                     continue
-                with self._connect() as c:
-                    row = c.execute(
-                        '''SELECT status FROM registry_profile_matches WHERE
-                        analysis_id=? AND profile_id=? AND profile_version=? AND matcher_version=?''',
-                        (
-                            vacancy.analysis_id,
-                            profile.profile_id,
-                            profile.version,
-                            MATCHER_VERSION,
-                        ),
-                    ).fetchone()
-                if row:
-                    status = row['status']
-                else:
-                    classification = next(
-                        (
-                            i
-                            for i in decision.classifications
-                            if i['direction_id'] == profile.direction_id
-                            and (
-                                not current_contract or i['role_id'] == profile.role_id
-                            )
-                        ),
-                        None,
-                    )
-                    match = match_profile(
-                        decision, profile, source_text=vacancy.raw_text
-                    )
-                    if match.status == 'match' and (
-                        decision.confidence < 90
-                        or classification is None
-                        or classification['confidence'] < 90
-                    ):
-                        match = ProfileMatch('review', 'classification_uncertain')
-                    status = match.status
-                    with self._connect() as c:
-                        c.execute(
-                            '''INSERT OR IGNORE INTO registry_profile_matches
-                            VALUES (?,?,?,?,?,?,?,?,?)''',
-                            (
-                                vacancy.analysis_id,
-                                profile.profile_id,
-                                profile.version,
-                                MATCHER_VERSION,
-                                telegram_user_id,
-                                status,
-                                match.reason_code,
-                                json.dumps(asdict(match)),
-                                _now(),
-                            ),
-                        )
-                if status == 'match':
-                    matched.append(profile)
-            if matched:
-                with self._connect() as c:
-                    card = c.execute(
-                        'SELECT callback_key FROM vacancies WHERE vacancy_id=?',
-                        (vacancy.vacancy_id,),
-                    ).fetchone()
-                result.append(
-                    RegistryMatch(
-                        vacancy.vacancy_id,
-                        decision.analysis,
-                        decision,
-                        vacancy.published_at,
-                        vacancy.post_link,
-                        vacancy.eligible_at,
-                        tuple(sorted(matched, key=lambda p: p.profile_id)),
-                        (
-                            card['callback_key']
-                            if card
-                            else callback_key_for(vacancy.vacancy_id)
-                        ),
-                    )
+                vacancy = self._vacancy(row)
+                decision = vacancy.decision
+                if decision is None:
+                    continue
+                classification = next(
+                    (
+                        item
+                        for item in decision.classifications
+                        if item['direction_id'] == profile.direction_id
+                        and (not current_contract or item['role_id'] == profile.role_id)
+                    ),
+                    None,
                 )
+                match = match_profile(decision, profile, source_text=vacancy.raw_text)
+                if match.status == 'match' and (
+                    decision.confidence < 90
+                    or classification is None
+                    or classification['confidence'] < 90
+                ):
+                    match = ProfileMatch('review', 'classification_uncertain')
+                c.execute(
+                    '''INSERT OR IGNORE INTO registry_profile_matches
+                    VALUES (?,?,?,?,?,?,?,?,?)''',
+                    (
+                        vacancy.analysis_id,
+                        profile.profile_id,
+                        profile.version,
+                        MATCHER_VERSION,
+                        telegram_user_id,
+                        match.status,
+                        match.reason_code,
+                        json.dumps(asdict(match)),
+                        _now(),
+                    ),
+                )
+            query = '''SELECT v.*,a.decision_json,a.reason_code,a.raw_text,a.prompt_version,
+                    card.callback_key,m.evidence_json
+                FROM registry_vacancies v
+                JOIN registry_analyses a ON a.analysis_id=v.latest_analysis_id
+                JOIN registry_profile_matches m ON m.analysis_id=a.analysis_id
+                LEFT JOIN vacancies card ON card.vacancy_id=v.vacancy_id
+                WHERE v.eligible_at IS NOT NULL AND m.profile_id=?
+                  AND m.profile_version=? AND m.matcher_version=? AND m.status='match'
+                  AND a.decision_json IS NOT NULL'''
+            parameters: list[object] = [
+                profile.profile_id,
+                profile.version,
+                MATCHER_VERSION,
+            ]
+            if vacancy_ids is not None:
+                marks = ','.join('?' for _ in vacancy_ids)
+                query += f' AND v.vacancy_id IN ({marks})'
+                parameters.extend(sorted(vacancy_ids))
+            if current_contract:
+                query += ' AND a.prompt_version IN (?,?) AND a.raw_text IS NOT NULL'
+                parameters.extend((PROMPT_VERSION, PREVIOUS_PROMPT_VERSION))
+            delivery_table = c.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='candidate_personal_deliveries'"
+            ).fetchone()
+            if pending_only and delivery_table:
+                query = query.replace(
+                    'LEFT JOIN vacancies card ON card.vacancy_id=v.vacancy_id',
+                    '''LEFT JOIN vacancies card ON card.vacancy_id=v.vacancy_id
+                    LEFT JOIN candidate_personal_deliveries delivery
+                      ON delivery.vacancy_id=v.vacancy_id AND delivery.telegram_user_id=?''',
+                )
+                query += (
+                    " AND (delivery.vacancy_id IS NULL OR delivery.state='pending')"
+                )
+                parameters.insert(0, telegram_user_id)
+            query += (
+                ' ORDER BY COALESCE(v.published_at,v.discovered_at) DESC,v.vacancy_id'
+            )
+            if limit is not None:
+                query += ' LIMIT ? OFFSET ?'
+                parameters.extend((max(0, limit), max(0, offset)))
+            rows = c.execute(query, parameters).fetchall()
+
+        result = []
+        for row in rows:
+            try:
+                decision = decision_from_payload(json.loads(row['decision_json']))
+            except (InvalidAnalysisResultError, ValueError, TypeError):
+                continue
+            result.append(
+                RegistryMatch(
+                    row['vacancy_id'],
+                    decision.analysis,
+                    decision,
+                    row['published_at'],
+                    row['post_link'],
+                    row['eligible_at'],
+                    (profile,),
+                    row['callback_key'] or callback_key_for(row['vacancy_id']),
+                )
+            )
         return result
+
+    def count_personal_matches(self, telegram_user_id: int) -> int:
+        """Count the active profile's confirmed matches without loading cards."""
+        profiles = [
+            profile
+            for profile in self.candidates.list_profiles(telegram_user_id)
+            if profile.is_active
+        ]
+        if len(profiles) != 1:
+            return 0
+        profile = profiles[0]
+        query = '''SELECT COUNT(*) FROM registry_vacancies v
+            JOIN registry_analyses a ON a.analysis_id=v.latest_analysis_id
+            JOIN registry_profile_matches m ON m.analysis_id=a.analysis_id
+            WHERE v.eligible_at IS NOT NULL AND m.profile_id=?
+              AND m.profile_version=? AND m.matcher_version=? AND m.status='match'
+              AND a.decision_json IS NOT NULL'''
+        parameters: list[object] = [
+            profile.profile_id,
+            profile.version,
+            MATCHER_VERSION,
+        ]
+        if profile.preferences.get('profile_contract') == PROFILE_CONTRACT:
+            query += ' AND a.prompt_version IN (?,?) AND a.raw_text IS NOT NULL'
+            parameters.extend((PROMPT_VERSION, PREVIOUS_PROMPT_VERSION))
+        with self._connect() as connection:
+            return int(connection.execute(query, parameters).fetchone()[0])
 
     def set_projection(
         self, vacancy_id: str, projection: str, state: str, **metadata

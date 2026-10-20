@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -104,6 +105,7 @@ class LiveMessageJob:
     post_link: str
     published_at: datetime
     channel_name: str
+    received_monotonic: float
 
 
 async def handle_new_message(event):
@@ -123,6 +125,7 @@ async def handle_new_message(event):
         post_link=post_link,
         published_at=message.date,
         channel_name=get_event_channel_name(event),
+        received_monotonic=time.monotonic(),
     )
 
     try:
@@ -184,6 +187,15 @@ async def live_worker(worker_id: int) -> None:
                 worker_id,
             )
         finally:
+            try:
+                TelemetryStore(config.DATA_DIR).record(
+                    'live_processing_latency',
+                    duration_ms=max(
+                        0, round((time.monotonic() - job.received_monotonic) * 1000)
+                    ),
+                )
+            except Exception:
+                logging.exception('Не удалось записать метрику задержки live-обработки')
             message_queue.task_done()
 
 
@@ -380,8 +392,6 @@ async def main():
         config.LIVE_QUEUE_MAXSIZE,
         config.LIVE_WORKERS,
     )
-    if config.LIVE_WORKERS != 1:
-        logging.warning("Для последовательной обработки рекомендуется LIVE_WORKERS=1")
     logging.info("=" * 60)
 
     worker_tasks: list[asyncio.Task] = []

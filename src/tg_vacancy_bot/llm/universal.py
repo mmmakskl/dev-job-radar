@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import asyncio
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -219,40 +220,51 @@ def _validate(payload: object, *, historical: bool = False) -> UniversalDecision
 
 
 async def analyze_universal_text(text: str) -> UniversalDecision:
-    """Make exactly one quota-accounted Mistral call; all errors fail closed."""
+    """Analyze with bounded retries for transient provider failures."""
     from tg_vacancy_bot.llm.mistral import _get_client
 
     limit = getattr(config, "MISTRAL_DAILY_LIMIT", 1000)
-    if not _claim_daily_call(limit):
-        raise AnalysisUnavailable("daily_limit")
     catalog_path = Path(__file__).resolve().parents[1] / "data" / "it_roles.v1.json"
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     prompt = _catalog_prompt(catalog)
-    try:
-        response = (
-            await _get_client()
-            .with_options(max_retries=0)
-            .chat.completions.create(
-                model=config.MISTRAL_MODEL,
-                messages=[
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": text},
-                ],
-                response_format=universal_response_format(
-                    SCHEMA_VERSION, PROMPT_VERSION
-                ),
-                temperature=config.MISTRAL_TEMPERATURE,
+    attempts = min(3, max(1, int(getattr(config, 'MISTRAL_MAX_ATTEMPTS', 2))))
+    for attempt in range(attempts):
+        if not _claim_daily_call(limit):
+            raise AnalysisUnavailable('daily_limit')
+        try:
+            response = (
+                await _get_client()
+                .with_options(max_retries=0)
+                .chat.completions.create(
+                    model=config.MISTRAL_MODEL,
+                    messages=[
+                        {"role": "system", "content": prompt},
+                        {"role": "user", "content": text},
+                    ],
+                    response_format=universal_response_format(
+                        SCHEMA_VERSION, PROMPT_VERSION
+                    ),
+                    temperature=config.MISTRAL_TEMPERATURE,
+                )
             )
-        )
-        return _validate(json.loads(response.choices[0].message.content or "null"))
-    except InvalidAnalysisResultError as exc:
-        field = re.search(r'field=([a-z_]+)', str(exc))
-        reason = f'invalid_schema_{field.group(1)}' if field else 'invalid_schema'
-        raise AnalysisUnavailable(reason) from None
-    except (ValueError, TypeError, KeyError, IndexError):
-        raise AnalysisUnavailable('invalid_response') from None
-    except Exception as exc:
-        raise AnalysisUnavailable(f'api_{type(exc).__name__}') from None
+            return _validate(json.loads(response.choices[0].message.content or "null"))
+        except InvalidAnalysisResultError as exc:
+            field = re.search(r'field=([a-z_]+)', str(exc))
+            reason = f'invalid_schema_{field.group(1)}' if field else 'invalid_schema'
+            raise AnalysisUnavailable(reason) from None
+        except (ValueError, TypeError, KeyError, IndexError):
+            raise AnalysisUnavailable('invalid_response') from None
+        except Exception as exc:
+            status_code = getattr(exc, 'status_code', None)
+            retryable = (
+                status_code is None
+                or status_code == 429
+                or (isinstance(status_code, int) and status_code >= 500)
+            )
+            if retryable and attempt + 1 < attempts:
+                await asyncio.sleep(0.5 * (2**attempt))
+                continue
+            raise AnalysisUnavailable(f'api_{type(exc).__name__}') from None
 
 
 async def analyze_universal_compat(text: str) -> VacancyAnalysis | None:

@@ -64,6 +64,10 @@ class PersonalDeliveryStore:
                 PRIMARY KEY(telegram_user_id, vacancy_id)
             )'''
             )
+            connection.execute(
+                '''CREATE INDEX IF NOT EXISTS candidate_personal_delivery_lookup
+                ON candidate_personal_deliveries(telegram_user_id,state,vacancy_id)'''
+            )
 
     @contextmanager
     def connect(self):
@@ -212,7 +216,7 @@ class CandidateDeliveryWorker:
             except Exception:
                 logging.exception('Ошибка персональной доставки')
             try:
-                await asyncio.wait_for(shutdown.wait(), timeout=15)
+                await asyncio.wait_for(shutdown.wait(), timeout=1)
             except asyncio.TimeoutError:
                 pass
 
@@ -222,7 +226,9 @@ class CandidateDeliveryWorker:
         now = now or datetime.now(timezone.utc)
         for user_id in sorted(self.allowed_user_ids):
             matches = await asyncio.to_thread(
-                self.registry.list_personal_matches, user_id
+                self.registry.list_personal_matches,
+                user_id,
+                pending_only=True,
             )
             groups: dict[tuple[str, str], list[DeliveryItem]] = {}
             for match in matches:
@@ -256,7 +262,9 @@ class CandidateDeliveryWorker:
                             return
                         # A profile can change while previous pages are being sent.
                         current = await asyncio.to_thread(
-                            self.registry.list_personal_matches, user_id
+                            self.registry.list_personal_matches,
+                            user_id,
+                            vacancy_ids=set(page.vacancy_ids),
                         )
                         valid = []
                         expected_profiles = {}

@@ -56,7 +56,14 @@ _SKIP_REASONS = {
     'live_queue_full',
     'llm_not_match',
 }
-_ERROR_REASONS = {'llm_error', 'export_error', 'notification_error'}
+_ERROR_REASONS = {
+    'llm_error',
+    'llm_quota',
+    'llm_invalid',
+    'llm_api',
+    'export_error',
+    'notification_error',
+}
 
 
 def _now() -> str:

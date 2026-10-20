@@ -212,7 +212,7 @@ def press(bot, api, label, user=1):
     return data
 
 
-def complete_draft(bot, api, store):
+def complete_draft(bot, api, store, *, delivery_mode=None):
     while store.get_profile_draft(1)['step'] != 'preview':
         draft = store.get_profile_draft(1)
         step = draft['step']
@@ -222,6 +222,12 @@ def complete_draft(bot, api, store):
             press(bot, api, 'Все')
         elif step == 'required_skills':
             press(bot, api, 'Готово')
+        elif step == 'delivery_mode' and delivery_mode is not None:
+            label = {
+                'immediate': '✓ Сразу для каждой вакансии',
+                'hourly': 'Почасовая сводка',
+            }[delivery_mode]
+            press(bot, api, label)
         else:
             press(bot, api, 'Пропустить')
 
@@ -239,6 +245,7 @@ def create_roleless_profile(bot, api, store, direction, technology):
     press(bot, api, technology)
     press(bot, api, 'Готово')
     press(bot, api, 'Пропустить')
+    press(bot, api, '✓ Сразу для каждой вакансии')
     press(bot, api, 'Сохранить профиль')
     return store.list_profiles(1)[-1]
 
@@ -263,15 +270,16 @@ def test_wizard_restart_back_validation_save_and_multiple_profiles(tmp_path):
     press(bot, api, 'Сохранить профиль')
     profile = store.list_profiles(1)[0]
     assert profile.role_id == 'technical_writer'
-    assert profile.preferences['delivery_mode'] == 'manual'
+    assert profile.preferences['delivery_mode'] == 'immediate'
     assert len(store.get_profile_versions(1, profile.profile_id)) == 1
     asyncio.run(bot.handle_update(message(1, 'Профили')))
     press(bot, api, 'Создать профиль')
     press(bot, api, 'Тестирование')
     press(bot, api, 'Инженер по тестированию (QA Engineer)')
-    complete_draft(bot, api, store)
+    complete_draft(bot, api, store, delivery_mode='hourly')
     press(bot, api, 'Сохранить профиль')
     assert len(store.list_profiles(1)) == 2
+    assert store.list_profiles(1)[1].preferences['delivery_mode'] == 'hourly'
     assert store.list_profiles(2) == []
 
 
@@ -359,6 +367,7 @@ def test_short_profile_wizard_and_advanced_settings_preserve_timezone(tmp_path):
     asyncio.run(bot.handle_update(message(1, 'gRPC, Docker')))
     press(bot, api, 'Ввести через запятую')
     asyncio.run(bot.handle_update(message(1, 'casino')))
+    press(bot, api, '✓ Сразу для каждой вакансии')
     press(bot, api, 'Сохранить профиль')
     profile = store.list_profiles(1)[0]
     assert profile.role_id == 'backend_developer'
@@ -422,6 +431,7 @@ def test_new_profile_uses_catalog_technology_pages_and_edits_one_message(tmp_pat
     ]
     press(bot, api, 'Готово')
     press(bot, api, 'Пропустить')
+    press(bot, api, '✓ Сразу для каждой вакансии')
     press(bot, api, 'Сохранить профиль')
     assert len(api.messages) == wizard_message_count
     assert store.list_profiles(1)[0].role_id == 'backend_developer'

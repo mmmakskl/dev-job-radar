@@ -55,6 +55,7 @@ def test_onec_wizard_requires_role_and_offers_direction_skills(tmp_path):
         'seniority',
         'required_skills',
         'excluded_skills',
+        'delivery_mode',
         'preview',
     ]
     assert ('onec_developer', '1С разработчик') in bot._choices(

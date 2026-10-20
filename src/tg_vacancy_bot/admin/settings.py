@@ -114,7 +114,7 @@ class FilterSettings(BaseModel):
     exclude_keywords: list[str] = Field(default_factory=list, max_length=100)
     text_hash_ttl_days: int = Field(default=30, ge=1, le=3650)
     queue_maxsize: int = Field(default=1000, ge=1, le=10000)
-    workers: int = Field(default=1, ge=1, le=4)
+    workers: int = Field(default=3, ge=1, le=4)
 
     @field_validator('keywords', 'exclude_keywords')
     @classmethod
@@ -208,7 +208,7 @@ def defaults_from_environment() -> AdminSettings:
         filters=FilterSettings(
             text_hash_ttl_days=int(os.getenv('TEXT_HASH_TTL_DAYS', '30')),
             queue_maxsize=int(os.getenv('LIVE_QUEUE_MAXSIZE', '1000')),
-            workers=int(os.getenv('LIVE_WORKERS', '1')),
+            workers=int(os.getenv('LIVE_WORKERS', '3')),
         ),
         sheets=SheetsSettings(
             output_timezone=os.getenv('OUTPUT_TIMEZONE', 'Europe/Moscow'),

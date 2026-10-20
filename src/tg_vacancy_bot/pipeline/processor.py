@@ -25,6 +25,16 @@ AppendToSheet = Callable[..., Awaitable[bool]]
 NotifyVacancy = Callable[..., Awaitable[bool]]
 
 
+def _safe_analysis_failure_reason(reason: str | None) -> str:
+    if reason == 'daily_limit':
+        return 'llm_quota'
+    if reason == 'invalid_response' or (reason or '').startswith('invalid_schema'):
+        return 'llm_invalid'
+    if (reason or '').startswith('api_'):
+        return 'llm_api'
+    return 'llm_error'
+
+
 class EventRecorder(Protocol):
     """Minimal observability interface; it never receives post text."""
 
@@ -225,7 +235,6 @@ class VacancyProcessor:
 
         logging.info("Отправляем на анализ в Mistral...")
 
-        await asyncio.sleep(1.5)
         # Saved universal analyses are reusable across restarts/non-Go retries.
         existing = (
             self.registry.reusable_decision(vacancy_id, raw_text)
@@ -260,8 +269,11 @@ class VacancyProcessor:
                 ),
             )
         if analysis_result is None:
-            logging.error("[LLM] Не удалось проанализировать вакансию")
-            self._metric('processing_error', 'llm', 'llm_error')
+            safe_reason = _safe_analysis_failure_reason(unavailable_reason)
+            logging.error(
+                "[LLM] Не удалось проанализировать вакансию (%s)", safe_reason
+            )
+            self._metric('processing_error', 'llm', safe_reason)
             return False
 
         if analysis_result.is_match is not True:
