@@ -127,6 +127,76 @@ def test_create_limits_conflict_and_no_publisher(api_client, tmp_path):
     )
 
 
+def test_catalog_admin_search_requires_filters_and_uses_weekly_admin_quota(
+    api_client, monkeypatch
+):
+    monkeypatch.setenv('CANDIDATE_BOT_ENABLED', 'true')
+    monkeypatch.setenv('CANDIDATE_BOT_ALLOWED_USER_IDS', '100')
+    monkeypatch.setenv('CANDIDATE_CATALOG_SEARCH_ENABLED', 'true')
+    monkeypatch.setenv('PREMIUM_SEARCH_WEB_ADMIN_TELEGRAM_ID', '100')
+    csrf = _login(api_client)
+    headers = {'X-CSRF-Token': csrf}
+    payload = {
+        'query': 'golang backend',
+        'track': 'catalog',
+        'mode': 'preview',
+        'period_days': 7,
+        'profile_filters': {
+            'direction_id': 'development',
+            'role_id': 'backend_developer',
+            'required_skills': ['go'],
+        },
+        'confirmed': True,
+    }
+    for index in range(5):
+        response = api_client.post(
+            PREFIX + '/runs',
+            json={**payload, 'query': f'golang backend {index}'},
+            headers=headers,
+        )
+        assert response.status_code == 202, response.text
+        assert 'telegram_user_id' not in response.text
+        assert 'admin:100' not in response.text
+    limited = api_client.post(PREFIX + '/runs', json=payload, headers=headers)
+    assert limited.status_code == 429
+    assert api_client.get(PREFIX + '/capabilities').json()['weekly_search_limit'] == 5
+
+
+def test_candidate_profile_search_has_one_run_per_rolling_week(tmp_path, monkeypatch):
+    monkeypatch.setenv('PREMIUM_GLOBAL_SEARCH_ENABLED', 'true')
+    monkeypatch.setenv('CANDIDATE_CATALOG_SEARCH_ENABLED', 'true')
+    monkeypatch.setenv('CANDIDATE_BOT_ALLOWED_USER_IDS', '101')
+    store = PremiumSearchStore(str(tmp_path / 'premium.sqlite3'))
+    from tg_vacancy_bot.telegram.candidate_store import CandidateProfile
+
+    snapshot = CandidateProfile(
+        profile_id='profile-101',
+        telegram_user_id=101,
+        name='Backend',
+        direction_id='development',
+        specialization_id='backend',
+        role_id='backend_developer',
+        preferences={'profile_contract': 'catalog-v3', 'required_skills': ['Go']},
+        is_active=True,
+        version=1,
+    )
+    from dataclasses import asdict
+
+    store.create_run(
+        query='Golang backend',
+        track='catalog',
+        owner='candidate:101',
+        profile_snapshot=asdict(snapshot),
+    )
+    with pytest.raises(ValueError, match='лимит'):
+        store.create_run(
+            query='Go developer',
+            track='catalog',
+            owner='candidate:101',
+            profile_snapshot=asdict(snapshot),
+        )
+
+
 def test_add_source_only_queues(api_client, tmp_path):
     from tg_vacancy_bot.admin.settings import SettingsStore
 

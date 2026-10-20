@@ -138,16 +138,18 @@ CANDIDATE_BOT_CHANNEL = parse_telegram_target(os.getenv('CANDIDATE_BOT_CHANNEL')
 CANDIDATE_BOT_ALLOWED_USER_IDS = parse_telegram_user_ids(
     os.getenv('CANDIDATE_BOT_ALLOWED_USER_IDS')
 )
-# The personal track feed follows CANDIDATE_BOT_ALLOWED_USER_IDS.
-CANDIDATE_PROFILE_ALLOWED_USER_IDS = parse_telegram_user_ids(
-    os.getenv('CANDIDATE_PROFILE_ALLOWED_USER_IDS')
-)
 CANDIDATE_PROFILE_DELIVERY_ENABLED = parse_bool_env(
     os.getenv('CANDIDATE_PROFILE_DELIVERY_ENABLED')
 )
 CANDIDATE_CATALOG_SEARCH_ENABLED = parse_bool_env(
     os.getenv('CANDIDATE_CATALOG_SEARCH_ENABLED')
 )
+try:
+    PREMIUM_SEARCH_WEB_ADMIN_TELEGRAM_ID = (
+        int(os.getenv('PREMIUM_SEARCH_WEB_ADMIN_TELEGRAM_ID') or '0') or None
+    )
+except ValueError:
+    PREMIUM_SEARCH_WEB_ADMIN_TELEGRAM_ID = None
 CANDIDATE_BOT_DB_PATH = resolve_candidate_bot_db_path(
     data_dir=DATA_DIR,
     db_path=os.getenv('CANDIDATE_BOT_DB_PATH') or None,

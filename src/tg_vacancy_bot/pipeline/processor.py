@@ -413,6 +413,34 @@ class VacancyProcessor:
                 vacancy_id,
             )
 
+    async def persist_registry_only(
+        self,
+        *,
+        raw_text: str,
+        post_link: str,
+        published_at: datetime | None,
+        channel_name: str,
+        universal_decision: UniversalDecision,
+        vacancy_id: str | None = None,
+        source_type: str = 'premium',
+    ) -> PersistenceOutcome:
+        """Add a confirmed source to the shared registry without Sheets or delivery."""
+        if self.registry is None:
+            return PersistenceOutcome('save_failed', False, vacancy_id or '')
+        vacancy_id = vacancy_id or build_vacancy_id(post_link)
+        async with self._persistence_lock:
+            stored = self.registry.ingest(
+                vacancy_id=vacancy_id,
+                external_id=vacancy_id,
+                post_link=post_link,
+                decision=universal_decision,
+                source_type=source_type,
+                raw_text=raw_text,
+                channel_name=channel_name,
+                published_at=published_at,
+            )
+        return PersistenceOutcome('saved', True, stored.vacancy_id)
+
     async def _finish_persistence(self, *args) -> PersistenceOutcome:
         # A cancelled to_thread await does not stop the Sheets SDK thread. Keep
         # the shared lock until that write finishes before another job can save.

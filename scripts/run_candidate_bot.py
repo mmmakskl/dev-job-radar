@@ -74,10 +74,7 @@ async def main() -> None:
     await api.delete_webhook()
     store = CandidateStore(config.CANDIDATE_BOT_DB_PATH)
     registry = VacancyRegistry(config.CANDIDATE_BOT_DB_PATH)
-    profile_users = (
-        config.CANDIDATE_PROFILE_ALLOWED_USER_IDS
-        & config.CANDIDATE_BOT_ALLOWED_USER_IDS
-    )
+    profile_users = config.CANDIDATE_BOT_ALLOWED_USER_IDS
     search = CandidateSearch(
         api,
         store,

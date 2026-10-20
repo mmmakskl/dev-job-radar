@@ -405,7 +405,6 @@ def search_setup(tmp_path, monkeypatch):
     store, registry, profile, _ = setup(tmp_path)
     monkeypatch.setenv('PREMIUM_GLOBAL_SEARCH_ENABLED', 'true')
     monkeypatch.setattr(config, 'CANDIDATE_CATALOG_SEARCH_ENABLED', True)
-    monkeypatch.setattr(config, 'CANDIDATE_PROFILE_ALLOWED_USER_IDS', {1})
     monkeypatch.setattr(config, 'CANDIDATE_BOT_ALLOWED_USER_IDS', {1})
     searches = SearchStore(str(tmp_path / 'search.sqlite3'))
     api = FakeBotApi()

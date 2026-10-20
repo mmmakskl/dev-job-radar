@@ -31,15 +31,43 @@ def catalog_search_allowed(owner: str) -> bool:
     """Fail closed when rollout access is removed, including queued previews."""
     from tg_vacancy_bot import config
 
+    flag = os.getenv('CANDIDATE_CATALOG_SEARCH_ENABLED', '').casefold() in {
+        '1',
+        'true',
+        'yes',
+        'on',
+    }
+    flag = flag or bool(getattr(config, 'CANDIDATE_CATALOG_SEARCH_ENABLED', False))
+    if not enabled() or not flag:
+        return False
+    if owner.startswith('admin:'):
+        try:
+            admin_id = int(owner.split(':', 1)[1])
+        except ValueError:
+            return False
+        try:
+            configured_admin = int(
+                os.getenv('PREMIUM_SEARCH_WEB_ADMIN_TELEGRAM_ID') or 0
+            )
+        except ValueError:
+            configured_admin = 0
+        allowed = {
+            int(value.strip())
+            for value in os.getenv('CANDIDATE_BOT_ALLOWED_USER_IDS', '').split(',')
+            if value.strip().isdigit()
+        }
+        allowed.update(getattr(config, 'CANDIDATE_BOT_ALLOWED_USER_IDS', ()))
+        return admin_id == configured_admin and admin_id in allowed
     if not owner.startswith('candidate:'):
         return False
     try:
         user_id = int(owner.split(':', 1)[1])
     except ValueError:
         return False
-    return (
-        enabled()
-        and getattr(config, 'CANDIDATE_CATALOG_SEARCH_ENABLED', False)
-        and user_id in getattr(config, 'CANDIDATE_PROFILE_ALLOWED_USER_IDS', ())
-        and user_id in getattr(config, 'CANDIDATE_BOT_ALLOWED_USER_IDS', ())
-    )
+    allowed = {
+        int(value.strip())
+        for value in os.getenv('CANDIDATE_BOT_ALLOWED_USER_IDS', '').split(',')
+        if value.strip().isdigit()
+    }
+    allowed.update(getattr(config, 'CANDIDATE_BOT_ALLOWED_USER_IDS', ()))
+    return user_id in allowed

@@ -788,6 +788,69 @@ def test_source_action_during_analysis_does_not_disrupt_auto_save(tmp_path):
     assert store.get_run(run['search_run_id'])['status'] == 'completed'
 
 
+def test_profile_match_auto_joins_and_enables_public_source(tmp_path):
+    service, _, _, _, _, _ = setup(tmp_path)
+    service.settings_store = SettingsStore(str(tmp_path))
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value=channel())
+    service.client = client
+    source_id = -(1000000000000 + 123)
+
+    async def scenario():
+        await service._track_catalog_source(
+            {
+                'telegram_chat_id': source_id,
+                'channel_username': 'public_jobs',
+                'channel_name': 'Public jobs',
+            }
+        )
+
+    asyncio.run(scenario())
+    tracked = next(
+        item
+        for item in service.settings_store.list_sources(active_only=True)
+        if item['telegram_id'] == str(source_id)
+    )
+    assert tracked['verification_status'] == 'verified'
+    assert isinstance(client.call_args.args[0], functions.channels.JoinChannelRequest)
+    from tg_vacancy_bot.admin.control import claim_action
+
+    assert claim_action(str(tmp_path))['action'] == 'restart'
+
+
+def test_auto_join_failure_keeps_source_pending_for_background_retry(tmp_path):
+    from unittest.mock import patch
+
+    service, _, _, _, _, _ = setup(tmp_path)
+    service.settings_store = SettingsStore(str(tmp_path))
+    client = AsyncMock()
+    client.get_entity = AsyncMock(side_effect=RuntimeError('temporary Telegram error'))
+    service.client = client
+
+    async def scenario():
+        with patch(
+            'tg_vacancy_bot.premium_search.service.asyncio.sleep',
+            new_callable=AsyncMock,
+        ):
+            await service._track_catalog_source(
+                {
+                    'telegram_chat_id': -(1000000000000 + 123),
+                    'channel_username': 'public_jobs',
+                    'channel_name': 'Public jobs',
+                }
+            )
+
+    asyncio.run(scenario())
+    source = next(
+        item
+        for item in service.settings_store.list_sources()
+        if item['username'] == 'public_jobs'
+    )
+    assert source['verification_status'] == 'unverified'
+    assert not source['enabled']
+    assert client.get_entity.await_count == 3
+
+
 def test_cancel_discards_automatic_actions_but_keeps_manual_actions(tmp_path):
     _, store, _, _, _, _ = setup(tmp_path)
     run = store.create_run(query='Golang')

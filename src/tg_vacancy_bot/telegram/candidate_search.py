@@ -42,7 +42,7 @@ class CandidateSearch:
         if not self._available(user_id):
             await self.api.send_message(
                 user_id,
-                'Premium-поиск недоступен: требуется включённый Premium и доступ к тестовому поиску.',
+                'Профильный Premium-поиск недоступен. Проверьте, что Telegram Premium и поиск включены.',
             )
             return
         template = profile.preferences.get('premium_template_id')
@@ -191,7 +191,13 @@ class CandidateSearch:
         source = run['source_states'].get('premium', {})
         text = f"Поиск: {run['status']}\nTelegram Premium: {source.get('status', 'queued')}"
         if source.get('reason'):
-            text += f"\nПричина: {source['reason']}"
+            reason = source['reason']
+            message = (
+                'Недельная квота профильного поиска исчерпана (1 запуск за 7 дней).'
+                if reason == 'weekly_search_quota_exhausted'
+                else reason
+            )
+            text += f"\nПричина: {message}"
         token = intent['token']
         rows = [
             [
