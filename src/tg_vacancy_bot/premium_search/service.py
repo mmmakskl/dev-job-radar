@@ -144,7 +144,7 @@ def normalize_result(
     if date is not None and not isinstance(date, datetime):
         return dict(values, status='rejected', decision_reason='invalid_date')
     if not text:
-        return dict(values, status='rejected', decision_reason='empty_text')
+        return dict(values, status='review', decision_reason='empty_text')
     if date is not None and date < datetime.now(timezone.utc) - timedelta(
         days=period_days
     ):

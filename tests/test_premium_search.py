@@ -247,10 +247,9 @@ def test_dates_sources_and_entities():
         )['decision_reason']
         == 'old_content'
     )
-    assert (
-        normalize_result(message(text=''), channel(), 7)['decision_reason']
-        == 'empty_text'
-    )
+    empty = normalize_result(message(text=''), channel(), 7)
+    assert empty['decision_reason'] == 'empty_text'
+    assert empty['status'] == 'review'
     for bad in [
         None,
         channel(username=None),

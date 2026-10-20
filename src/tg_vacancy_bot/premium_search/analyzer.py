@@ -7,6 +7,7 @@ import math
 import re
 from dataclasses import asdict, dataclass, replace
 from typing import Awaitable, Callable
+from urllib.parse import urlparse
 
 from tg_vacancy_bot.llm.schemas import (
     EXPECTED_FIELDS,
@@ -75,9 +76,21 @@ class PremiumAnalysis:
 
     def status(self, track: str = 'go') -> str:
         definition = get_track(track)
+        if not self.is_vacancy:
+            return (
+                'review'
+                if definition.key == 'catalog' and self.needs_review
+                else 'rejected'
+            )
+        if definition.key == 'catalog' and not self.is_track_match:
+            return (
+                'review'
+                if self.decision_reason == 'structured_listing_review'
+                else 'rejected'
+            )
         if (
-            not self.is_vacancy
-            or self.go_role_strength not in definition.accepted_strengths
+            definition.key != 'catalog'
+            and self.go_role_strength not in definition.accepted_strengths
         ):
             return 'rejected'
         if (
@@ -221,6 +234,43 @@ async def analyze_premium_text(text: str) -> PremiumAnalysis:
 PremiumAnalyzer = Callable[[str], Awaitable[PremiumAnalysis]]
 
 
+def _looks_like_structured_vacancy(analysis: VacancyAnalysis, source_text: str) -> bool:
+    """Recognize job-board records that omit an explicit hiring sentence."""
+    title = (analysis.title or '').strip().casefold()
+    apply_link = (analysis.apply_link or '').strip()
+    if not title or title in {'не указано', 'unknown', 'n/a'}:
+        return False
+    lowered_text = source_text.casefold()
+    if re.search(
+        r'\b(course|bootcamp|webinar|resume|cv)\b|курс|вебинар|резюме', lowered_text
+    ):
+        return False
+    parsed = urlparse(apply_link)
+    if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
+        return False
+    if parsed.hostname and parsed.hostname.casefold() in {'t.me', 'telegram.me'}:
+        return False
+    stacks = {
+        item.casefold()
+        for item in [
+            *(analysis.required_stack or []),
+            *(analysis.preferred_stack or []),
+        ]
+        if isinstance(item, str) and item.strip()
+    }
+    seniority = bool(
+        re.search(
+            r'\b(intern|junior|mid|middle|senior|staff|lead|principal|architect)\b',
+            lowered_text,
+        )
+    )
+    location = any(
+        (value or '').strip().casefold() not in {'', 'не указано', 'unknown', 'n/a'}
+        for value in (analysis.country, analysis.city)
+    )
+    return len(stacks) >= 3 and (seniority or location)
+
+
 def adapt_universal(
     decision, profile_snapshot: dict | None = None, *, source_text: str | None = None
 ) -> PremiumAnalysis:
@@ -231,6 +281,20 @@ def adapt_universal(
         decision_to_dict,
         go_projection_accepted,
     )
+
+    if (
+        not decision.is_vacancy
+        and decision.needs_review
+        and source_text
+        and _looks_like_structured_vacancy(decision.analysis, source_text)
+    ):
+        decision = replace(
+            decision,
+            is_vacancy=True,
+            reason_code='structured_listing_review',
+            needs_review=True,
+            analysis=replace(decision.analysis, is_match=False),
+        )
 
     matched = go_projection_accepted(decision)
     review = decision.needs_review
@@ -266,7 +330,6 @@ def adapt_universal(
         review = (
             review or result.status == 'review' or (matched and role_confidence < 90)
         )
-        strength = 'primary' if result.status != 'no_match' else 'absent'
     return PremiumAnalysis(
         is_vacancy=decision.is_vacancy,
         is_track_match=matched,

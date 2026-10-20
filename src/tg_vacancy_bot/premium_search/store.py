@@ -808,6 +808,7 @@ class PremiumSearchStore:
         result['apply_urls'] = json.loads(result.pop('apply_urls_json'))
         if not raw:
             run = self.get_run(result['search_run_id'])
+            result['track'] = run['track']
             result['can_persist'] = bool(
                 not run['owner'].startswith('candidate:')
                 and run['track'] != 'catalog'

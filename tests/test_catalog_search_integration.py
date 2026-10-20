@@ -62,6 +62,44 @@ def test_low_confidence_go_is_review():
     )
 
 
+def test_catalog_matches_do_not_require_a_go_stack():
+    result = adapt_universal(
+        universal_decision(required=('Python',)), asdict(profile())
+    )
+
+    assert result.go_role_strength == 'absent'
+    assert result.status('catalog') == 'accepted'
+
+
+def test_structured_job_board_post_is_sent_to_review_when_llm_says_not_a_vacancy():
+    payload = _payload()
+    payload['analysis'].update(
+        title='DevOps Architect',
+        country='Israel',
+        grade_from='Senior',
+        preferred_stack=['Kubernetes', 'Terraform', 'AWS', 'Python'],
+        apply_link='https://jobs.example/jobz/123',
+    )
+    payload.update(
+        is_vacancy=False,
+        confidence=0,
+        reason_code='post_not_vacancy',
+        needs_review=True,
+    )
+
+    result = adapt_universal(
+        universal._validate(payload),
+        source_text=(
+            'DevOps Architect\nMorphisec\nTel Aviv\nSenior\n'
+            'Kubernetes, Terraform, AWS, Python\nhttps://jobs.example/jobz/123'
+        ),
+    )
+
+    assert result.is_vacancy is True
+    assert result.decision_reason == 'structured_listing_review'
+    assert result.status('catalog') == 'review'
+
+
 def test_catalog_requests_are_owner_scoped_and_idempotent(tmp_path, monkeypatch):
     enabled(monkeypatch)
     store = SearchStore(str(tmp_path / 'search.sqlite3'))
