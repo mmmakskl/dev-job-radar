@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from tg_vacancy_bot.llm.schemas import validate_analysis_result
-from tg_vacancy_bot.premium_search.store import ActiveRunError, WeeklyQuotaError
+from tg_vacancy_bot.premium_search.store import ActiveRunError
 from tg_vacancy_bot.search.settings import SearchSettings, source_capabilities
 from tg_vacancy_bot.search.store import SearchStore
 from tg_vacancy_bot.search.terms import expand_queries
@@ -250,14 +250,6 @@ class SearchService:
                 except ActiveRunError:
                     self.store.update_task(
                         run['id'], 'premium', status='queued', reason='premium_busy'
-                    )
-                    return
-                except WeeklyQuotaError:
-                    self.store.update_task(
-                        run['id'],
-                        'premium',
-                        status='failed',
-                        reason='weekly_search_quota_exhausted',
                     )
                     return
                 self.store.update_task(

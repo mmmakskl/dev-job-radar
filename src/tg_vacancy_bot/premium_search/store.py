@@ -33,6 +33,7 @@ RESULT_STATUSES = {
     'cancelled',
 }
 METRICS = (
+    'scanned',
     'found',
     'invalid',
     'old',
@@ -126,6 +127,8 @@ class PremiumSearchStore:
                     'llm_calls': 'INTEGER NOT NULL DEFAULT 0',
                     'rate_limit_waits': 'INTEGER NOT NULL DEFAULT 0',
                     'quota_subject': 'TEXT',
+                    'search_queries_json': "TEXT NOT NULL DEFAULT '[]'",
+                    'messages_scanned': 'INTEGER NOT NULL DEFAULT 0',
                 },
                 'premium_search_results': {
                     'apply_urls_json': "TEXT NOT NULL DEFAULT '[]'",
@@ -250,8 +253,13 @@ class PremiumSearchStore:
                 owner.split(':')[1]
             ) or not profile_snapshot.get('is_active'):
                 raise ValueError('Catalog profile owner mismatch')
-            if owner.startswith('candidate:') and quota_subject is None:
-                quota_subject, weekly_limit = owner, 1
+            from tg_vacancy_bot.premium_search.templates import (
+                profile_search_queries,
+            )
+
+            search_queries = profile_search_queries(profile_snapshot, query)
+        else:
+            search_queries = (query,)
         run_id = str(uuid.uuid4())
         with self._connect() as c:
             c.execute('BEGIN IMMEDIATE')
@@ -277,8 +285,8 @@ class PremiumSearchStore:
             if existing:
                 raise ActiveRunError(existing[0])
             c.execute(
-                '''INSERT INTO premium_search_runs(search_run_id,query,normalized_query,track,mode,result_limit,period_days,status,include_review,created_at,updated_at,owner,client_request_id,profile_snapshot_json,quota_subject)
-                      VALUES(?,?,?,?,?,?,?,'queued',?,?,?,?,?,?,?)''',
+                '''INSERT INTO premium_search_runs(search_run_id,query,normalized_query,track,mode,result_limit,period_days,status,include_review,created_at,updated_at,owner,client_request_id,profile_snapshot_json,quota_subject,search_queries_json)
+                      VALUES(?,?,?,?,?,?,?,'queued',?,?,?,?,?,?,?,?)''',
                 (
                     run_id,
                     query,
@@ -294,6 +302,7 @@ class PremiumSearchStore:
                     client_request_id,
                     json.dumps(profile_snapshot) if profile_snapshot else None,
                     quota_subject,
+                    json.dumps(search_queries),
                 ),
             )
             self._metrics(c, run_id)
@@ -317,6 +326,7 @@ class PremiumSearchStore:
             'quota_json',
             'finished_at',
             'cancel_requested',
+            'messages_scanned',
         }
         assert set(values) <= allowed
         with self._connect() as c:
@@ -417,7 +427,9 @@ class PremiumSearchStore:
 
     def add_result(self, run_id: str, **values: Any) -> str:
         with self._connect() as c:
-            return self._insert_result(c, run_id, values)
+            result_id = self._insert_result(c, run_id, values)
+            self._metrics(c, run_id)
+            return result_id
 
     def retain_search(
         self, run_id: str, results: list[dict], *, phase: str = 'analyzing'
@@ -482,7 +494,6 @@ class PremiumSearchStore:
             'SELECT result_id FROM premium_search_results WHERE search_run_id=? AND (result_id=? OR post_link=?)',
             (run_id, result_id, values.get('post_link')),
         ).fetchone()
-        self._metrics(c, run_id)
         return row[0]
 
     def update_result(self, result_id: str, **values: Any) -> None:
@@ -778,6 +789,7 @@ class PremiumSearchStore:
             )
         metrics['errors'] += int(run['status'] == 'failed')
         metrics['llm_analyzed'] = run['llm_calls']
+        metrics['scanned'] = run['messages_scanned']
         metrics['rate_limit_waits'] = run['rate_limit_waits']
         if run['started_at']:
             metrics['duration_seconds'] = max(
@@ -800,6 +812,7 @@ class PremiumSearchStore:
         result['profile_snapshot'] = json.loads(
             result.pop('profile_snapshot_json') or 'null'
         )
+        result['search_queries'] = json.loads(result.pop('search_queries_json') or '[]')
         return result
 
     def _result(self, row: sqlite3.Row, raw: bool) -> dict:

@@ -6,7 +6,10 @@ import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from tg_vacancy_bot.premium_search.templates import compose_query
+from tg_vacancy_bot.premium_search.templates import (
+    compose_query,
+    profile_search_queries,
+)
 from tg_vacancy_bot.telegram.candidate_card_formatter import format_legacy_card
 
 
@@ -53,6 +56,7 @@ class CandidateSearch:
             )
             return
         query = compose_query(template, profile)
+        planned_queries = profile_search_queries(profile, query)
         # Surface an existing owner job after a restart or a profile edit, so
         # replacing the preview cannot leave the owner unable to cancel it.
         with self.searches.connect() as connection:
@@ -78,7 +82,12 @@ class CandidateSearch:
             return
         await self.api.send_message(
             user_id,
-            f'Предпросмотр запроса:\n{query}\n\nИсточник: Telegram Premium\nПериод: 7 дней · До 50 результатов\n'
+            'Поисковые варианты:\n'
+            + '\n'.join(f'• {item}' for item in planned_queries)
+            + '\n\nИсточник: Telegram Premium\n'
+            'Период: 7 дней · До 50 результатов · До 10 000 сообщений\n'
+            'Используются несколько вариантов названия роли. Недельной квоты приложения нет; '
+            'действует бесплатная квота Telegram.\n'
             'Сопоставление с текущим снимком профиля. Результаты личные; публикация и рассылка выключены.\n'
             'Другие источники для поиска по профилю недоступны.',
             reply_markup={
@@ -212,11 +221,11 @@ class CandidateSearch:
         )
         if source.get('reason'):
             reason = source['reason']
-            message = (
-                'Недельная квота профильного поиска исчерпана (1 запуск за 7 дней).'
-                if reason == 'weekly_search_quota_exhausted'
-                else reason
-            )
+            message = {
+                'free_quota_exhausted': 'Бесплатная квота поиска Telegram исчерпана. Уже найденные результаты сохранены.',
+                'time_limit_reached': 'Время поиска истекло. Уже найденные результаты сохранены.',
+                'no_recent_candidates': 'Не найдено свежих сообщений для анализа по этой роли.',
+            }.get(reason, reason)
             text += f"\nПричина: {message}"
         token = intent['token']
         rows = [

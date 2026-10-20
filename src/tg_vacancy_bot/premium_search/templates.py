@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,18 @@ def _load_templates() -> tuple[QueryTemplate, ...]:
 
 _TEMPLATES = _load_templates()
 _BY_ID = {template.id: template for template in _TEMPLATES}
+_ROLE_SEARCH_ALIASES = {
+    'systems_analyst': (
+        'системный аналитик',
+        'системного аналитика',
+        'systems analyst',
+    ),
+    'devops_sre_engineer': ('devops', 'sre', 'site reliability engineer'),
+    'business_analyst': ('бизнес-аналитик', 'business analyst', 'бизнес аналитик'),
+    'qa_engineer': ('qa engineer', 'тестировщик', 'инженер по тестированию'),
+    'product_designer': ('продуктовый дизайнер', 'product designer', 'ux designer'),
+    'erp_crm_developer': ('erp разработчик', 'crm разработчик', 'erp developer'),
+}
 _BY_ROLE: dict[str, tuple[QueryTemplate, ...]] = {}
 for _template in _TEMPLATES:
     _BY_ROLE.setdefault(_template.role_id, ())
@@ -118,6 +131,49 @@ def list_templates(profile: Any) -> tuple[QueryTemplate, ...]:
 def get_template(template_id: str) -> QueryTemplate | None:
     """Return a template by stable ID, or None when it is unknown."""
     return _BY_ID.get(template_id)
+
+
+def profile_search_queries(profile: Any, selected_query: str) -> tuple[str, ...]:
+    """Use up to three independent role aliases; matching remains profile-scoped."""
+    role_id = _profile_value(profile, 'role_id')
+    template = _BY_ID.get(f'role:{role_id}')
+    if template is None:
+        return (normalize_query(selected_query),)
+
+    def broad(value: str) -> str:
+        value = re.sub(r'\b(?:ваканси[ияюе]|jobs?|hiring)\b', '', value, flags=re.I)
+        value = value.replace('"', '').replace('«', '').replace('»', '')
+        return ' '.join(value.split()).strip(' /,-')
+
+    # Keep a genuinely custom admin query; historical generated templates are
+    # too restrictive because they require both an exact title and "вакансии".
+    preferences = _profile_value(profile, 'preferences', {}) or {}
+    selected_template = _BY_ID.get(preferences.get('premium_template_id'))
+    custom = selected_query.casefold() not in {
+        value.casefold()
+        for item in (template, selected_template)
+        if item is not None
+        for value in (item.main, item.ru, item.en)
+    }
+    candidates = []
+    candidates.extend(_ROLE_SEARCH_ALIASES.get(role_id, ()))
+    candidates.extend((template.ru, template.en, *template.synonyms))
+    result: list[str] = [normalize_query(selected_query)] if custom else []
+    seen: set[str] = {item.casefold() for item in result}
+    for candidate in candidates:
+        value = broad(candidate)
+        if '/' in value:
+            for part in value.split('/'):
+                part = broad(part)
+                if 3 <= len(part) <= 160 and part.casefold() not in seen:
+                    result.append(part)
+                    seen.add(part.casefold())
+        elif 3 <= len(value) <= 160 and value.casefold() not in seen:
+            result.append(value)
+            seen.add(value.casefold())
+        if len(result) >= 3:
+            break
+    return tuple(result[:3]) or (normalize_query(selected_query),)
 
 
 def compose_query(

@@ -7,6 +7,7 @@ from tg_vacancy_bot.premium_search.templates import (
     compose_query,
     get_template,
     list_templates,
+    profile_search_queries,
 )
 
 
@@ -106,3 +107,34 @@ def test_versioned_data_file_matches_template_count():
     assert payload['version'] == 1
     assert payload['catalog_version'] == 2  # archived curated templates
     assert len(payload['templates']) == len(_TEMPLATES)
+
+
+def test_profile_search_uses_broad_role_aliases_without_mandatory_vacancy_word():
+    analyst = {'role_id': 'systems_analyst', 'preferences': {}}
+    queries = profile_search_queries(analyst, '"Системный аналитик" вакансии')
+    assert 'системный аналитик' in [query.casefold() for query in queries]
+    assert 'systems analyst' in [query.casefold() for query in queries]
+    assert all('вакансии' not in query.casefold() for query in queries)
+    assert len(queries) <= 3
+
+    devops = {'role_id': 'devops_sre_engineer', 'preferences': {}}
+    queries = profile_search_queries(devops, '"DevOps / SRE инженер" вакансии')
+    assert any(query.casefold() == 'devops' for query in queries)
+    assert any(query.casefold() == 'sre' for query in queries)
+
+
+def test_every_catalog_role_has_short_search_queries():
+    for direction in CATALOG['directions']:
+        for specialization in direction['specializations']:
+            for role in specialization['roles']:
+                profile = {'role_id': role['id'], 'preferences': {}}
+                queries = profile_search_queries(profile, role['label'])
+                assert 1 <= len(queries) <= 3
+                assert all(3 <= len(query) <= 160 for query in queries)
+
+
+def test_custom_admin_query_remains_in_profile_search_plan():
+    profile = {'role_id': 'systems_analyst', 'preferences': {}}
+    queries = profile_search_queries(profile, 'аналитик SQL вакансии')
+    assert queries[0] == 'аналитик SQL вакансии'
+    assert len(queries) <= 3
