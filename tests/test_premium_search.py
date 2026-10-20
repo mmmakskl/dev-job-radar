@@ -162,6 +162,251 @@ def test_query_uniqueness_and_constraints(tmp_path):
         store.create_run(query='Go jobs', result_limit=101)
 
 
+def test_catalog_normalization_applies_shared_text_filters_before_llm():
+    profile = {
+        'preferences': {'required_skills': ['SQL'], 'excluded_skills': ['стажировка']}
+    }
+    good = normalize_result(
+        message(text='#вакансия Ищем системного аналитика со знанием SQL'),
+        channel(),
+        7,
+        'catalog',
+        profile,
+    )
+    missing = normalize_result(
+        message(text='#вакансия Ищем системного аналитика'),
+        channel(),
+        7,
+        'catalog',
+        profile,
+    )
+    excluded = normalize_result(
+        message(text='#вакансия Ищем системного аналитика SQL, стажировка'),
+        channel(),
+        7,
+        'catalog',
+        profile,
+    )
+    noise = normalize_result(
+        message(text='Вебинар про системный анализ'), channel(), 7, 'catalog'
+    )
+    assert good['status'] == 'pending'
+    assert missing['decision_reason'] == 'prefilter:skill_missing'
+    assert excluded['decision_reason'] == 'prefilter:excluded_word'
+    assert noise['decision_reason'] == 'prefilter:missing_hiring_context'
+
+
+def test_catalog_collect_round_robins_queries_under_one_message_budget(
+    tmp_path, monkeypatch
+):
+    from tg_vacancy_bot.premium_search import service as premium_service
+
+    monkeypatch.setenv('PREMIUM_GLOBAL_SEARCH_ENABLED', 'true')
+    monkeypatch.setenv('CANDIDATE_CATALOG_SEARCH_ENABLED', 'true')
+    monkeypatch.setenv('CANDIDATE_BOT_ALLOWED_USER_IDS', '1')
+    monkeypatch.setattr(premium_service, 'CATALOG_MAX_MESSAGES', 230)
+    svc, store, _, client, _, _ = setup(tmp_path)
+    profile = {
+        'profile_id': 'p1',
+        'telegram_user_id': 1,
+        'is_active': True,
+        'role_id': 'systems_analyst',
+        'preferences': {},
+    }
+    run = store.create_run(
+        query='"Системный аналитик" вакансии',
+        track='catalog',
+        owner='candidate:1',
+        profile_snapshot=profile,
+    )
+    run['search_queries'] = ['системный аналитик', 'systems analyst']
+    source = channel(access_hash=12345)
+
+    async def telegram(request, **kwargs):
+        client.calls.append(request)
+        if isinstance(request, functions.channels.CheckSearchPostsFloodRequest):
+            return client.quota
+        return SimpleNamespace(
+            messages=[
+                message(
+                    request.offset_id + index + 1, '#вакансия Ищем системного аналитика'
+                )
+                for index in range(request.limit)
+            ],
+            chats=[source],
+            next_rate=1,
+        )
+
+    svc.client = telegram
+    asyncio.run(svc._collect(run))
+    pages = [
+        request
+        for request in client.calls
+        if isinstance(request, functions.channels.SearchPostsRequest)
+    ]
+    assert [page.query for page in pages] == [
+        'системный аналитик',
+        'systems analyst',
+        'системный аналитик',
+    ]
+    assert [page.limit for page in pages] == [100, 100, 30]
+    assert store.get_run(run['search_run_id'])['metrics']['scanned'] == 230
+    assert store.get_run(run['search_run_id'])['metrics']['found'] == 130
+    assert all(page.allow_paid_stars is None for page in pages)
+
+
+def test_catalog_keeps_partial_results_when_telegram_free_quota_ends(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv('PREMIUM_GLOBAL_SEARCH_ENABLED', 'true')
+    monkeypatch.setenv('CANDIDATE_CATALOG_SEARCH_ENABLED', 'true')
+    monkeypatch.setenv('CANDIDATE_BOT_ALLOWED_USER_IDS', '1')
+    svc, store, _, _, _, _ = setup(tmp_path)
+    profile = {
+        'profile_id': 'p1',
+        'telegram_user_id': 1,
+        'is_active': True,
+        'role_id': 'systems_analyst',
+        'preferences': {},
+    }
+    run = store.create_run(
+        query='"Системный аналитик" вакансии',
+        track='catalog',
+        owner='candidate:1',
+        profile_snapshot=profile,
+    )
+    run['search_queries'] = ['системный аналитик', 'systems analyst']
+
+    async def telegram(request, **_kwargs):
+        if isinstance(request, functions.channels.CheckSearchPostsFloodRequest):
+            if request.query == 'systems analyst':
+                return types.SearchPostsFlood(10, 0, 20, query_is_free=False)
+            return types.SearchPostsFlood(10, 1, 20, query_is_free=True)
+        return SimpleNamespace(
+            messages=[message(text='#вакансия Ищем системного аналитика')],
+            chats=[channel()],
+            next_rate=None,
+        )
+
+    svc.client = telegram
+    asyncio.run(svc._collect(run))
+    updated = store.get_run(run['search_run_id'])
+    assert updated['error_reason'] == 'free_quota_exhausted'
+    assert updated['metrics']['scanned'] == 1
+    assert updated['metrics']['found'] == 1
+
+
+def test_catalog_reports_only_old_search_results_as_low_coverage(tmp_path, monkeypatch):
+    monkeypatch.setenv('PREMIUM_GLOBAL_SEARCH_ENABLED', 'true')
+    monkeypatch.setenv('CANDIDATE_CATALOG_SEARCH_ENABLED', 'true')
+    monkeypatch.setenv('CANDIDATE_BOT_ALLOWED_USER_IDS', '1')
+    old = datetime.now(timezone.utc) - timedelta(days=30)
+    svc, store, _, _, _, _ = setup(
+        tmp_path, [message(text='Ищем системного аналитика', date=old)]
+    )
+    profile = {
+        'profile_id': 'p1',
+        'telegram_user_id': 1,
+        'is_active': True,
+        'role_id': 'systems_analyst',
+        'preferences': {},
+    }
+    run = store.create_run(
+        query='"Системный аналитик" вакансии',
+        track='catalog',
+        owner='candidate:1',
+        profile_snapshot=profile,
+    )
+    asyncio.run(svc.tick())
+    finished = store.get_run(run['search_run_id'])
+    assert finished['status'] == 'completed_with_errors'
+    assert finished['error_reason'] == 'no_recent_candidates'
+    assert finished['metrics']['old'] == 1
+    assert finished['metrics']['llm_analyzed'] == 0
+
+
+def test_search_uses_last_post_date_when_telegram_omits_next_rate(
+    tmp_path, monkeypatch
+):
+    from tg_vacancy_bot.premium_search import service as premium_service
+
+    monkeypatch.setattr(premium_service, 'DEFAULT_MAX_MESSAGES', 150)
+    svc, store, _, client, _, _ = setup(tmp_path)
+    source = channel(access_hash=12345)
+    first = [message(mid=index + 1) for index in range(100)]
+
+    async def telegram(request, **_kwargs):
+        client.calls.append(request)
+        if isinstance(request, functions.channels.SearchPostsRequest):
+            return SimpleNamespace(
+                messages=first if request.offset_id == 0 else [], chats=[source]
+            )
+        return client.quota
+
+    svc.client = telegram
+    run = store.create_run(query='Golang')
+    asyncio.run(svc._collect(run))
+    pages = [
+        request
+        for request in client.calls
+        if isinstance(request, functions.channels.SearchPostsRequest)
+    ]
+    assert len(pages) == 2
+    assert pages[1].offset_id == 100
+    assert pages[1].offset_rate == int(first[-1].date.timestamp())
+
+
+def test_catalog_stops_fetching_pages_at_confirmed_result_limit(tmp_path, monkeypatch):
+    monkeypatch.setenv('PREMIUM_GLOBAL_SEARCH_ENABLED', 'true')
+    monkeypatch.setenv('CANDIDATE_CATALOG_SEARCH_ENABLED', 'true')
+    monkeypatch.setenv('CANDIDATE_BOT_ALLOWED_USER_IDS', '1')
+    svc, store, _, client, _, _ = setup(tmp_path)
+    run = store.create_run(
+        query='"Системный аналитик" вакансии',
+        track='catalog',
+        owner='candidate:1',
+        result_limit=1,
+        profile_snapshot={
+            'profile_id': 'p1',
+            'telegram_user_id': 1,
+            'is_active': True,
+            'role_id': 'systems_analyst',
+            'preferences': {},
+        },
+    )
+    run['search_queries'] = ['системный аналитик']
+
+    async def telegram(request, **_kwargs):
+        client.calls.append(request)
+        if isinstance(request, functions.channels.CheckSearchPostsFloodRequest):
+            return client.quota
+        return SimpleNamespace(
+            messages=[message(text='#вакансия Ищем системного аналитика')],
+            chats=[channel(access_hash=12345)],
+            next_rate=1,
+        )
+
+    async def accept(_run, result):
+        store.update_result(
+            result['result_id'],
+            status='accepted',
+            decision_status='accepted',
+            decision_reason='llm_accepted',
+        )
+
+    svc.client = telegram
+    svc._evaluate = accept
+    asyncio.run(svc._collect(run, analyze_pages=True))
+    assert (
+        sum(
+            isinstance(request, functions.channels.SearchPostsRequest)
+            for request in client.calls
+        )
+        == 1
+    )
+    assert store.get_run(run['search_run_id'])['metrics']['accepted'] == 1
+
+
 @pytest.mark.parametrize(
     ('field', 'value'),
     [('confidence', 89), ('needs_review', True), ('go_role_strength', 'significant')],

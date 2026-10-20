@@ -30,6 +30,9 @@ from tg_vacancy_bot.telegram.links import build_vacancy_id
 from tg_vacancy_bot.storage.vacancy_groups import VacancyGroupStore
 
 _USERNAME = re.compile(r'[A-Za-z][A-Za-z0-9_]{3,31}\Z')
+CATALOG_MAX_MESSAGES = 10_000
+DEFAULT_MAX_MESSAGES = 1_000
+CATALOG_TIME_LIMIT = timedelta(minutes=20)
 _URL = re.compile(r'https?://[^\s<>]+', re.I)
 _APPLY = re.compile(
     r'apply|application|careers?|jobs?|vacanc|отклик|подать|анкет', re.I
@@ -84,7 +87,11 @@ def extract_apply_urls(text: str, entities: list | None = None) -> list[str]:
 
 
 def normalize_result(
-    message: Any, channel: Any, period_days: int, track: str = 'go'
+    message: Any,
+    channel: Any,
+    period_days: int,
+    track: str = 'go',
+    profile_snapshot: dict | None = None,
 ) -> dict:
     """Keep rejected candidates in the audit while exposing only verified sources."""
     text = str(getattr(message, 'message', '') or '').strip()
@@ -149,6 +156,19 @@ def normalize_result(
         days=period_days
     ):
         return dict(values, status='rejected', decision_reason='old_content')
+    if track == 'catalog':
+        from tg_vacancy_bot.premium_search.tracks import prefilter_reason
+        from tg_vacancy_bot.profile_matcher import profile_text_prefilter_reason
+
+        reason = prefilter_reason(text, track)
+        if reason is None and profile_snapshot:
+            reason = profile_text_prefilter_reason(
+                profile_snapshot.get('preferences') or {}, text
+            )
+        if reason:
+            return dict(
+                values, status='rejected', decision_reason=f'prefilter:{reason}'
+            )
     values['apply_urls_json'] = json.dumps(
         extract_apply_urls(text, getattr(message, 'entities', None))
     )
@@ -304,40 +324,13 @@ class PremiumSearchService:
                 return
             if run['phase'] not in {'analyzing', 'llm_retry'}:
                 self.store.update_run(run_id, phase='quota_check', retry_at=None)
-                quota = await self._telegram(
-                    run_id,
-                    functions.channels.CheckSearchPostsFloodRequest(query=run['query']),
-                )
-                quota_data = dict(
-                    remains=quota.remains,
-                    total_daily=quota.total_daily,
-                    reset_at=(
-                        datetime.fromtimestamp(
-                            quota.wait_till, timezone.utc
-                        ).isoformat()
-                        if quota.wait_till
-                        else None
-                    ),
-                )
-                self.store.update_run(run_id, quota_json=json.dumps(quota_data))
-                if not quota.query_is_free and quota.remains <= 0:
-                    raise QuotaExhausted()
-                self._recovered('free_quota_exhausted')
+                if run['track'] != 'catalog':
+                    await self._check_query_quota(run_id, run['query'])
                 self.store.update_run(run_id, phase='searching')
-                await self._collect(run)
+                await self._collect(run, analyze_pages=run['track'] == 'catalog')
                 self._recovered('search_failed')
             self.store.update_run(run_id, phase='analyzing', retry_at=None)
-            for result in self.store.pending_results(run_id):
-                await self._priority(run_id)
-                if result['status'] == 'pending':
-                    await self._evaluate(run, result)
-                if run['track'] == 'catalog':
-                    metrics = self.store.get_run(run_id)['metrics']
-                    if (
-                        metrics['accepted'] + metrics['saved'] + metrics['published']
-                        >= run['result_limit']
-                    ):
-                        break
+            await self._analyze_pending(run)
             # Publish only after all candidates have been scored and ranked.
             for result in self.store.ranked_results(run_id):
                 current = self.store.get_result(result['result_id'])
@@ -361,9 +354,21 @@ class PremiumSearchService:
                     if claimed:
                         await self._action(claimed)
             self._check_cancel(run_id)
+            completed = self.store.get_run(run_id)
+            metrics = completed['metrics']
+            if (
+                run['track'] == 'catalog'
+                and not completed['error_reason']
+                and metrics['found'] > 0
+                and metrics['llm_analyzed'] == 0
+                and metrics['old'] + metrics['invalid'] + metrics['prefilter_rejected']
+                == metrics['found']
+            ):
+                self.store.update_run(run_id, error_reason='no_recent_candidates')
             status = (
                 'completed_with_errors'
                 if self.store.get_run(run_id)['metrics']['errors']
+                or self.store.get_run(run_id)['error_reason']
                 else 'completed'
             )
             self.store.update_run(
@@ -405,52 +410,159 @@ class PremiumSearchService:
                 run_id, status='failed', error_reason=reason, finished_at=now()
             )
 
-    async def _collect(self, run: dict) -> None:
-        offset_rate, offset_id = 0, 0
-        offset_peer = types.InputPeerEmpty()
-        seen = set()
-        for _ in range(10):
-            response = await self._telegram(
-                run['search_run_id'],
-                functions.channels.SearchPostsRequest(
-                    query=run['query'],
-                    offset_rate=offset_rate,
-                    offset_peer=offset_peer,
-                    offset_id=offset_id,
-                    limit=100,
-                    allow_paid_stars=None,
-                ),
+    def _catalog_timed_out(self, run: dict) -> bool:
+        return bool(
+            run['track'] == 'catalog'
+            and run.get('started_at')
+            and datetime.now(timezone.utc)
+            >= datetime.fromisoformat(run['started_at']) + CATALOG_TIME_LIMIT
+        )
+
+    async def _check_query_quota(self, run_id: str, query: str) -> None:
+        quota = await self._telegram(
+            run_id, functions.channels.CheckSearchPostsFloodRequest(query=query)
+        )
+        quota_data = dict(
+            remains=quota.remains,
+            total_daily=quota.total_daily,
+            reset_at=(
+                datetime.fromtimestamp(quota.wait_till, timezone.utc).isoformat()
+                if quota.wait_till
+                else None
+            ),
+        )
+        self.store.update_run(run_id, quota_json=json.dumps(quota_data))
+        if not quota.query_is_free and quota.remains <= 0:
+            raise QuotaExhausted()
+        self._recovered('free_quota_exhausted')
+
+    async def _analyze_pending(self, run: dict) -> bool:
+        """Score available posts and stop once the catalog result cap is met."""
+        run_id = run['search_run_id']
+        for result in self.store.pending_results(run_id):
+            await self._priority(run_id)
+            if run['track'] == 'catalog':
+                if (
+                    self.store.get_run(run_id)['metrics']['accepted']
+                    >= run['result_limit']
+                ):
+                    return True
+                if self._catalog_timed_out(run):
+                    self.store.update_run(run_id, error_reason='time_limit_reached')
+                    return True
+            if result['status'] == 'pending':
+                await self._evaluate(run, result)
+                if (
+                    run['track'] == 'catalog'
+                    and self.store.get_run(run_id)['metrics']['accepted']
+                    >= run['result_limit']
+                ):
+                    return True
+        return False
+
+    async def _collect(self, run: dict, *, analyze_pages: bool = False) -> None:
+        run_id = run['search_run_id']
+        catalog = run['track'] == 'catalog'
+        limit = CATALOG_MAX_MESSAGES if catalog else DEFAULT_MAX_MESSAGES
+        scanned = run.get('messages_scanned', 0)
+        queries = run.get('search_queries') or [run['query']]
+        states = [
+            dict(
+                query=query,
+                rate=0,
+                peer=types.InputPeerEmpty(),
+                mid=0,
+                checked=False,
+                last_key=None,
             )
-            channels = {c.id: c for c in getattr(response, 'chats', [])}
-            messages = list(getattr(response, 'messages', []))
-            fresh = []
-            for message in messages:
-                key = (
-                    getattr(getattr(message, 'peer_id', None), 'channel_id', None),
-                    message.id,
-                )
-                if key not in seen:
-                    seen.add(key)
-                    fresh.append(
-                        normalize_result(
-                            message,
-                            channels.get(key[0]),
-                            run['period_days'],
-                            run['track'],
+            for query in queries
+        ]
+        seen: set[tuple[int | None, int]] = set()
+        while states and scanned < limit:
+            for state in tuple(states):
+                await self._priority(run_id)
+                if scanned >= limit:
+                    break
+                if self._catalog_timed_out(run):
+                    self.store.update_run(run_id, error_reason='time_limit_reached')
+                    return
+                if catalog and not state['checked']:
+                    try:
+                        await self._check_query_quota(run_id, state['query'])
+                    except QuotaExhausted:
+                        if not scanned:
+                            raise
+                        self._error('free_quota_exhausted')
+                        self.store.update_run(
+                            run_id, error_reason='free_quota_exhausted'
                         )
+                        states.remove(state)
+                        continue
+                    state['checked'] = True
+                page_limit = min(100, limit - scanned)
+                response = await self._telegram(
+                    run_id,
+                    functions.channels.SearchPostsRequest(
+                        query=state['query'],
+                        offset_rate=state['rate'],
+                        offset_peer=state['peer'],
+                        offset_id=state['mid'],
+                        limit=page_limit,
+                        allow_paid_stars=None,
+                    ),
+                )
+                channels = {c.id: c for c in getattr(response, 'chats', [])}
+                messages = list(getattr(response, 'messages', []))[: limit - scanned]
+                scanned += len(messages)
+                fresh = []
+                for message in messages:
+                    key = (
+                        getattr(getattr(message, 'peer_id', None), 'channel_id', None),
+                        message.id,
                     )
-            if not fresh:
-                break
-            self.store.retain_search(run['search_run_id'], fresh, phase='collecting')
-            next_rate = getattr(response, 'next_rate', None)
-            if not messages or next_rate is None:
-                break
-            last = messages[-1]
-            channel = channels.get(getattr(last.peer_id, 'channel_id', None))
-            if channel is None:
-                break
-            offset_peer = utils.get_input_peer(channel)
-            offset_rate, offset_id = next_rate, last.id
+                    if key not in seen:
+                        seen.add(key)
+                        fresh.append(
+                            normalize_result(
+                                message,
+                                channels.get(key[0]),
+                                run['period_days'],
+                                run['track'],
+                                run.get('profile_snapshot'),
+                            )
+                        )
+                if fresh:
+                    self.store.retain_search(run_id, fresh, phase='collecting')
+                self.store.update_run(run_id, messages_scanned=scanned)
+                if analyze_pages and await self._analyze_pending(run):
+                    return
+                next_rate = getattr(response, 'next_rate', None)
+                if not messages or (len(messages) < page_limit and next_rate is None):
+                    states.remove(state)
+                    continue
+                last = messages[-1]
+                if next_rate is None and isinstance(
+                    getattr(last, 'date', None), datetime
+                ):
+                    next_rate = int(last.date.timestamp())
+                channel = channels.get(
+                    getattr(getattr(last, 'peer_id', None), 'channel_id', None)
+                )
+                cursor_key = (getattr(channel, 'id', None), last.id, next_rate)
+                if (
+                    channel is None
+                    or next_rate is None
+                    or cursor_key == state['last_key']
+                ):
+                    states.remove(state)
+                    continue
+                try:
+                    state['peer'] = utils.get_input_peer(channel)
+                except TypeError:
+                    states.remove(state)
+                    continue
+                state['rate'], state['mid'] = next_rate, last.id
+                state['last_key'] = cursor_key
 
     async def _analyze(self, text: str, run: dict) -> PremiumAnalysis:
         if run['track'] == 'catalog':

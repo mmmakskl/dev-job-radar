@@ -78,6 +78,18 @@ def _contains_skill(text: str, skill: str) -> bool:
     )
 
 
+def profile_text_prefilter_reason(preferences: dict, source_text: str) -> str | None:
+    """Apply only text filters that the current profile matcher also enforces."""
+    normalized_text = _norm(source_text)
+    excluded = _values(preferences.get('excluded_skills', []))
+    if any(_contains_skill(normalized_text, word) for word in excluded):
+        return 'excluded_word'
+    skills = _values(preferences.get('required_skills', []))
+    if skills and not any(_contains_skill(normalized_text, word) for word in skills):
+        return 'skill_missing'
+    return None
+
+
 GRADE_ORDER = {
     grade: index
     for index, grade in enumerate(('intern', 'junior', 'middle', 'senior', 'lead'))

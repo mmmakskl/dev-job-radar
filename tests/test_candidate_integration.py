@@ -453,6 +453,8 @@ def latest_button(api, label):
 def test_search_preview_idempotency_ownership_restart_and_cancel(tmp_path, monkeypatch):
     store, _, profile, searches, api, ui = search_setup(tmp_path, monkeypatch)
     asyncio.run(ui.preview(1, profile))
+    assert 'Поисковые варианты:' in api.messages[-1][1]
+    assert '10 000 сообщений' in api.messages[-1][1]
     start = latest_button(api, 'Запустить поиск').split(':')
     assert searches.list_runs() == []
     assert not asyncio.run(ui.callback(2, start))

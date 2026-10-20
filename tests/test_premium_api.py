@@ -127,7 +127,7 @@ def test_create_limits_conflict_and_no_publisher(api_client, tmp_path):
     )
 
 
-def test_catalog_admin_search_requires_filters_and_uses_weekly_admin_quota(
+def test_catalog_admin_search_requires_filters_without_weekly_quota(
     api_client, monkeypatch
 ):
     monkeypatch.setenv('CANDIDATE_BOT_ENABLED', 'true')
@@ -157,12 +157,14 @@ def test_catalog_admin_search_requires_filters_and_uses_weekly_admin_quota(
         assert response.status_code == 202, response.text
         assert 'telegram_user_id' not in response.text
         assert 'admin:100' not in response.text
-    limited = api_client.post(PREFIX + '/runs', json=payload, headers=headers)
-    assert limited.status_code == 429
-    assert api_client.get(PREFIX + '/capabilities').json()['weekly_search_limit'] == 5
+    extra = api_client.post(PREFIX + '/runs', json=payload, headers=headers)
+    assert extra.status_code == 202
+    capabilities = api_client.get(PREFIX + '/capabilities').json()
+    assert capabilities['weekly_search_limit'] is None
+    assert capabilities['profile_max_search_posts'] == 10_000
 
 
-def test_candidate_profile_search_has_one_run_per_rolling_week(tmp_path, monkeypatch):
+def test_candidate_profile_search_has_no_weekly_limit(tmp_path, monkeypatch):
     monkeypatch.setenv('PREMIUM_GLOBAL_SEARCH_ENABLED', 'true')
     monkeypatch.setenv('CANDIDATE_CATALOG_SEARCH_ENABLED', 'true')
     monkeypatch.setenv('CANDIDATE_BOT_ALLOWED_USER_IDS', '101')
@@ -188,13 +190,14 @@ def test_candidate_profile_search_has_one_run_per_rolling_week(tmp_path, monkeyp
         owner='candidate:101',
         profile_snapshot=asdict(snapshot),
     )
-    with pytest.raises(ValueError, match='лимит'):
-        store.create_run(
-            query='Go developer',
-            track='catalog',
-            owner='candidate:101',
-            profile_snapshot=asdict(snapshot),
-        )
+    run = store.create_run(
+        query='Go developer',
+        track='catalog',
+        owner='candidate:101',
+        profile_snapshot=asdict(snapshot),
+    )
+    assert run['status'] == 'queued'
+    assert len(run['search_queries']) >= 2
 
 
 def test_add_source_only_queues(api_client, tmp_path):

@@ -216,7 +216,7 @@ def test_catalog_child_isolated_and_cancelled_with_parent(tmp_path, monkeypatch)
     assert children['candidate:2']['status'] == 'queued'
 
 
-def test_candidate_quota_exhaustion_is_reported_on_parent_search(tmp_path, monkeypatch):
+def test_candidate_can_start_another_search_after_previous_run(tmp_path, monkeypatch):
     enabled(monkeypatch)
     search = SearchStore(str(tmp_path / 'search.sqlite3'))
     premium = PremiumSearchStore(str(tmp_path / 'premium.sqlite3'))
@@ -239,8 +239,8 @@ def test_candidate_quota_exhaustion_is_reported_on_parent_search(tmp_path, monke
     )
     asyncio.run(service._premium())
     state = search.get_run(run['id'])['source_states']['premium']
-    assert state['status'] == 'failed'
-    assert state['reason'] == 'weekly_search_quota_exhausted'
+    assert state['status'] == 'running'
+    assert state['reason'] is None
 
 
 def test_profile_search_stops_after_valid_vacancy_limit(tmp_path, monkeypatch):

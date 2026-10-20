@@ -184,9 +184,9 @@ Telegram-карточку, но его источник сохраняется �
 Candidate Bot сохраняет Go-ленту и архив, предоставляет редактор нескольких
 профилей и отдельный выбор Premium-шаблона. Профильный Premium-поиск закрыт
 флагом `CANDIDATE_CATALOG_SEARCH_ENABLED` и доступен разрешённым Candidate Bot
-пользователям. Он просматривает до 1000 сообщений за период 1–7 дней и принимает
-до 50 строгих совпадений. Квота — один запуск на пользователя и пять запусков
-для связанного Telegram-администратора панели за скользящие семь дней.
+пользователям. Он чередует варианты названия роли, просматривает суммарно до
+10 000 сообщений за период 1–7 дней и принимает до 50 строгих совпадений.
+Недельной квоты приложения нет; бесплатный лимит Telegram и FloodWait действуют.
 Общий реестр в Candidate SQLite хранит полный анализ и исходные даты;
 matching переиспользует его по версии профиля. Принятые профильным Premium-поиском
 вакансии записываются через общий pipeline и доступны всем активным профилям по
@@ -212,7 +212,7 @@ matching переиспользует его по версии профиля. �
 | `VACANCY_GROUP_WINDOW_DAYS`, `VACANCY_GROUPS_DB_PATH` | Нет | Окно строгой группировки новых репостов и `data/vacancy_groups.sqlite3` |
 | `TELEGRAM_NOTIFY_TARGET` | При alerts | Получатель эксплуатационных алертов; policy хранится в SQLite |
 | `CANDIDATE_BOT_*` | Все обязательны при включении | Bot API token, общий beta-канал, allowlist numeric user ID и SQLite path |
-| `CANDIDATE_CATALOG_SEARCH_ENABLED`, `PREMIUM_SEARCH_WEB_ADMIN_TELEGRAM_ID` | Для профильного Premium поиска | Feature flag и Telegram ID веб-оператора; квоты 1/5 запусков за 7 дней |
+| `CANDIDATE_CATALOG_SEARCH_ENABLED`, `PREMIUM_SEARCH_WEB_ADMIN_TELEGRAM_ID` | Для профильного Premium поиска | Feature flag и Telegram ID веб-оператора; недельной квоты приложения нет |
 | `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET` | Да для UI | Вход и HMAC сессии |
 | `ADMIN_COOKIE_SECURE`, `ADMIN_STATIC_DIR` | Нет | Cookie и каталог статической панели |
 

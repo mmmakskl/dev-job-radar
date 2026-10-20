@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from tg_vacancy_bot.premium_search.store import (
     ActiveRunError,
     PremiumSearchStore,
-    WeeklyQuotaError,
 )
 from tg_vacancy_bot.premium_search.tracks import TRACKS
 
@@ -87,11 +86,12 @@ def install_routes(
             max_results=100,
             max_llm_calls=3000,
             max_search_posts=1000,
+            profile_max_search_posts=10_000,
             period_days=7,
             max_period_days=30,
             profile_max_results=50,
             profile_max_period_days=7,
-            weekly_search_limit=5,
+            weekly_search_limit=None,
             catalog_profile_filters=catalog_enabled,
             profile_directions=(
                 [
@@ -129,8 +129,6 @@ def install_routes(
             web_admin_id = int(os.getenv('PREMIUM_SEARCH_WEB_ADMIN_TELEGRAM_ID') or 0)
         except ValueError:
             web_admin_id = 0
-        quota_subject = f'telegram:{web_admin_id}' if web_admin_id else 'web-admin'
-        weekly_limit = 5
         if web_admin_id:
             owner = f'admin:{web_admin_id}'
         if body.track == 'catalog':
@@ -196,7 +194,6 @@ def install_routes(
                     is_active=True,
                     version=1,
                 )
-                quota_subject, weekly_limit = f'telegram:{admin_id}', 5
             except (TypeError, ValueError) as error:
                 raise HTTPException(422, str(error)) from error
             if body.mode != 'preview':
@@ -214,17 +211,11 @@ def install_routes(
             values.update(
                 owner=owner,
                 profile_snapshot=profile_snapshot,
-                quota_subject=quota_subject,
-                weekly_limit=weekly_limit,
             )
             return public_run(store.create_run(**values))
         except ActiveRunError as error:
             raise HTTPException(
                 409, dict(message=str(error), existing_run_id=error.run_id)
-            ) from error
-        except WeeklyQuotaError as error:
-            raise HTTPException(
-                429, dict(message=str(error), weekly_limit=error.limit)
             ) from error
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
