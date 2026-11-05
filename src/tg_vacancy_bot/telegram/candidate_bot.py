@@ -628,6 +628,7 @@ class CandidateBot:
                 {'command': 'saved', 'description': 'Сохранённые вакансии'},
                 {'command': 'forme', 'description': 'Поиск по активному профилю'},
                 {'command': 'profiles', 'description': 'Профили и активный профиль'},
+                {'command': 'login', 'description': 'Код для входа на сайт'},
             ]
         )
         await self.api.set_chat_menu_button(self._menu_button())
@@ -665,6 +666,28 @@ class CandidateBot:
             await self.api.send_message(chat_id, 'Доступ к beta-боту ограничен.')
             return
         text = (message.get('text') or '').strip()
+        if text == '/login':
+            token = os.getenv('CANDIDATE_BOT_TOKEN', '')
+            if not token:
+                await self.api.send_message(chat_id, 'Вход на сайт пока не настроен.')
+                return
+            code = self.store.issue_web_login_code(user_id, token)
+            site_url = os.getenv('CANDIDATE_MINIAPP_URL', '').strip()
+            parsed_url = urlsplit(site_url)
+            site_line = (
+                f'Сайт: {site_url}\n'
+                if parsed_url.scheme == 'https'
+                and parsed_url.hostname
+                and not parsed_url.username
+                else ''
+            )
+            await self.api.send_message(
+                chat_id,
+                f'Одноразовый код для входа на сайт:\nКод: {code}\n{site_line}'
+                'Действует 10 минут. Введите его на странице Mini App в браузере. '
+                'Новый запрос отменит предыдущий код.',
+            )
+            return
         if text in {'/start', '/help'}:
             await self.api.send_message(
                 chat_id,
@@ -673,7 +696,8 @@ class CandidateBot:
                     'Начните с настройки профиля, затем смотрите подходящие вакансии.'
                     if text == '/start'
                     else 'Команды: /forme — подходящие вакансии; /saved — сохранённые; '
-                    '/profiles — профили; /cancel — отменить настройку профиля.'
+                    '/profiles — профили; /login — код для входа на сайт; '
+                    '/cancel — отменить настройку профиля.'
                 ),
                 reply_markup=self._keyboard(user_id),
             )

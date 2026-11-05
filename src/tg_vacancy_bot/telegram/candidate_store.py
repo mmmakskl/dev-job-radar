@@ -1,8 +1,11 @@
 """SQLite persistence for candidate profiles, feed cards and saved vacancies."""
 
 import hashlib
+import hmac
 import json
+import secrets
 import sqlite3
+import time
 import uuid
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -147,6 +150,27 @@ class CandidateStore:
                 CHECK (older_days BETWEEN 2 AND 3650)
             )'''
             )
+            connection.executescript('''
+                CREATE TABLE IF NOT EXISTS candidate_web_login_codes (
+                    code_hash TEXT PRIMARY KEY,
+                    telegram_user_id INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_candidate_login_user
+                    ON candidate_web_login_codes (telegram_user_id);
+                CREATE TABLE IF NOT EXISTS candidate_web_sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    telegram_user_id INTEGER NOT NULL,
+                    csrf_token TEXT NOT NULL,
+                    expires_at INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS candidate_web_login_attempts (
+                    client_key TEXT NOT NULL,
+                    attempted_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_candidate_login_attempts
+                    ON candidate_web_login_attempts (client_key, attempted_at);
+            ''')
             self._add_column_if_missing(
                 connection, 'vacancies', 'go_visible', 'INTEGER NOT NULL DEFAULT 1'
             )
@@ -169,6 +193,101 @@ class CandidateStore:
             if previous_version < 5:
                 self._migrate_profiles_v3(connection)
             connection.execute('PRAGMA user_version = 5')
+
+    @staticmethod
+    def _web_code_hash(code: str, secret: str) -> str:
+        return hmac.new(secret.encode(), code.encode(), hashlib.sha256).hexdigest()
+
+    def issue_web_login_code(self, user_id: int, secret: str) -> str:
+        """Replace a user's outstanding browser code with a ten-minute code."""
+        if not secret:
+            raise ValueError('Candidate Bot token is required')
+        code = f'{secrets.randbelow(10_000_000_000):010d}'
+        now = int(time.time())
+        with self._connect() as connection:
+            connection.execute(
+                'DELETE FROM candidate_web_login_codes WHERE telegram_user_id=? OR expires_at<=?',
+                (user_id, now),
+            )
+            connection.execute(
+                'INSERT INTO candidate_web_login_codes VALUES (?,?,?)',
+                (self._web_code_hash(code, secret), user_id, now + 600),
+            )
+        return code
+
+    def allow_web_login_attempt(self, client_key: str) -> bool:
+        """Limit code guesses per connecting client across API processes."""
+        now = int(time.time())
+        key_hash = hashlib.sha256(client_key.encode()).hexdigest()
+        with self._connect() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            connection.execute(
+                'DELETE FROM candidate_web_login_attempts WHERE attempted_at<=?',
+                (now - 600,),
+            )
+            count = connection.execute(
+                'SELECT COUNT(*) FROM candidate_web_login_attempts WHERE client_key=?',
+                (key_hash,),
+            ).fetchone()[0]
+            if count >= 20:
+                return False
+            connection.execute(
+                'INSERT INTO candidate_web_login_attempts VALUES (?,?)',
+                (key_hash, now),
+            )
+        return True
+
+    def redeem_web_login_code(self, code: str, secret: str) -> int | None:
+        """Consume a valid code atomically, returning only its Telegram owner."""
+        if not secret or len(code) != 10 or not code.isascii() or not code.isdigit():
+            return None
+        now = int(time.time())
+        with self._connect() as connection:
+            row = connection.execute(
+                'DELETE FROM candidate_web_login_codes '
+                'WHERE code_hash=? AND expires_at>? RETURNING telegram_user_id',
+                (self._web_code_hash(code, secret), now),
+            ).fetchone()
+            return int(row['telegram_user_id']) if row else None
+
+    def create_web_session(self, user_id: int) -> tuple[str, str]:
+        token = secrets.token_urlsafe(32)
+        csrf = secrets.token_urlsafe(24)
+        now = int(time.time())
+        with self._connect() as connection:
+            connection.execute(
+                'DELETE FROM candidate_web_sessions WHERE expires_at<=?', (now,)
+            )
+            connection.execute(
+                'INSERT INTO candidate_web_sessions VALUES (?,?,?,?)',
+                (
+                    hashlib.sha256(token.encode()).hexdigest(),
+                    user_id,
+                    csrf,
+                    now + 604800,
+                ),
+            )
+        return token, csrf
+
+    def web_session(self, token: str | None) -> tuple[int, str] | None:
+        if not token or len(token) > 128:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                'SELECT telegram_user_id, csrf_token FROM candidate_web_sessions '
+                'WHERE token_hash=? AND expires_at>?',
+                (hashlib.sha256(token.encode()).hexdigest(), int(time.time())),
+            ).fetchone()
+        return (int(row['telegram_user_id']), row['csrf_token']) if row else None
+
+    def revoke_web_session(self, token: str | None) -> None:
+        if not token:
+            return
+        with self._connect() as connection:
+            connection.execute(
+                'DELETE FROM candidate_web_sessions WHERE token_hash=?',
+                (hashlib.sha256(token.encode()).hexdigest(),),
+            )
 
     @staticmethod
     def _migrate_profiles_v3(connection: sqlite3.Connection) -> None:

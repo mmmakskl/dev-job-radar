@@ -79,6 +79,22 @@ def test_cancel_without_draft_replies_explicitly(tmp_path):
     assert api.messages[-1][1] == 'Нет активной настройки профиля.'
 
 
+def test_login_command_issues_private_browser_code(tmp_path, monkeypatch):
+    monkeypatch.setenv('CANDIDATE_BOT_TOKEN', '123456:test-token')
+    store, _ = make_store(tmp_path)
+    api = FakeBotApi()
+    bot = CandidateBot(api, store, {1})
+    asyncio.run(bot.handle_update(message(1, '/login')))
+    text = api.messages[-1][1]
+    assert 'одноразовый код' in text.lower()
+    assert (
+        store.redeem_web_login_code(
+            text.split('Код: ')[1].splitlines()[0], '123456:test-token'
+        )
+        == 1
+    )
+
+
 def test_feed_saves_and_archive_is_private(tmp_path):
     store, items = make_store(tmp_path, 2)
     api, bot = FakeBotApi(), CandidateBot(FakeBotApi(), store, {1, 2})

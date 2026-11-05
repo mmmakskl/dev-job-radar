@@ -31,16 +31,51 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); delete (window as Window & { Telegram?: unknown }).Telegram; });
 
-it('never shows sample vacancies outside Telegram', async () => {
+it('shows one-time-code sign in outside Telegram without sample vacancies', async () => {
   delete (window as Window & { Telegram?: unknown }).Telegram;
-  const fetchMock = vi.fn();
+  const fetchMock = vi.fn(() => response({ authenticated: false }));
   vi.stubGlobal('fetch', fetchMock);
 
   render(<MiniappPage/>);
 
-  expect(await screen.findByText(/Откройте Mini App через бота в Telegram/)).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: /Твои вакансии — на большом экране/ })).toBeInTheDocument();
+  expect(screen.getByLabelText('Код из Telegram')).toBeInTheDocument();
   expect(screen.queryByText('Go Backend Developer')).not.toBeInTheDocument();
-  expect(fetchMock).not.toHaveBeenCalled();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it('opens browser profile with a code, sends CSRF for edits, and logs out', async () => {
+  delete (window as Window & { Telegram?: unknown }).Telegram;
+  let loggedIn = false;
+  let csrfUsed = false;
+  vi.stubGlobal('fetch', vi.fn((input: string, init?: RequestInit) => {
+    if (input.endsWith('/auth/session')) return response({ authenticated: loggedIn, csrf_token: loggedIn ? 'csrf-value' : undefined });
+    if (input.endsWith('/auth/code')) { loggedIn = true; return response({ ok: true, csrf_token: 'csrf-value' }); }
+    if (input.endsWith('/auth/logout')) { loggedIn = false; return response({ ok: true }); }
+    if (input.endsWith('/me')) return response({ user: { id: 1, first_name: 'Tester' }, profiles: [liveProfile], active_profile_id: 'p1', premium_enabled: true });
+    if (input.endsWith('/feed/settings')) return response({ older_days: 7, max_older_days: 30 });
+    if (input.includes('/feed')) return response({ items: [], total: 0 });
+    if (input.endsWith('/saved')) return response({ items: [] });
+    if (input.endsWith('/premium/templates') || input.endsWith('/premium/runs')) return response({ items: [] });
+    if (input.endsWith('/profiles') && init?.method === 'POST') {
+      csrfUsed = (init.headers as Record<string, string>)['X-Candidate-CSRF'] === 'csrf-value';
+      return response({ ...liveProfile, profile_id: 'p2' }, 201);
+    }
+    return response({}, 404);
+  }));
+
+  render(<MiniappPage/>);
+  fireEvent.change(await screen.findByLabelText('Код из Telegram'), { target: { value: '1234567890' } });
+  fireEvent.click(screen.getByRole('button', { name: /Войти на сайт/ }));
+  await screen.findByText('Live Profile');
+  fireEvent.click(within(screen.getByRole('navigation', { name: 'Навигация' })).getByRole('button', { name: /профили/i }));
+  fireEvent.click(screen.getByRole('button', { name: 'Новый профиль' }));
+  fireEvent.change(screen.getByPlaceholderText('Например, Go Backend'), { target: { value: 'Browser Role' } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Вид разработки' }), { target: { value: 'backend_developer' } });
+  fireEvent.click(screen.getByRole('button', { name: /Сохранить профиль/ }));
+  await waitFor(() => expect(csrfUsed).toBe(true));
+  fireEvent.click(screen.getByRole('button', { name: 'Выйти' }));
+  expect(await screen.findByLabelText('Код из Telegram')).toBeInTheDocument();
 });
 
 it('shows the real profile and registry vacancy when launched by Telegram', async () => {

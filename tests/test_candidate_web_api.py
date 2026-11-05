@@ -37,7 +37,7 @@ def _client(tmp_path, monkeypatch) -> TestClient:
     monkeypatch.setenv('CANDIDATE_CATALOG_SEARCH_ENABLED', 'true')
     monkeypatch.setenv('PREMIUM_GLOBAL_SEARCH_ENABLED', 'true')
     monkeypatch.setenv('ADMIN_STATIC_DIR', str(tmp_path / 'no-static'))
-    return TestClient(create_app(str(tmp_path)))
+    return TestClient(create_app(str(tmp_path)), base_url='https://testserver')
 
 
 def _profile_payload(name: str = 'Go Backend') -> dict:
@@ -69,6 +69,95 @@ def test_candidate_web_rejects_missing_tampered_expired_and_unlisted_identity(
         client.get(endpoint, headers={'X-Telegram-Init-Data': forged}).status_code
         == 401
     )
+
+
+def test_browser_code_login_is_one_time_and_session_is_owner_scoped(
+    tmp_path, monkeypatch
+):
+    client = _client(tmp_path, monkeypatch)
+    store = CandidateStore(str(tmp_path / 'candidate_bot.sqlite3'))
+    code = store.issue_web_login_code(1, TOKEN)
+    profile = store.create_profile(
+        1,
+        name='Private',
+        direction_id='development',
+        specialization_id='backend',
+        role_id='backend_developer',
+    )
+    store.create_profile(
+        2,
+        name='Other',
+        direction_id='development',
+        specialization_id='backend',
+        role_id='backend_developer',
+    )
+
+    login = client.post('/api/v1/candidate/auth/code', json={'code': code})
+    assert login.status_code == 200
+    assert login.cookies['candidate_session']
+    assert login.json()['csrf_token']
+    assert (
+        client.post('/api/v1/candidate/auth/code', json={'code': code}).status_code
+        == 401
+    )
+    me = client.get('/api/v1/candidate/me')
+    assert me.status_code == 200
+    assert [item['profile_id'] for item in me.json()['profiles']] == [
+        profile.profile_id
+    ]
+
+    payload = _profile_payload('From browser')
+    assert client.post('/api/v1/candidate/profiles', json=payload).status_code == 403
+    csrf = {'X-Candidate-CSRF': login.json()['csrf_token']}
+    assert (
+        client.post(
+            '/api/v1/candidate/profiles', json=payload, headers=csrf
+        ).status_code
+        == 201
+    )
+    assert client.post('/api/v1/candidate/auth/logout', headers=csrf).status_code == 200
+    assert client.get('/api/v1/candidate/me').status_code == 401
+
+
+def test_browser_login_rejects_expired_code_and_limits_guesses(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    store = CandidateStore(str(tmp_path / 'candidate_bot.sqlite3'))
+    code = store.issue_web_login_code(1, TOKEN)
+    with store._connect() as connection:
+        connection.execute('UPDATE candidate_web_login_codes SET expires_at = 0')
+    assert (
+        client.post('/api/v1/candidate/auth/code', json={'code': code}).status_code
+        == 401
+    )
+    for _ in range(20):
+        client.post('/api/v1/candidate/auth/code', json={'code': '0000000000'})
+    assert (
+        client.post(
+            '/api/v1/candidate/auth/code', json={'code': '0000000000'}
+        ).status_code
+        == 429
+    )
+
+
+def test_browser_login_replaces_code_and_expires_session(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    store = CandidateStore(str(tmp_path / 'candidate_bot.sqlite3'))
+    old_code = store.issue_web_login_code(1, TOKEN)
+    new_code = store.issue_web_login_code(1, TOKEN)
+    assert old_code != new_code
+    assert (
+        client.post('/api/v1/candidate/auth/code', json={'code': old_code}).status_code
+        == 401
+    )
+    login = client.post('/api/v1/candidate/auth/code', json={'code': new_code})
+    assert login.status_code == 200
+    assert 'HttpOnly' in login.headers['set-cookie']
+    assert 'Secure' in login.headers['set-cookie']
+    assert 'SameSite=strict' in login.headers['set-cookie']
+    assert client.get('/api/v1/candidate/me').status_code == 200
+    with store._connect() as connection:
+        connection.execute('UPDATE candidate_web_sessions SET expires_at=0')
+    assert client.get('/api/v1/candidate/me').status_code == 401
 
 
 def test_candidate_web_profiles_share_chat_state_and_reject_stale_or_foreign_edits(

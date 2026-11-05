@@ -13,7 +13,7 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import parse_qsl
 
-from fastapi import Depends, Header, HTTPException, Query, Response
+from fastapi import Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from tg_vacancy_bot.candidate_catalog import (
@@ -30,6 +30,14 @@ from tg_vacancy_bot.telegram.candidate_store import CandidateProfile, CandidateS
 
 PREFIX = '/api/v1/candidate'
 INIT_DATA_MAX_AGE = 24 * 60 * 60
+WEB_SESSION_COOKIE = 'candidate_session'
+WEB_SESSION_AGE = 7 * 24 * 60 * 60
+
+
+class BrowserCodeInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+
+    code: str = Field(pattern=r'^\d{10}$')
 
 
 class ProfileInput(BaseModel):
@@ -263,30 +271,79 @@ def install_routes(app, *, candidate_path: str, search_path: str) -> None:
     def searches() -> SearchStore:
         return SearchStore(search_path)
 
-    def user_id(
-        init_data: str | None = Header(default=None, alias='X-Telegram-Init-Data')
-    ) -> int:
+    def allowed_users() -> set[int]:
         raw_allowed = os.getenv('CANDIDATE_BOT_ALLOWED_USER_IDS', '')
-        try:
-            allowed = {
-                int(value.strip())
-                for value in raw_allowed.split(',')
-                if value.strip().isdigit()
-            }
-        except ValueError:
-            allowed = set()
-        user = _telegram_user(init_data, os.getenv('CANDIDATE_BOT_TOKEN', ''), allowed)
-        return user['id']
-
-    @app.get(PREFIX + '/me')
-    def me(init_data: str | None = Header(default=None, alias='X-Telegram-Init-Data')):
-        raw_allowed = os.getenv('CANDIDATE_BOT_ALLOWED_USER_IDS', '')
-        allowed = {
+        return {
             int(value.strip())
             for value in raw_allowed.split(',')
             if value.strip().isdigit()
         }
-        user = _telegram_user(init_data, os.getenv('CANDIDATE_BOT_TOKEN', ''), allowed)
+
+    def identity(request: Request) -> dict:
+        init_data = request.headers.get('X-Telegram-Init-Data')
+        if init_data:
+            return _telegram_user(
+                init_data, os.getenv('CANDIDATE_BOT_TOKEN', ''), allowed_users()
+            )
+        session = candidates().web_session(request.cookies.get(WEB_SESSION_COOKIE))
+        if session is None:
+            raise HTTPException(401, 'Введите код из бота для входа на сайт')
+        owner, csrf = session
+        if owner not in allowed_users():
+            raise HTTPException(403, 'Доступ к Candidate Bot ограничен')
+        if request.method not in {'GET', 'HEAD', 'OPTIONS'} and not hmac.compare_digest(
+            request.headers.get('X-Candidate-CSRF', ''), csrf
+        ):
+            raise HTTPException(403, 'Обновите страницу и повторите действие')
+        return {'id': owner, 'first_name': 'Кандидат', 'username': ''}
+
+    def user_id(user: dict = Depends(identity)) -> int:
+        return user['id']
+
+    @app.post(PREFIX + '/auth/code')
+    def browser_code_login(
+        body: BrowserCodeInput, request: Request, response: Response
+    ):
+        token = os.getenv('CANDIDATE_BOT_TOKEN', '')
+        if not token:
+            raise HTTPException(503, 'Вход через бота не настроен')
+        client_key = request.client.host if request.client else 'unknown'
+        if not candidates().allow_web_login_attempt(client_key):
+            raise HTTPException(429, 'Слишком много попыток. Повторите через 10 минут')
+        owner = candidates().redeem_web_login_code(body.code, token)
+        if owner is None or owner not in allowed_users():
+            raise HTTPException(401, 'Код неверный или срок его действия истёк')
+        session_token, csrf = candidates().create_web_session(owner)
+        secure = os.getenv('CANDIDATE_WEB_COOKIE_SECURE', 'true').lower() != 'false'
+        response.set_cookie(
+            WEB_SESSION_COOKIE,
+            session_token,
+            max_age=WEB_SESSION_AGE,
+            httponly=True,
+            secure=secure,
+            samesite='strict',
+            path=PREFIX,
+        )
+        response.headers['Cache-Control'] = 'no-store'
+        return {'ok': True, 'csrf_token': csrf}
+
+    @app.get(PREFIX + '/auth/session')
+    def browser_session(request: Request, response: Response):
+        response.headers['Cache-Control'] = 'no-store'
+        session = candidates().web_session(request.cookies.get(WEB_SESSION_COOKIE))
+        if session is None or session[0] not in allowed_users():
+            return {'authenticated': False}
+        return {'authenticated': True, 'csrf_token': session[1]}
+
+    @app.post(PREFIX + '/auth/logout')
+    def browser_logout(request: Request, response: Response, _: int = Depends(user_id)):
+        candidates().revoke_web_session(request.cookies.get(WEB_SESSION_COOKIE))
+        response.delete_cookie(WEB_SESSION_COOKIE, path=PREFIX)
+        response.headers['Cache-Control'] = 'no-store'
+        return {'ok': True}
+
+    @app.get(PREFIX + '/me')
+    def me(user: dict = Depends(identity)):
         profiles = candidates().list_profiles(user['id'])
         active = candidates().get_active_profile(user['id'])
         return {

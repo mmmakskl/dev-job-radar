@@ -60,16 +60,18 @@ export type ProfilePayload = {
 };
 
 export class CandidateApi {
-  constructor(private readonly initData: string) {}
+  constructor(private readonly initData: string, private readonly csrfToken = '') {}
 
   private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const response = await fetch(`/api/v1/candidate${path}`, {
       ...options,
       cache: 'no-store',
+      credentials: 'same-origin',
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
-        'X-Telegram-Init-Data': this.initData,
+        ...(this.initData ? { 'X-Telegram-Init-Data': this.initData } : {}),
+        ...(this.csrfToken && options.method && options.method !== 'GET' ? { 'X-Candidate-CSRF': this.csrfToken } : {}),
       },
     });
     if (!response.ok) {
@@ -100,4 +102,28 @@ export class CandidateApi {
   results(id: string) { return this.request<{ items: CandidateVacancy[]; total: number }>(`/premium/runs/${encodeURIComponent(id)}/results`); }
   cancelRun(id: string) { return this.request<CandidateRun>(`/premium/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }); }
   savePremium(runId: string, resultId: string) { return this.request<{ saved: boolean }>(`/premium/runs/${encodeURIComponent(runId)}/results/${encodeURIComponent(resultId)}/saved`, { method: 'PUT' }); }
+}
+
+export async function browserSession(): Promise<{ authenticated: boolean; csrf_token?: string }> {
+  const response = await fetch('/api/v1/candidate/auth/session', { cache: 'no-store', credentials: 'same-origin' });
+  if (!response.ok) throw new Error('Не удалось проверить вход. Попробуйте обновить страницу.');
+  return response.json();
+}
+
+export async function browserLogin(code: string): Promise<string> {
+  const response = await fetch('/api/v1/candidate/auth/code', {
+    method: 'POST', cache: 'no-store', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Не удалось войти');
+  return data.csrf_token;
+}
+
+export async function browserLogout(csrfToken: string): Promise<void> {
+  const response = await fetch('/api/v1/candidate/auth/logout', {
+    method: 'POST', cache: 'no-store', credentials: 'same-origin',
+    headers: { 'X-Candidate-CSRF': csrfToken },
+  });
+  if (!response.ok) throw new Error('Не удалось выйти. Попробуйте ещё раз.');
 }
