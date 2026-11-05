@@ -81,6 +81,7 @@ STEP_LABELS = dict(
     )
 )
 STEP_LABELS['name'] = 'Имя профиля'
+STEP_LABELS['stacks'] = 'Язык разработки'
 STEP_LABELS['premium_template_id'] = 'Premium-шаблон'
 STEP_LABELS.update(
     {
@@ -168,7 +169,9 @@ SENIORITY_LABELS = {
     'junior': 'Junior',
     'middle': 'Middle',
     'senior': 'Senior',
+    'staff': 'Staff',
     'lead': 'Lead',
+    'head': 'Head',
 }
 FORMAT_LABELS = {'remote': 'Удалённо', 'hybrid': 'Гибрид', 'office': 'В офисе'}
 SPECIALIZATION_LABELS = {
@@ -914,6 +917,17 @@ class CandidateBot:
                 ('hourly', 'Почасовая сводка'),
             ]
         elif step == 'stacks':
+            if values.get('direction_id') == 'development':
+                role = _role_for_values(values)
+                if role:
+                    languages = [
+                        item
+                        for item in role['stacks']
+                        if item in LANGUAGE_LABELS
+                        or item in {'typescript', 'bsl', 'sql'}
+                    ]
+                    if languages:
+                        return [(item, _technology_label(item)) for item in languages]
             return [
                 (item, _technology_label(item))
                 for item in direction_stacks(values['direction_id'])
@@ -965,6 +979,16 @@ class CandidateBot:
             lines.append(
                 f"Роль: {ROLE_LABELS.get(values.get('role_id'), ('Требуется выбор роли', ''))[0]}"
             )
+            if values.get('direction_id') == 'development':
+                lines.append(
+                    'Язык разработки: '
+                    + (
+                        ', '.join(
+                            _technology_label(item) for item in prefs.get('stacks', [])
+                        )
+                        or 'любой'
+                    )
+                )
             lines.append(
                 'Грейд: '
                 + (
@@ -1260,7 +1284,10 @@ class CandidateBot:
 
     @staticmethod
     def _basic_steps(values: dict) -> list[str]:
-        return list(PROFILE_STEPS)
+        steps = list(PROFILE_STEPS)
+        if values.get('direction_id') == 'development' and _role_for_values(values):
+            steps.insert(steps.index('role_id') + 1, 'stacks')
+        return steps
 
     async def _show_draft(self, user_id: int) -> None:
         draft = self.store.get_profile_draft(user_id)
@@ -1283,7 +1310,7 @@ class CandidateBot:
             hints = {
                 'direction_id': 'Выберите одно направление.',
                 'role_id': 'Выберите одну роль в направлении.',
-                'stacks': 'Выберите любые подходящие языки и технологии из каталога. Пример: Go, PostgreSQL, Docker. Для HR и дизайна будут свои варианты.',
+                'stacks': 'Выберите языки выбранного вида разработки. Можно выбрать несколько или нажать «Готово» без фильтра.',
                 'seniority': 'Можно выбрать несколько уровней. Например: Middle и Senior.',
                 'formats': 'Можно выбрать несколько форматов. Например: удалённо и гибридно.',
                 'geography': 'Где ищете работу? Можно выбрать несколько стран или регионов.',

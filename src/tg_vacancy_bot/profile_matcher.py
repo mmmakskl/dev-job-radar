@@ -92,14 +92,18 @@ def profile_text_prefilter_reason(preferences: dict, source_text: str) -> str | 
 
 GRADE_ORDER = {
     grade: index
-    for index, grade in enumerate(('intern', 'junior', 'middle', 'senior', 'lead'))
+    for index, grade in enumerate(
+        ('intern', 'junior', 'middle', 'senior', 'staff', 'lead', 'head')
+    )
 }
 TITLE_GRADE_ALIASES = {
     'intern': ('intern', 'стажер', 'стажёр'),
     'junior': ('junior', 'джуниор'),
     'middle': ('middle', 'mid-level', 'мидл'),
     'senior': ('senior', 'сеньор', 'синьор'),
+    'staff': ('staff',),
     'lead': ('lead', 'лид'),
+    'head': ('head',),
 }
 
 
@@ -269,6 +273,25 @@ def _match_current(
         for item in decision.classifications
     ):
         return ProfileMatch('no_match', 'role_conflict', conflicting_fields=('role',))
+
+    preferences = profile.preferences
+    selected_stacks = preferences.get('stacks') or [
+        item
+        for item in [
+            preferences.get('primary_language'),
+            *preferences.get('additional_languages', []),
+        ]
+        if item
+    ]
+    stacks = _values(selected_stacks)
+    if stacks:
+        required_stack = _values(decision.analysis.required_stack)
+        if not required_stack:
+            return ProfileMatch('review', 'stack_missing', missing_fields=('stacks',))
+        if not _has_any(required_stack, stacks):
+            return ProfileMatch(
+                'no_match', 'stack_conflict', conflicting_fields=('stacks',)
+            )
 
     grades = _values(profile.preferences.get('seniority', []))
     if grades:

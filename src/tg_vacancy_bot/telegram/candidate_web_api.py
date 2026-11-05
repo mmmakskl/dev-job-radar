@@ -16,7 +16,11 @@ from urllib.parse import parse_qsl
 from fastapi import Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from tg_vacancy_bot.candidate_catalog import PROFILE_CONTRACT, role_path
+from tg_vacancy_bot.candidate_catalog import (
+    PROFILE_CONTRACT,
+    role_path,
+    validate_profile_path,
+)
 from tg_vacancy_bot.models import NOT_SPECIFIED
 from tg_vacancy_bot.premium_search.settings import catalog_search_allowed
 from tg_vacancy_bot.premium_search.templates import compose_query, list_templates
@@ -37,6 +41,7 @@ class ProfileInput(BaseModel):
     seniority: list[
         Literal['intern', 'junior', 'middle', 'senior', 'staff', 'lead', 'head']
     ] = Field(default_factory=list, max_length=7)
+    stacks: list[str] = Field(default_factory=list, max_length=20)
     required_skills: list[str] = Field(default_factory=list, max_length=20)
     excluded_skills: list[str] = Field(default_factory=list, max_length=20)
     delivery_mode: Literal['immediate', 'hourly', 'manual'] = 'immediate'
@@ -114,20 +119,39 @@ def _preferences(body: ProfileInput, current: dict | None = None) -> dict:
     for value in [*body.required_skills, *body.excluded_skills]:
         if not value.strip() or len(value) > 80:
             raise HTTPException(422, 'Проверьте навыки и слова-исключения')
+    existing = dict(current or {})
+    if 'stacks' in body.model_fields_set:
+        existing.pop('primary_language', None)
+        existing.pop('additional_languages', None)
     return {
-        **(current or {}),
+        **existing,
         'profile_contract': PROFILE_CONTRACT,
         'seniority': body.seniority,
+        'stacks': _requested_stacks(body, current),
         'required_skills': body.required_skills,
         'excluded_skills': body.excluded_skills,
         'delivery_mode': body.delivery_mode,
     }
 
 
-def _profile_path(body: ProfileInput) -> tuple[str, str, str]:
+def _requested_stacks(body: ProfileInput, current: dict | None = None) -> list[str]:
+    return (
+        body.stacks
+        if 'stacks' in body.model_fields_set
+        else list((current or {}).get('stacks', []))
+    )
+
+
+def _profile_path(
+    body: ProfileInput, current: dict | None = None
+) -> tuple[str, str, str]:
     path = role_path(body.role_id)
     if path is None or path[0] != body.direction_id:
         raise HTTPException(422, 'Выберите роль в указанном направлении')
+    try:
+        validate_profile_path(*path, stacks=_requested_stacks(body, current))
+    except ValueError as exc:
+        raise HTTPException(422, 'Выберите стек, подходящий роли') from exc
     return path
 
 
@@ -299,7 +323,7 @@ def install_routes(app, *, candidate_path: str, search_path: str) -> None:
             raise HTTPException(404, 'Профиль не найден')
         if current.version != body.version:
             raise HTTPException(409, 'Профиль изменён. Обновите страницу.')
-        direction, specialization, role = _profile_path(body)
+        direction, specialization, role = _profile_path(body, current.preferences)
         try:
             updated = candidates().update_profile(
                 owner,

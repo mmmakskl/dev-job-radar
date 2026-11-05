@@ -29,6 +29,14 @@
                 "go",
                 "python",
                 "java",
+                "cpp",
+                "csharp",
+                "rust",
+                "php",
+                "javascript",
+                "typescript",
+                "nodejs",
+                "kotlin",
                 "postgresql",
                 "api"
               ]

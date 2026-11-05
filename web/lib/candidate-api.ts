@@ -7,6 +7,8 @@ export type CandidateProfile = {
   version: number;
   preferences: {
     seniority?: string[];
+    stacks?: string[];
+    primary_language?: string;
     required_skills?: string[];
     excluded_skills?: string[];
     delivery_mode?: 'immediate' | 'hourly' | 'manual';
@@ -51,6 +53,7 @@ export type ProfilePayload = {
   direction_id: string;
   role_id: string;
   seniority: string[];
+  stacks: string[];
   required_skills: string[];
   excluded_skills: string[];
   delivery_mode: 'immediate' | 'hourly' | 'manual';

@@ -125,8 +125,42 @@ it('creates a profile in the shared bot store before showing it in the Mini App'
   fireEvent.click(within(screen.getByRole('navigation', { name: 'Навигация' })).getByRole('button', { name: 'Мои профили' }));
   fireEvent.click(screen.getByRole('button', { name: 'Новый профиль' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Название профиля' }), { target: { value: 'Frontend Role' } });
-  fireEvent.change(screen.getByRole('combobox', { name: 'Роль' }), { target: { value: 'frontend_developer' } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Вид разработки' }), { target: { value: 'frontend_developer' } });
   fireEvent.click(screen.getByRole('button', { name: /Сохранить профиль/ }));
   await waitFor(() => expect(created).toBe(true));
   expect(await screen.findByText('Frontend Role')).toBeInTheDocument();
+});
+
+it('sends selected backend stacks and multiple grades when saving a profile', async () => {
+  let submitted: Record<string, unknown> | null = null;
+  vi.stubGlobal('fetch', vi.fn((input: string, init?: RequestInit) => {
+    if (input.endsWith('/me')) return response({ user: { id: 1, first_name: 'Tester' }, profiles: [liveProfile], active_profile_id: 'p1', premium_enabled: true });
+    if (input.endsWith('/profiles') && init?.method === 'POST') {
+      submitted = JSON.parse(String(init.body));
+      return response(liveProfile, 201);
+    }
+    if (input.endsWith('/feed/settings')) return response({ older_days: 7, max_older_days: 30 });
+    if (input.includes('/feed')) return response({ items: [liveVacancy], total: 1 });
+    if (input.endsWith('/saved')) return response({ items: [] });
+    if (input.endsWith('/premium/templates')) return response({ items: [] });
+    if (input.endsWith('/premium/runs')) return response({ items: [] });
+    return response({}, 404);
+  }));
+  render(<MiniappPage/>);
+  await screen.findByText('Live vacancy');
+  fireEvent.click(within(screen.getByRole('navigation', { name: 'Навигация' })).getByRole('button', { name: 'Мои профили' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Новый профиль' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Название профиля' }), { target: { value: 'Backend Role' } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Вид разработки' }), { target: { value: 'backend_developer' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Язык разработки' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Go' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'C++' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Грейды' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Middle' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Senior' }));
+  fireEvent.click(screen.getByRole('button', { name: /Сохранить профиль/ }));
+
+  await waitFor(() => expect(submitted).toMatchObject({
+    stacks: ['go', 'cpp'], seniority: ['middle', 'senior'],
+  }));
 });

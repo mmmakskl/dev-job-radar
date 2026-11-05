@@ -147,6 +147,31 @@ def test_candidate_web_profiles_share_chat_state_and_reject_stale_or_foreign_edi
     )
 
 
+def test_candidate_web_saves_role_stack_and_multiple_grades(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    owner = _headers(1)
+    payload = {
+        **_profile_payload(),
+        'stacks': ['go', 'cpp'],
+        'seniority': ['middle', 'senior'],
+    }
+
+    created = client.post('/api/v1/candidate/profiles', headers=owner, json=payload)
+
+    assert created.status_code == 201
+    preferences = created.json()['preferences']
+    assert preferences['stacks'] == ['go', 'cpp']
+    assert preferences['seniority'] == ['middle', 'senior']
+    assert (
+        client.post(
+            '/api/v1/candidate/profiles',
+            headers=owner,
+            json={**payload, 'stacks': ['react']},
+        ).status_code
+        == 422
+    )
+
+
 def test_candidate_web_feed_and_saved_archive_use_real_registry_and_owner(
     tmp_path, monkeypatch
 ) -> None:

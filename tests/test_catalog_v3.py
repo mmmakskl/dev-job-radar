@@ -164,6 +164,46 @@ def test_role_grade_any_skill_and_excluded_phrase_use_original_text():
     )
 
 
+def test_current_profile_stack_requires_matching_vacancy_technology():
+    decision = _decision()
+    decision = replace(
+        decision, analysis=replace(decision.analysis, required_stack=['go'])
+    )
+    go_or_cpp = _current_profile(stacks=['go', 'cpp'])
+    cpp_only = _current_profile(stacks=['cpp'])
+
+    assert (
+        match_profile(decision, go_or_cpp, source_text='Go backend').status == 'match'
+    )
+    assert (
+        match_profile(decision, cpp_only, source_text='Go backend').reason_code
+        == 'stack_conflict'
+    )
+    missing_stack = replace(
+        decision, analysis=replace(decision.analysis, required_stack=[])
+    )
+    assert (
+        match_profile(missing_stack, cpp_only, source_text='C++ backend').reason_code
+        == 'stack_missing'
+    )
+
+
+def test_current_profile_accepts_multiple_senior_grades():
+    decision = _decision()
+    profile = _current_profile(seniority=['staff', 'head'])
+    staff = replace(
+        decision,
+        analysis=replace(decision.analysis, grade_from='Staff', grade_to='Staff'),
+    )
+    head = replace(
+        decision,
+        analysis=replace(decision.analysis, grade_from='Head', grade_to='Head'),
+    )
+
+    assert match_profile(staff, profile, source_text='Staff backend').status == 'match'
+    assert match_profile(head, profile, source_text='Head backend').status == 'match'
+
+
 def test_explicit_title_grade_is_used_when_grade_fields_are_empty():
     decision = _decision()
     profile = _current_profile(seniority=['middle', 'senior'], required_skills=['go'])

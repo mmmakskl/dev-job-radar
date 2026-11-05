@@ -207,6 +207,31 @@ def test_chat_menu_works_without_unconfigured_miniapp_url(tmp_path, monkeypatch)
     ]
 
 
+def test_development_wizard_has_role_then_language_then_multiple_grades(tmp_path):
+    store, _ = make_store(tmp_path)
+    bot = CandidateBot(FakeBotApi(), store, {1})
+    values = {
+        'direction_id': 'development',
+        'specialization_id': 'backend',
+        'role_id': 'backend_developer',
+        'preferences': {'stacks': [], 'seniority': []},
+    }
+
+    assert bot._basic_steps(values)[:4] == [
+        'direction_id',
+        'role_id',
+        'stacks',
+        'seniority',
+    ]
+    draft = {'step': 'stacks', 'values': values}
+    choices = dict(bot._choices(draft))
+    assert choices['go'] == 'Go'
+    assert choices['cpp'] == 'C++'
+    bot._set_draft_value(draft, 'go')
+    bot._set_draft_value(draft, 'cpp')
+    assert values['preferences']['stacks'] == ['go', 'cpp']
+
+
 def press(bot, api, label, user=1):
     if label != '→':
         for _ in range(10):
@@ -249,6 +274,8 @@ def complete_draft(bot, api, store, *, delivery_mode=None):
         step = draft['step']
         if step == 'role_id':
             press(bot, api, bot._choices(draft)[0][1])
+        elif step == 'stacks':
+            press(bot, api, 'Готово')
         elif step == 'seniority':
             press(bot, api, 'Все')
         elif step == 'required_skills':
@@ -272,6 +299,9 @@ def create_roleless_profile(bot, api, store, direction, technology):
         else bot._choices(store.get_profile_draft(1))[0][1]
     )
     press(bot, api, role)
+    if direction == 'Разработка':
+        press(bot, api, technology)
+        press(bot, api, 'Готово')
     press(bot, api, 'Все')
     press(bot, api, technology)
     press(bot, api, 'Готово')
@@ -390,6 +420,8 @@ def test_short_profile_wizard_and_advanced_settings_preserve_timezone(tmp_path):
     press(bot, api, 'Создать профиль')
     press(bot, api, 'Разработка')
     press(bot, api, 'Бэкенд разработчик')
+    press(bot, api, 'Go')
+    press(bot, api, 'Готово')
     press(bot, api, 'Senior')
     press(bot, api, 'Middle')
     press(bot, api, 'Готово')
@@ -451,6 +483,8 @@ def test_new_profile_uses_catalog_technology_pages_and_edits_one_message(tmp_pat
     press(bot, api, 'Разработка')
     assert store.get_profile_draft(1)['step'] == 'role_id'
     press(bot, api, 'Бэкенд разработчик')
+    press(bot, api, 'Go')
+    press(bot, api, 'Готово')
     press(bot, api, 'Все')
     press(bot, api, 'Go')
     assert store.get_profile_draft(1)['values']['preferences']['required_skills'] == [
