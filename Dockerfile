@@ -4,6 +4,7 @@ WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web ./
+COPY src/tg_vacancy_bot/data/it_roles.v1.json /src/tg_vacancy_bot/data/it_roles.v1.json
 RUN npm run build
 
 FROM python:3.12-slim
