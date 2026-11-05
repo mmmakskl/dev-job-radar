@@ -18,9 +18,22 @@ beforeEach(() => {
 afterEach(cleanup);
 it('opens unified search when Premium and Threads are disabled', async () => {
   render(<Page/>);
-  const nav = await screen.findByRole('navigation');
+  const nav = await screen.findByRole('navigation', { name: 'Навигация по админке' });
   expect(within(nav).queryByRole('button', { name: 'Premium поиск' })).not.toBeInTheDocument();
   fireEvent.click(within(nav).getByRole('button', { name: 'Общий поиск' }));
   expect(await screen.findByRole('heading', { name: 'Общий поиск вакансий' })).toBeInTheDocument();
   expect(await screen.findByRole('checkbox', { name: 'Telegram · опубликованные' })).toBeEnabled();
+});
+
+it('renders the new admin shell and persists the monochrome theme choice', async () => {
+  render(<Page/>);
+  expect(await screen.findByRole('heading', { name: 'Мониторинг обработки' })).toBeInTheDocument();
+  const nav = screen.getByRole('navigation', { name: 'Навигация по админке' });
+  expect(within(nav).getByRole('button', { name: 'Обзор' })).toHaveAttribute('aria-current', 'page');
+  expect(screen.getByRole('button', { name: 'Ошибки' })).toBeInTheDocument();
+  const themeButton = screen.getByRole('button', { name: 'Включить тёмную тему' });
+  fireEvent.click(themeButton);
+  expect(themeButton).toHaveAccessibleName('Включить светлую тему');
+  expect(document.documentElement.classList.contains('dark')).toBe(true);
+  expect(window.localStorage.setItem).toHaveBeenCalledWith('admin-theme', 'dark');
 });

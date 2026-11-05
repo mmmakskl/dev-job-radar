@@ -41,6 +41,8 @@ describe('admin feature components', () => {
   it('filters the logs view without exposing raw log files', async () => {
     render(<LogsPanel onBack={vi.fn()} />);
     expect(await screen.findByText('Безопасная запись')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Поток логов' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Журнал событий' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Уровень лога'), {target:{value:'ERROR'}});
     expect(api.logs).toHaveBeenCalled();
   });

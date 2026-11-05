@@ -5,9 +5,19 @@ test('admin works through direct URLs and confirms consequential actions', async
   await page.getByLabel('Пароль администратора').fill('e2e-password');
   await page.getByRole('button', { name: 'Войти' }).click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole('heading', { name: 'Состояние обработки' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Мониторинг обработки' })).toBeVisible();
   await expect(page.getByText('Постов обработано сегодня')).toBeVisible();
   await expect(page.getByText('Тестовая безопасная ошибка LLM')).toBeVisible();
+  await page.getByRole('button', { name: 'Включить тёмную тему' }).click();
+  await expect(page.locator('html')).toHaveClass(/dark/);
+  await page.waitForTimeout(200);
+  const darkSecondaryButton = await page.getByRole('button', { name: 'Все активные ошибки' }).evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { background: style.backgroundColor, color: style.color };
+  });
+  expect(darkSecondaryButton).toMatchObject({ background: 'rgb(31, 31, 31)', color: 'rgb(238, 238, 238)' });
+  await page.getByRole('button', { name: 'Включить светлую тему' }).click();
+  await expect(page.locator('html')).not.toHaveClass(/dark/);
   await page.getByRole('button', { name: 'Безопасные детали' }).click();
   await expect(page.getByText('Очищенные технические детали.')).toBeVisible();
 
@@ -30,7 +40,7 @@ test('admin works through direct URLs and confirms consequential actions', async
 
   await page.goto('/logs?level=ERROR');
   await page.getByLabel('Уровень лога').selectOption('ERROR');
-  await expect(page.getByRole('heading', { name: 'Логи' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Журнал событий' })).toBeVisible();
   await expect(page).toHaveURL(/\/logs\?level=ERROR/);
 
   await page.goto('/errors');
@@ -48,7 +58,7 @@ test('private screens use the full content width at every supported viewport', a
   await page.goto('/');
   await page.getByLabel('Пароль администратора').fill('e2e-password');
   await page.getByRole('button', { name: 'Войти' }).click();
-  await expect(page.getByRole('heading', { name: 'Состояние обработки' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Мониторинг обработки' })).toBeVisible();
 
   for (const viewport of [
     { width: 1440, height: 1000 },
@@ -64,8 +74,9 @@ test('private screens use the full content width at every supported viewport', a
       const dimensions = await page.locator('.page-content').evaluate((content) => {
         const screen = content.querySelector<HTMLElement>(':scope > .screen');
         if (!screen) throw new Error('Private screen is missing');
+        const style = getComputedStyle(content);
         return {
-          content: content.getBoundingClientRect().width,
+          content: content.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
           screen: screen.getBoundingClientRect().width,
         };
       });

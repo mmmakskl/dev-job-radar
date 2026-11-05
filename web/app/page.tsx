@@ -25,7 +25,7 @@ type Dashboard = {
   active_action?:AdminAction|null;
 };
 type Route = '/search'|'/premium-search'|'/'|'/sources'|'/groups'|'/settings'|'/prompt'|'/logs'|'/errors';
-const routeLabels:Record<Route,string> = {'/search':'Общий поиск','/premium-search':'Premium поиск','/':'Дашборд','/sources':'Источники','/groups':'Группы','/settings':'Настройки','/prompt':'LLM-инструкции','/logs':'Логи','/errors':'Ошибки'};
+const routeLabels:Record<Route,string> = {'/search':'Общий поиск','/premium-search':'Premium поиск','/':'Обзор','/sources':'Источники','/groups':'Группы вакансий','/settings':'Настройки','/prompt':'Инструкции LLM','/logs':'Журнал событий','/errors':'Ошибки'};
 const actionText: Record<string,[string,string]> = {
   restart:['Перезапустить бота','Очередь будет корректно завершена, затем бот применит сохранённые настройки.'],
   history:['Запустить историю','Live-мониторинг временно остановится: один Telegram session нельзя использовать одновременно.'],
@@ -41,6 +41,29 @@ function navigate(path:Route) { window.history.pushState({},'',path); window.dis
 function formatDate(value?:string|null) { return value ? new Date(value).toLocaleString('ru-RU') : 'нет данных'; }
 function actionResult(result:AdminAction) { return result.status==='succeeded'?`Готово: получено ${result.received}, добавлено ${result.created}, обновлено ${result.updated}, пропущено ${result.skipped}, ошибок ${result.failed}.`:result.error||'Операция завершилась с ошибкой.'; }
 
+type IconName='dashboard'|'search'|'premium'|'groups'|'sources'|'logs'|'errors'|'settings'|'prompt'|'sun'|'moon'|'refresh'|'bell'|'logout'|'chevron'|'radar';
+function Icon({name}:{name:IconName}) {
+  const paths:Record<IconName,React.ReactNode>={
+    dashboard:<><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="5" rx="2"/><rect x="13" y="10" width="8" height="11" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/></>,
+    search:<><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5"/></>,
+    premium:<><path d="m12 3 1.9 5.4L19 10l-5.1 1.8L12 17l-1.9-5.2L5 10l5.1-1.6L12 3Z"/><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z"/></>,
+    groups:<><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/></>,
+    sources:<><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3"/><path d="M12 3.5V9m8.5 3H15"/></>,
+    logs:<><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></>,
+    errors:<><path d="m12 3 9 17H3l9-17Z"/><path d="M12 9v4m0 3h.01"/></>,
+    settings:<><circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1 1.3 1-1.3 2.2-1.6-.6a8 8 0 0 1-1.7 1l-.3 1.7h-2.6l-.3-1.7a8 8 0 0 1-1.7-1l-1.6.6-1.3-2.2 1.3-1a8 8 0 0 1 0-2l-1.3-1 1.3-2.2 1.6.6a8 8 0 0 1 1.7-1l.3-1.7h2.6l.3 1.7a8 8 0 0 1 1.7 1l1.6-.6 1.3 2.2-1.3 1a8 8 0 0 1 0 2Z"/></>,
+    prompt:<><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1m-8.6 8.6-2.1 2.1"/><circle cx="12" cy="12" r="4"/></>,
+    sun:<><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4m12-12-1.4 1.4"/></>,
+    moon:<path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z"/>,
+    refresh:<><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9A7 7 0 0 1 18 6.5L20 9M4 15l2 2.5A7 7 0 0 0 18.4 15"/></>,
+    bell:<><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9m-8 12h4"/></>,
+    logout:<><path d="M10 17l5-5-5-5m5 5H3"/><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/></>,
+    chevron:<path d="m9 18 6-6-6-6"/>,
+    radar:<><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12 18.5 6"/><circle cx="12" cy="12" r="1"/></>,
+  };
+  return <svg className="admin-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">{paths[name]}</svg>;
+}
+
 function StatusCard({dashboard, errors, onNavigate}:{dashboard?:Dashboard;errors:AttentionError[];onNavigate:(path:Route)=>void}) {
   const heartbeat=dashboard?.heartbeat;
   const heartbeatAge=heartbeat?.updated_at ? Date.now()-new Date(heartbeat.updated_at).getTime() : Number.POSITIVE_INFINITY;
@@ -48,15 +71,25 @@ function StatusCard({dashboard, errors, onNavigate}:{dashboard?:Dashboard;errors
   const running=heartbeat?.status==='running' && heartbeatFresh;
   const paused=heartbeat?.status==='paused';
   const label=running?'Активен':paused?'Приостановлен':'Нет heartbeat';
-  const tone=running?'ok':paused?'muted':'error';
   const pendingRestart=typeof heartbeat?.settings_revision==='number' && heartbeat.settings_revision !== dashboard?.settings_revision;
-  const action = !running ? 'Проверьте ошибки и логи, затем подтвердите перезапуск при необходимости.' : pendingRestart ? 'Есть сохранённые изменения: подтвердите перезапуск, чтобы применить revision.' : errors.length ? 'Откройте активные ошибки и проверьте безопасные детали.' : 'Мониторинг получает сообщения и записывает агрегированные показатели.';
-  return <section className="card span-12 status-card" aria-labelledby="system-status"><div className="section-title"><div><p className={tone}><strong id="system-status">● {label}</strong></p><h1>Состояние обработки</h1><p className="muted">Heartbeat: {formatDate(heartbeat?.updated_at)} · revision {dashboard?.settings_revision??0}{pendingRestart?' · ожидает применения':''}</p></div><button className="button secondary" onClick={()=>onNavigate('/logs')}>Открыть логи</button></div><div className="status-summary"><div><strong>Что произошло</strong><p>{running?'Бот сообщает heartbeat и готов к live-обработке.':paused?'Мониторинг сохранён в паузе и не получает новые сообщения.':'Свежего статуса от live-процесса нет.'}</p></div><div><strong>Почему важно</strong><p>{pendingRestart?'Сохранённая конфигурация ещё не используется ботом.':!running?'Вакансии могут не обрабатываться, пока процесс не вернётся в норму.':'Очередь и ошибки ниже помогают заметить деградацию до потери сообщений.'}</p></div><div><strong>Что можно сделать</strong><p>{action}</p></div></div></section>;
+  const details = [
+    {label:'Heartbeat', value:formatDate(heartbeat?.updated_at), hint:`Revision ${dashboard?.settings_revision??0}${pendingRestart?' · требуется перезапуск':''}`},
+    {label:'Очередь', value:String(heartbeat?.queue_size ?? '—'), hint:`Источников настроено: ${dashboard?.channel_count??0}`},
+    {label:'Последний экспорт', value:formatDate(dashboard?.latest_export_at), hint:'Последняя успешная запись'},
+  ];
+  const toneClass = running ? 'tone-good' : paused ? 'tone-muted' : 'tone-error';
+  return <section className="health-card" aria-labelledby="system-status">
+    <div className="health-header">
+      <div><p className={`health-state ${toneClass}`}><span className="health-dot" aria-hidden="true"/>{label}</p><h1 id="system-status">Мониторинг обработки</h1><p className="muted">Состояние live‑сбора вакансий</p></div>
+      <div className="health-actions"><span className={`state-chip ${toneClass}`}>{pendingRestart?'Нужно применить настройки':running?'LIVE':'Проверьте систему'}</span><button className="button secondary" onClick={()=>onNavigate('/logs')}><Icon name="logs"/>Журнал событий</button></div>
+    </div>
+    <div className="health-details">{details.map(item=><div className="health-detail" key={item.label}><span className="detail-label">{item.label}</span><strong className="detail-value">{item.value}</strong><span className="detail-hint">{item.hint}</span></div>)}</div>
+    {(errors.length>0 || pendingRestart || !running) && <div className="health-notice">{pendingRestart?'Сохранённые настройки ещё не применены. Перезапустите бота после проверки изменений.':!running?'Свежего heartbeat нет. Проверьте журнал событий и ошибки.':`${errors.length} ${errors.length===1?'ошибка требует':'ошибки требуют'} внимания.`}</div>}
+  </section>;
 }
 
 function DashboardView({dashboard,metrics,errors,loading,onNavigate,onRefresh,onResolve}:{dashboard?:Dashboard;metrics?:Metrics;errors:AttentionError[];loading:boolean;onNavigate:(path:Route)=>void;onRefresh:()=>void;onResolve:(id:string)=>Promise<void>}) {
-  const heartbeat=dashboard?.heartbeat;
-  return <><StatusCard dashboard={dashboard} errors={errors} onNavigate={onNavigate}/><section className="quick-grid span-12" aria-label="Ключевые показатели"><button className="card link-card" onClick={()=>onNavigate('/logs')}><span>Последний экспорт</span><strong>{formatDate(dashboard?.latest_export_at)}</strong><small>Последняя успешная запись вакансии</small></button><button className="card link-card" onClick={()=>onNavigate('/sources')}><span>Очередь</span><strong>{heartbeat?.queue_size ?? '—'}</strong><small>Источников: {dashboard?.channel_count??0}</small></button><button className="card link-card" onClick={()=>onNavigate('/errors')}><span>Пропущено сегодня</span><strong>{metrics?.counts.skipped ?? '—'}</strong><small>Открыть причины и ошибки</small></button><button className="card link-card" onClick={()=>onNavigate('/errors')}><span>Активные ошибки</span><strong>{errors.length}</strong><small>Требуют внимания</small></button></section><MetricCards metrics={metrics} loading={loading} error="" onRefresh={onRefresh}/><AttentionPanel errors={errors} loading={loading} onResolve={onResolve} onOpenErrors={()=>onNavigate('/errors')}/></>;
+  return <div className="dashboard-stack"><StatusCard dashboard={dashboard} errors={errors} onNavigate={onNavigate}/><MetricCards metrics={metrics} loading={loading} error="" onRefresh={onRefresh}/><AttentionPanel errors={errors} loading={loading} onResolve={onResolve} onOpenErrors={()=>onNavigate('/errors')}/></div>;
 }
 
 export default function Page() {
@@ -65,7 +98,7 @@ export default function Page() {
   const refresh = useCallback(async()=>{setLoading(true);setError('');try{const [nextSettings,nextDashboard,nextMetrics,nextErrors]=await Promise.all([api.settings(),api.dashboard(),api.metrics(),api.errors()]);setSettings(nextSettings);setDashboard(nextDashboard);setMetrics(nextMetrics);setAttention(nextErrors);void premiumApi.capabilities().then(setPremium).catch(()=>setPremium(null));}catch(reason){setError(reason instanceof Error?reason.message:'Не удалось загрузить данные панели');}finally{setLoading(false);}},[]);
   useEffect(()=>{const change=()=>setRoute(currentRoute());change();window.addEventListener('popstate',change);api.status().then(async status=>{setConfigured(status.configured);if(status.authenticated) await refresh();setReady(true);}).catch(()=>setReady(true));return()=>window.removeEventListener('popstate',change);},[refresh]);
   useEffect(()=>{const stored=window.localStorage.getItem('admin-theme');if(stored==='dark')setTheme('dark');},[]);
-  useEffect(()=>{document.documentElement.classList.toggle('dark',theme==='dark');window.localStorage.setItem('admin-theme',theme);},[theme]);
+  useEffect(()=>{document.documentElement.classList.toggle('dark',theme==='dark');document.documentElement.dataset.theme=theme;window.localStorage.setItem('admin-theme',theme);},[theme]);
   useEffect(()=>{const action=dashboard?.active_action;if(!action)return;setProgress('Операция выполняется…');waitForAction(action.id).then(async result=>{setProgress(actionResult(result));await refresh();setSourcesRefresh(value=>value+1);}).catch(reason=>setError(reason instanceof Error?reason.message:'Не удалось получить статус операции'));},[dashboard?.active_action?.id,refresh]);
   const go=(path:Route)=>navigate(path);
   if(!ready) return <main className="shell">Загружаем…</main>;
@@ -73,8 +106,9 @@ export default function Page() {
   const save=async(value:Partial<Settings>)=>{setError('');try{const saved=await api.save({...value,revision:settings.revision});setSettings(saved);setDashboard(current=>current?{...current,settings_revision:saved.revision}:current);}catch(reason){setError(reason instanceof Error?reason.message:'Не удалось сохранить настройки');throw reason;}};
   const resolve=async(id:string)=>{try{await api.resolveError(id);await refresh();}catch(reason){setError(reason instanceof Error?reason.message:'Не удалось обновить статус ошибки');}};
   const doAction=async()=>{try{const action=await api.action(pending);setPending('');setProgress('Операция поставлена в очередь…');const result=await waitForAction(action.id);setProgress(actionResult(result));await refresh();setSourcesRefresh(value=>value+1);}catch(reason){setError(reason instanceof Error?reason.message:'Не удалось выполнить действие');setPending('');}};
+  const logout=async()=>{await api.logout();setSettings(undefined);go('/')};
   const restartRequired=typeof dashboard?.heartbeat?.settings_revision==='number' && dashboard.heartbeat.settings_revision!==settings.revision;
-  const header=<Header premiumEnabled={!!premium} route={route} theme={theme} onToggleTheme={()=>setTheme(theme==='light'?'dark':'light')} onNavigate={go} onLogout={async()=>{await api.logout();setSettings(undefined);go('/');}}/>;
+  const header=<Header premiumEnabled={!!premium} route={route} onNavigate={go}/>;
   let content:React.ReactNode;
   if(route==='/search') content=<SearchPanel/>;
   else if(route==='/premium-search') content=<PremiumSearchPanel capabilities={premium}/>;
@@ -85,7 +119,28 @@ export default function Page() {
   else if(route==='/logs') content=<LogsPanel onBack={()=>go('/')} />;
   else if(route==='/errors') content=<section className="screen"><div className="section-title"><div><h1>Активные ошибки</h1><p className="muted">Показаны только неразрешённые, безопасно очищенные ошибки. Повтор пока не поддерживается.</p></div><button className="button secondary" onClick={()=>void refresh()} disabled={loading}>Обновить</button></div><AttentionPanel errors={attention} loading={loading} onResolve={resolve} showEmpty/></section>;
   else content=<DashboardView dashboard={dashboard} metrics={metrics} errors={attention} loading={loading} onNavigate={go} onRefresh={()=>void refresh()} onResolve={resolve}/>;
-  return <main className="shell">{header}{error&&<p className="error" role="alert">{error}</p>}{progress&&<p className="status" role="status">{progress}</p>}<div className="page-content">{content}</div>{route==='/'&&<section className="card span-12"><h2>Управление обработкой</h2><p className="muted">Опасные операции потребуют явного подтверждения.</p><div className="actions"><button className="button" onClick={()=>setPending('sync_channels')}>Синхронизировать папку</button><button className="button secondary" onClick={()=>setPending('history')}>Запустить историю</button><button className="button danger" onClick={()=>setPending('restart')}>Перезапустить бота</button></div></section>}{pending&&<ConfirmAction title={actionText[pending][0]} description={actionText[pending][1]} onConfirm={()=>void doAction()} onCancel={()=>setPending('')}/>}</main>;
+  return <div className="admin-layout">
+    {header}
+    <main className="admin-main">
+      <header className="admin-topbar"><div className="breadcrumb"><span>Go Radar</span><Icon name="chevron"/><strong>{routeLabels[route]}</strong></div><div className="top-actions"><button className="icon-button" onClick={()=>setTheme(theme==='light'?'dark':'light')} aria-label={theme==='light'?'Включить тёмную тему':'Включить светлую тему'}><Icon name={theme==='light'?'moon':'sun'}/></button><button className="icon-button" onClick={()=>void logout()} aria-label="Выйти"><Icon name="logout"/></button></div></header>
+      {error&&<p className="admin-alert" role="alert">{error}</p>}{progress&&<p className="admin-progress" role="status">{progress}</p>}
+      <div className="page-content">{content}</div>
+      {route==='/'&&<section className="control-panel"><div><h2>Управление обработкой</h2><p>Операции, влияющие на текущую работу бота.</p></div><div className="actions"><button className="button secondary" onClick={()=>setPending('sync_channels')}><Icon name="refresh"/>Синхронизировать источники</button><button className="button secondary" onClick={()=>setPending('history')}>Запустить историю</button><button className="button" onClick={()=>setPending('restart')}>Перезапустить бота</button></div></section>}
+      {pending&&<ConfirmAction title={actionText[pending][0]} description={actionText[pending][1]} onConfirm={()=>void doAction()} onCancel={()=>setPending('')}/>}
+    </main>
+  </div>;
 }
 
-function Header({premiumEnabled=false,route,theme,onToggleTheme,onNavigate,onLogout}:{premiumEnabled?:boolean;route:Route;theme:'light'|'dark';onToggleTheme:()=>void;onNavigate:(path:Route)=>void;onLogout:()=>void}) { return <header className="app-header"><div><button className="brand link" onClick={()=>onNavigate('/')}>Go Radar</button><p className="muted">Закрытое управление сбором вакансий</p></div><nav aria-label="Основная навигация">{(Object.keys(routeLabels) as Route[]).filter(path=>path!=='/premium-search'||premiumEnabled).map(path=><button key={path} className={route===path?'nav-active':'nav-item'} onClick={()=>onNavigate(path)} aria-current={route===path?'page':undefined}>{routeLabels[path]}</button>)}</nav><div className="actions"><button className="button secondary" onClick={onToggleTheme} aria-label="Переключить цветовую тему">{theme==='light'?'Тёмная тема':'Светлая тема'}</button><button className="button secondary" onClick={onLogout}>Выйти</button></div></header>; }
+function Header({premiumEnabled=false,route,onNavigate}:{premiumEnabled?:boolean;route:Route;onNavigate:(path:Route)=>void}) {
+  const sections:{title:string;items:Route[]}[]=[
+    {title:'Рабочее пространство',items:['/','/search','/premium-search','/groups']},
+    {title:'Система',items:['/sources','/logs','/errors']},
+    {title:'Настройки',items:['/settings','/prompt']},
+  ];
+  const icons:Record<Route,IconName>={'/':'dashboard','/search':'search','/premium-search':'premium','/groups':'groups','/sources':'sources','/logs':'logs','/errors':'errors','/settings':'settings','/prompt':'prompt'};
+  return <aside className="admin-sidebar">
+    <button className="admin-brand" onClick={()=>onNavigate('/')}><span className="brand-mark"><Icon name="radar"/></span><span>Go Radar<small>CONTROL ROOM</small></span></button>
+    {sections.map(section=><div className="sidebar-section" key={section.title}><p className="sidebar-label">{section.title}</p><nav className="sidebar-nav" aria-label={section.title==='Рабочее пространство'?'Навигация по админке':section.title}>{section.items.filter(path=>path!=='/premium-search'||premiumEnabled).map(path=><button key={path} className={route===path?'sidebar-link active':'sidebar-link'} onClick={()=>onNavigate(path)} aria-current={route===path?'page':undefined}><Icon name={icons[path]}/><span>{routeLabels[path]}</span></button>)}</nav></div>)}
+    <div className="sidebar-footer"><div className="session-indicator"><span className="session-dot"/>Администраторская сессия активна</div><p>Безопасное управление Go Radar</p></div>
+  </aside>;
+}
