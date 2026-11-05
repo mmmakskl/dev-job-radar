@@ -112,6 +112,7 @@ services:
     environment:
       DATA_DIR: /app/data
       CANDIDATE_BOT_DB_PATH: /app/data/candidate_bot.sqlite3
+      CANDIDATE_MINIAPP_URL: ${CANDIDATE_MINIAPP_URL:-https://go-radar-maksim.duckdns.org/miniapp/}
     volumes:
       - ./data:/app/data
     stop_grace_period: 35s

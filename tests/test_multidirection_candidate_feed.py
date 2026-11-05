@@ -126,11 +126,8 @@ def test_personal_feed_and_delivery_are_scoped_to_catalog_track(
     bot = CandidateBot(api, store, {1}, registry=registry)
     asyncio.run(bot.handle_update(message(1, "/start")))
     buttons = api.messages[-1][2]["reply_markup"]["keyboard"]
-    assert buttons[0] == ["Новые · 24 часа", "Ранее · за 7 дней"]
-    assert buttons[1] == [
-        "Сохранённые",
-        "Без даты",
-    ]
+    assert buttons[0] == ["Для меня", "Сохранённые"]
+    assert buttons[1] == ["Профили"]
     asyncio.run(bot.handle_update(message(1, "Для меня · активный профиль")))
     assert "1 / 1" in api.messages[-1][1]
     assert f"{label} role" in api.messages[-1][1]

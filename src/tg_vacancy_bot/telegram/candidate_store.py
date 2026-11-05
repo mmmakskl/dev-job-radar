@@ -925,6 +925,15 @@ class CandidateStore:
             )
         return True
 
+    def unsave_vacancy(self, telegram_user_id: int, vacancy_id: str) -> bool:
+        """Remove only this user's saved copy, leaving the shared vacancy intact."""
+        with self._connect() as connection:
+            result = connection.execute(
+                'DELETE FROM user_saved_vacancies WHERE telegram_user_id=? AND vacancy_id=?',
+                (telegram_user_id, vacancy_id),
+            )
+        return result.rowcount == 1
+
     def list_for_user(
         self,
         telegram_user_id: int,

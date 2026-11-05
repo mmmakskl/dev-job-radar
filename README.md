@@ -771,6 +771,34 @@ ADMIN_STATIC_DIR="$PWD/web/out" PYTHONPATH=src \
 Откройте `http://127.0.0.1:8000`. `ADMIN_COOKIE_SECURE=false` допустим только
 для localhost или SSH-туннеля. Для публичного HTTPS-домена он должен быть `true`.
 
+### Candidate Mini App
+
+После `make web-check` страница `/miniapp/` доступна через тот же FastAPI,
+что обслуживает панель. Запуск из Telegram требует публичного HTTPS-адреса:
+укажите `CANDIDATE_MINIAPP_URL=https://<ваш-домен>/miniapp/` в окружении
+Candidate Bot, затем перезапустите бот. Production Compose по умолчанию
+использует `https://go-radar-maksim.duckdns.org/miniapp/`; значение можно
+переопределить через `.env`. В чате остаются кнопки «Для меня»,
+«Сохранённые», «Профили» и «Открыть Mini App». Команды `/start`, `/help`,
+`/forme`, `/saved` и `/profiles` продолжают работать. Кнопка Mini App
+появляется только при корректном HTTPS-адресе.
+
+Mini App проверяет подписанные Telegram `initData` на сервере, применяет тот же
+список `CANDIDATE_BOT_ALLOWED_USER_IDS` и использует общий
+`CANDIDATE_BOT_DB_PATH`. Профили, активный профиль, личная лента и сохранённые
+вакансии совпадают с состоянием чат-бота. Premium-поиск создаёт задания в
+общей очереди поиска; для его запуска должны быть включены
+`CANDIDATE_CATALOG_SEARCH_ENABLED` и `PREMIUM_GLOBAL_SEARCH_ENABLED`, а также
+запущен существующий worker. Смена темы сохраняется только в браузере.
+
+При открытии `/miniapp/` вне Telegram показывается интерактивное демо с
+локальными данными. На ПК его можно смотреть в макете окна Telegram по адресу
+`/miniapp-preview/`; этот режим не меняет данные бота. Для разработки
+запустите `npm --prefix web run dev` и откройте
+`http://localhost:3000/miniapp-preview/`. Реальный режим требует загрузки
+страницы из Telegram и доступа к API на том же домене, поэтому отдельный
+frontend dev server без прокси показывает только демо.
+
 ### Панель на текущем VPS
 
 Compose запускает `admin` на `127.0.0.1:8080`, а сервис `proxy` на Caddy

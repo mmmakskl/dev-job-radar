@@ -45,6 +45,7 @@ from tg_vacancy_bot.admin.settings import (
 from tg_vacancy_bot.admin.telemetry import TelemetryStore
 from tg_vacancy_bot.llm.prompts import DEFAULT_VACANCY_INSTRUCTIONS
 from tg_vacancy_bot.paths import resolve_vacancy_groups_db_path
+from tg_vacancy_bot.paths import resolve_candidate_bot_db_path
 from tg_vacancy_bot.storage.vacancy_groups import VacancyGroupStore
 
 SESSION_COOKIE = 'admin_session'
@@ -228,11 +229,14 @@ def create_app(data_dir: str | None = None) -> FastAPI:
     async def security_headers(request: Request, call_next):
         response = await call_next(request)
         response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['X-Frame-Options'] = 'DENY'
+        miniapp_page = request.url.path.rstrip('/') == '/miniapp'
+        response.headers['X-Frame-Options'] = 'SAMEORIGIN' if miniapp_page else 'DENY'
         response.headers['Referrer-Policy'] = 'no-referrer'
         response.headers['Content-Security-Policy'] = (
             "default-src 'self'; style-src 'self' 'unsafe-inline'; "
-            "script-src 'self' 'unsafe-inline'; connect-src 'self'; "
+            "script-src 'self' 'unsafe-inline'"
+            + (" https://telegram.org" if miniapp_page else '')
+            + "; connect-src 'self'; "
             "object-src 'none'; base-uri 'none'; form-action 'self'"
         )
         return response
@@ -664,6 +668,19 @@ def create_app(data_dir: str | None = None) -> FastAPI:
         publisher_configured=publisher_configured(),
     )
 
+    from tg_vacancy_bot.telegram.candidate_web_api import (
+        install_routes as install_candidate_web_routes,
+    )
+
+    install_candidate_web_routes(
+        app,
+        candidate_path=resolve_candidate_bot_db_path(
+            data_dir=data_dir or os.getenv('DATA_DIR'),
+            db_path=os.getenv('CANDIDATE_BOT_DB_PATH') or None,
+        ),
+        search_path=search_database_path(data_dir),
+    )
+
     static_dir = Path(os.getenv('ADMIN_STATIC_DIR', '/app/web'))
     if static_dir.exists():
         app.mount('/_next', StaticFiles(directory=static_dir / '_next'), name='next')
@@ -676,7 +693,12 @@ def create_app(data_dir: str | None = None) -> FastAPI:
             # `/api` endpoints have already been matched above.
             if frontend_path == 'api' or frontend_path.startswith('api/'):
                 raise HTTPException(status_code=404, detail='Маршрут API не найден')
-            del frontend_path
+            preview_pages = {'miniapp', 'miniapp-preview'}
+            route = frontend_path.rstrip('/')
+            if route in preview_pages:
+                preview_page = static_dir / route / 'index.html'
+                if preview_page.is_file():
+                    return FileResponse(preview_page)
             return FileResponse(static_dir / 'index.html')
 
     return app

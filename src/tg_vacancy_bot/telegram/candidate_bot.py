@@ -2,9 +2,11 @@
 
 import asyncio
 import logging
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 from tg_vacancy_bot.candidate_catalog import (
     CATALOG,
@@ -395,11 +397,17 @@ class CandidateBot:
         self.search = search
 
     def _keyboard(self, user_id: int) -> dict:
-        days = self.store.get_older_days(user_id)
-        first_row = ['Новые · 24 часа', f'Ранее · за {days} дней']
-        second_row = ['Сохранённые', 'Без даты']
+        del user_id
+        rows: list[list[str | dict]] = [
+            ['Для меня', 'Сохранённые'],
+            ['Профили'],
+        ]
+        url = os.getenv('CANDIDATE_MINIAPP_URL', '').strip()
+        parsed = urlsplit(url)
+        if parsed.scheme == 'https' and parsed.hostname and not parsed.username:
+            rows.append([{'text': 'Открыть Mini App', 'web_app': {'url': url}}])
         return {
-            'keyboard': [first_row, second_row, ['Профили']],
+            'keyboard': rows,
             'resize_keyboard': True,
         }
 
@@ -611,13 +619,9 @@ class CandidateBot:
             [
                 {'command': 'start', 'description': 'Открыть главное меню'},
                 {'command': 'help', 'description': 'Показать команды'},
-                {'command': 'new', 'description': 'Вакансии за последние 24 часа'},
-                {'command': 'older', 'description': 'Выбрать срок ранней ленты'},
                 {'command': 'saved', 'description': 'Сохранённые вакансии'},
-                {'command': 'undated', 'description': 'Объявления без даты'},
                 {'command': 'forme', 'description': 'Поиск по активному профилю'},
                 {'command': 'profiles', 'description': 'Профили и активный профиль'},
-                {'command': 'cancel', 'description': 'Отменить текущую настройку'},
             ]
         )
         offset: int | None = None
@@ -658,12 +662,11 @@ class CandidateBot:
             await self.api.send_message(
                 chat_id,
                 (
-                    'Выберите совпадения активного профиля. '
-                    'Даты берутся из публикации источника; объявления без даты отдельно.'
+                    'Выберите поиск вакансий здесь в чате или откройте Mini App. '
+                    'Начните с настройки профиля, затем смотрите подходящие вакансии.'
                     if text == '/start'
-                    else 'Команды: /new — новые за 24 часа; /older — срок ранней выдачи; '
-                    '/saved — сохранённые; /undated — совпадения без даты; /forme — все совпадения; '
-                    '/profiles — профили; /cancel — отменить мастер.'
+                    else 'Команды: /forme — подходящие вакансии; /saved — сохранённые; '
+                    '/profiles — профили; /cancel — отменить настройку профиля.'
                 ),
                 reply_markup=self._keyboard(user_id),
             )
@@ -750,7 +753,7 @@ class CandidateBot:
         if bucket is None:
             await self.api.send_message(
                 chat_id,
-                'Используйте «Go · Новые/Ранее» для общей Go-ленты, «Для меня» для совпадений активного профиля, а также «Сохранённые» и «Профили».',
+                'Выберите «Для меня», «Сохранённые» или «Профили» в меню. Mini App открывается отдельной кнопкой.',
                 reply_markup=self._keyboard(user_id),
             )
             return

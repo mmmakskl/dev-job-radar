@@ -162,18 +162,38 @@ def test_legacy_callbacks_are_ignored_without_writes_and_search_removed(tmp_path
     assert 'vacancy_reports' not in tables
 
 
-def test_start_has_feed_archive_profiles_and_access_is_limited(tmp_path):
+def test_start_has_simple_chat_menu_and_miniapp_for_allowed_user(tmp_path, monkeypatch):
+    monkeypatch.setenv('CANDIDATE_MINIAPP_URL', 'https://example.com/miniapp/')
     store, _ = make_store(tmp_path)
     api = FakeBotApi()
     bot = CandidateBot(api, store, {1})
     asyncio.run(bot.handle_update(message(1, '/start')))
     assert api.messages[-1][2]['reply_markup']['keyboard'] == [
-        ['Новые · 24 часа', 'Ранее · за 7 дней'],
-        ['Сохранённые', 'Без даты'],
+        ['Для меня', 'Сохранённые'],
         ['Профили'],
+        [
+            {
+                'text': 'Открыть Mini App',
+                'web_app': {'url': 'https://example.com/miniapp/'},
+            }
+        ],
     ]
     asyncio.run(bot.handle_update(message(2, '/start')))
     assert api.messages[-1][1] == 'Доступ к beta-боту ограничен.'
+
+
+def test_chat_menu_works_without_unconfigured_miniapp_url(tmp_path, monkeypatch):
+    monkeypatch.delenv('CANDIDATE_MINIAPP_URL', raising=False)
+    store, _ = make_store(tmp_path)
+    api = FakeBotApi()
+    bot = CandidateBot(api, store, {1})
+
+    asyncio.run(bot.handle_update(message(1, '/start')))
+
+    assert api.messages[-1][2]['reply_markup']['keyboard'] == [
+        ['Для меня', 'Сохранённые'],
+        ['Профили'],
+    ]
 
 
 def press(bot, api, label, user=1):
