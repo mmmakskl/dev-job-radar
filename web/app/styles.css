@@ -137,3 +137,20 @@
 .screen .source-grid{gap:9px}
 @media(max-width:1100px){.premium-form-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.premium-query{grid-column:span 2}}
 @media(max-width:760px){.page-content .section-title{align-items:flex-start}.page-content .section-title h1{font-size:21px}.page-content .section-title .muted{font-size:11px}.page-content .card{padding:14px}.error-item{grid-template-columns:minmax(0,1fr);gap:10px}.error-actions{justify-content:flex-start}.group-list{grid-template-columns:1fr}.group-count{margin-left:auto}.publication-row{align-items:flex-start;flex-direction:column}.premium-form-grid{grid-template-columns:1fr}.premium-query{grid-column:auto}.premium-form-footer{align-items:stretch;gap:12px}.premium-form-footer .checkbox{align-items:flex-start}.premium-form-footer .button{width:100%}.premium-history label{min-width:0}.premium-results{grid-template-columns:1fr}.premium-run-details{gap:6px 10px}}
+
+/* Admin checkboxes keep their shape and alignment across search and settings forms. */
+.admin-main input[type="checkbox"]{-webkit-appearance:none;appearance:none;display:inline-grid;place-content:center;width:16px!important;min-width:16px;height:16px;flex:0 0 16px;margin:0;border:1px solid #929292;border-radius:4px;background:var(--card);color:var(--card);vertical-align:middle;cursor:pointer;transition:background-color .14s,border-color .14s,box-shadow .14s}
+.admin-main input[type="checkbox"]::before{width:8px;height:4px;border-bottom:1.8px solid currentColor;border-left:1.8px solid currentColor;content:"";transform:rotate(-45deg) scale(0);transform-origin:center;transition:transform .12s ease-out}
+.admin-main input[type="checkbox"]:checked{border-color:var(--ink);background:var(--ink);color:var(--card)}
+.admin-main input[type="checkbox"]:checked::before{transform:rotate(-45deg) scale(1)}
+.admin-main input[type="checkbox"]:disabled{border-color:var(--line);background:var(--bg);cursor:not-allowed;opacity:.55}
+.admin-main input[type="checkbox"]:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+.admin-main label.checkbox,.admin-main label.checkbox-setting,.admin-main .field-checkbox>span{display:inline-flex!important;flex-direction:row!important;align-items:center;justify-content:flex-start;gap:9px;width:fit-content;max-width:100%;color:var(--ink);font-size:12px;font-weight:500;line-height:1.45;text-align:left}
+.admin-main .field-checkbox{display:flex;align-items:center;min-height:38px;margin:4px 0}
+.admin-main .field-checkbox>span{margin:0}
+.admin-main label.checkbox-setting{margin:5px 18px 8px 0}
+.admin-main .premium-form-footer .checkbox{align-self:center}
+.admin-main .search-source-picker>div{min-width:0}
+.admin-main .search-source-picker .checkbox{min-height:24px}
+@media(max-width:760px){.admin-main .premium-form-footer .checkbox{align-self:flex-start}.admin-main .search-source-picker{align-items:flex-start}.admin-main .search-source-picker>div{flex:1 1 100%}}
+@media(prefers-reduced-motion:reduce){.admin-main input[type="checkbox"],.admin-main input[type="checkbox"]::before{transition:none}}
