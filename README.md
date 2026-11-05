@@ -778,10 +778,12 @@ ADMIN_STATIC_DIR="$PWD/web/out" PYTHONPATH=src \
 укажите `CANDIDATE_MINIAPP_URL=https://<ваш-домен>/miniapp/` в окружении
 Candidate Bot, затем перезапустите бот. Production Compose по умолчанию
 использует `https://go-radar-maksim.duckdns.org/miniapp/`; значение можно
-переопределить через `.env`. В чате остаются кнопки «Для меня»,
-«Сохранённые», «Профили» и «Открыть Mini App». Команды `/start`, `/help`,
-`/forme`, `/saved` и `/profiles` продолжают работать. Кнопка Mini App
-появляется только при корректном HTTPS-адресе.
+переопределить через `.env`. При запуске Candidate Bot вызывает
+`setChatMenuButton`: кнопка «Открыть приложение» появляется слева от поля
+ввода в личном чате Telegram. Клавиатура чата содержит только «Для меня»,
+«Сохранённые» и «Профили». Команды `/start`, `/help`, `/forme`, `/saved` и
+`/profiles` продолжают работать. Если HTTPS-адрес не задан, кнопка меню
+открывает список команд.
 
 Mini App проверяет подписанные Telegram `initData` на сервере, применяет тот же
 список `CANDIDATE_BOT_ALLOWED_USER_IDS` и использует общий
@@ -791,13 +793,11 @@ Mini App проверяет подписанные Telegram `initData` на се
 `CANDIDATE_CATALOG_SEARCH_ENABLED` и `PREMIUM_GLOBAL_SEARCH_ENABLED`, а также
 запущен существующий worker. Смена темы сохраняется только в браузере.
 
-При открытии `/miniapp/` вне Telegram показывается интерактивное демо с
-локальными данными. На ПК его можно смотреть в макете окна Telegram по адресу
-`/miniapp-preview/`; этот режим не меняет данные бота. Для разработки
-запустите `npm --prefix web run dev` и откройте
-`http://localhost:3000/miniapp-preview/`. Реальный режим требует загрузки
-страницы из Telegram и доступа к API на том же домене, поэтому отдельный
-frontend dev server без прокси показывает только демо.
+При открытии `/miniapp/` вне Telegram страница показывает инструкцию по входу,
+без демонстрационных вакансий и профилей. Запускать Mini App нужно кнопкой
+меню в Telegram Desktop или мобильном клиенте; там Telegram передаёт
+подписанные `initData`. Старый маршрут `/miniapp-preview/` удалён. Отдельный
+frontend dev server без API на том же домене не даёт доступа к реальным данным.
 
 ### Панель на текущем VPS
 

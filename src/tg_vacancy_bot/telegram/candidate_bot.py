@@ -33,6 +33,7 @@ from tg_vacancy_bot.telegram.candidate_store import (
 class CandidateBotApi(Protocol):
     async def get_updates(self, offset: int | None, timeout: int) -> list[dict]: ...
     async def set_my_commands(self, commands: list[dict[str, str]]) -> None: ...
+    async def set_chat_menu_button(self, menu_button: dict) -> None: ...
     async def send_message(
         self,
         chat_id: int | str,
@@ -398,18 +399,20 @@ class CandidateBot:
 
     def _keyboard(self, user_id: int) -> dict:
         del user_id
-        rows: list[list[str | dict]] = [
-            ['Для меня', 'Сохранённые'],
-            ['Профили'],
-        ]
+        rows = [['Для меня', 'Сохранённые'], ['Профили']]
+        return {'keyboard': rows, 'resize_keyboard': True}
+
+    def _menu_button(self) -> dict:
+        """Use Telegram's input-side menu so the Mini App receives initData."""
         url = os.getenv('CANDIDATE_MINIAPP_URL', '').strip()
         parsed = urlsplit(url)
         if parsed.scheme == 'https' and parsed.hostname and not parsed.username:
-            rows.append([{'text': 'Открыть Mini App', 'web_app': {'url': url}}])
-        return {
-            'keyboard': rows,
-            'resize_keyboard': True,
-        }
+            return {
+                'type': 'web_app',
+                'text': 'Открыть приложение',
+                'web_app': {'url': url},
+            }
+        return {'type': 'commands'}
 
     def _max_older_days(self, user_id: int) -> int:
         if self.registry is None:
@@ -624,6 +627,7 @@ class CandidateBot:
                 {'command': 'profiles', 'description': 'Профили и активный профиль'},
             ]
         )
+        await self.api.set_chat_menu_button(self._menu_button())
         offset: int | None = None
         while not shutdown_event.is_set():
             try:

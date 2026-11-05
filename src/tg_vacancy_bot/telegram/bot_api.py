@@ -39,6 +39,10 @@ class TelegramBotApi:
         """Publish the commands implemented by the current candidate bot."""
         await self._call('setMyCommands', {'commands': commands}, 20)
 
+    async def set_chat_menu_button(self, menu_button: dict) -> None:
+        """Set the default button beside the private chat input field."""
+        await self._call('setChatMenuButton', {'menu_button': menu_button}, 20)
+
     async def send_message(
         self,
         chat_id: int | str,

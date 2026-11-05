@@ -13,9 +13,16 @@ class FakeBotApi:
         self.messages = []
         self.answers = []
         self.edits = []
+        self.menu_buttons = []
 
     async def get_updates(self, _offset, _timeout):
         return []
+
+    async def set_my_commands(self, commands):
+        self.commands = commands
+
+    async def set_chat_menu_button(self, menu_button):
+        self.menu_buttons.append(menu_button)
 
     async def send_message(self, chat_id, text, **kwargs):
         self.messages.append((chat_id, text, kwargs))
@@ -171,12 +178,16 @@ def test_start_has_simple_chat_menu_and_miniapp_for_allowed_user(tmp_path, monke
     assert api.messages[-1][2]['reply_markup']['keyboard'] == [
         ['Для меня', 'Сохранённые'],
         ['Профили'],
-        [
-            {
-                'text': 'Открыть Mini App',
-                'web_app': {'url': 'https://example.com/miniapp/'},
-            }
-        ],
+    ]
+    shutdown = asyncio.Event()
+    shutdown.set()
+    asyncio.run(bot.run(shutdown))
+    assert api.menu_buttons == [
+        {
+            'type': 'web_app',
+            'text': 'Открыть приложение',
+            'web_app': {'url': 'https://example.com/miniapp/'},
+        }
     ]
     asyncio.run(bot.handle_update(message(2, '/start')))
     assert api.messages[-1][1] == 'Доступ к beta-боту ограничен.'

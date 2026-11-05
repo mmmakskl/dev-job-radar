@@ -31,6 +31,18 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); delete (window as Window & { Telegram?: unknown }).Telegram; });
 
+it('never shows sample vacancies outside Telegram', async () => {
+  delete (window as Window & { Telegram?: unknown }).Telegram;
+  const fetchMock = vi.fn();
+  vi.stubGlobal('fetch', fetchMock);
+
+  render(<MiniappPage/>);
+
+  expect(await screen.findByText(/Откройте Mini App через бота в Telegram/)).toBeInTheDocument();
+  expect(screen.queryByText('Go Backend Developer')).not.toBeInTheDocument();
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
 it('shows the real profile and registry vacancy when launched by Telegram', async () => {
   vi.stubGlobal('fetch', vi.fn((input: string) => {
     if (input.endsWith('/me')) return response({ user: { id: 1, first_name: 'Tester' }, profiles: [liveProfile], active_profile_id: 'p1', premium_enabled: true });

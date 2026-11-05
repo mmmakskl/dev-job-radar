@@ -693,12 +693,13 @@ def create_app(data_dir: str | None = None) -> FastAPI:
             # `/api` endpoints have already been matched above.
             if frontend_path == 'api' or frontend_path.startswith('api/'):
                 raise HTTPException(status_code=404, detail='Маршрут API не найден')
-            preview_pages = {'miniapp', 'miniapp-preview'}
             route = frontend_path.rstrip('/')
-            if route in preview_pages:
-                preview_page = static_dir / route / 'index.html'
-                if preview_page.is_file():
-                    return FileResponse(preview_page)
+            if route == 'miniapp-preview':
+                raise HTTPException(status_code=404, detail='Страница удалена')
+            if route == 'miniapp':
+                miniapp_page = static_dir / 'miniapp' / 'index.html'
+                if miniapp_page.is_file():
+                    return FileResponse(miniapp_page)
             return FileResponse(static_dir / 'index.html')
 
     return app

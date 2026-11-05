@@ -327,7 +327,7 @@ def test_candidate_web_premium_uses_active_profile_queue_and_owner_scope(
     )
 
 
-def test_miniapp_page_allows_telegram_bridge_and_same_origin_preview(
+def test_miniapp_page_allows_telegram_bridge_and_retired_preview_is_gone(
     tmp_path, monkeypatch
 ) -> None:
     static = tmp_path / 'static'
@@ -342,4 +342,5 @@ def test_miniapp_page_allows_telegram_bridge_and_same_origin_preview(
     assert miniapp.status_code == 200
     assert miniapp.headers['x-frame-options'] == 'SAMEORIGIN'
     assert 'https://telegram.org' in miniapp.headers['content-security-policy']
+    assert client.get('/miniapp-preview/').status_code == 404
     assert client.get('/').headers['x-frame-options'] == 'DENY'
