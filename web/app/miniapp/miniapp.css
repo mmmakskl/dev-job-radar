@@ -28,3 +28,5 @@
 @keyframes ma-progress{from{transform:translateX(0)}to{transform:translateX(185%)}}
 @media(prefers-reduced-motion:reduce){.ma-live-progress-indeterminate{animation:none;width:100%}}
 .miniapp[data-theme=dark] .ma-live-error{background:#3b272b;border-color:#88545b;color:#f3b7b7}
+.ma-input-profile{display:inline-flex;align-items:center;gap:8px}
+.ma-profile-edit{display:inline-flex;align-items:center;gap:6px}
