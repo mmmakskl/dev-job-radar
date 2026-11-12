@@ -117,15 +117,16 @@ it('saves a live vacancy through the candidate API and shows it in the archive',
   await waitFor(() => expect(screen.getByText('Live vacancy')).toBeInTheDocument());
 });
 
-it('launches Premium search with a backend template for the active profile', async () => {
+it('shows live Premium search status and starts a run from the active profile template', async () => {
   let started = false;
+  const startedAt = '2026-11-12T10:15:00+00:00';
   vi.stubGlobal('fetch', vi.fn((input: string, init?: RequestInit) => {
     if (input.endsWith('/me')) return response({ user: { id: 1, first_name: 'Tester' }, profiles: [liveProfile], active_profile_id: 'p1', premium_enabled: true });
     if (input.endsWith('/feed/settings')) return response({ older_days: 7, max_older_days: 30 });
     if (input.includes('/feed')) return response({ items: [liveVacancy], total: 1 });
     if (input.endsWith('/saved')) return response({ items: [] });
     if (input.endsWith('/premium/templates')) return response({ items: [{ id: 'role:backend_developer', label: 'По роли', query: 'Go backend вакансии' }] });
-    if (input.endsWith('/premium/runs') && init?.method === 'POST') { started = true; return response({ id: 'run-1', status: 'queued' }, 202); }
+    if (input.endsWith('/premium/runs') && init?.method === 'POST') { started = true; return response({ id: 'run-1', status: 'queued', created_at: startedAt, query: 'Go backend вакансии', confirmed_count: 0, metrics: { scanned: 12, found: 2, pending: 1, accepted: 0, rejected: 0, errors: 0 }, source_states: { premium: { status: 'queued' } } }, 202); }
     if (input.endsWith('/premium/runs')) return response({ items: [] });
     if (input.endsWith('/premium/runs/run-1')) return response({ id: 'run-1', status: 'queued' });
     if (input.endsWith('/premium/runs/run-1/results')) return response({ items: [], total: 0 });
@@ -137,6 +138,11 @@ it('launches Premium search with a backend template for the active profile', asy
   expect(await screen.findByText('Go backend вакансии')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Запустить поиск' }));
   await waitFor(() => expect(started).toBe(true));
+  expect(await screen.findByRole('heading', { name: 'Go backend вакансии' })).toBeInTheDocument();
+  expect(screen.getByText('Просмотрено')).toBeInTheDocument();
+  expect(screen.getByText('12')).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Последние запуски' })).toBeInTheDocument();
+  expect(screen.getAllByText('В очереди')).toHaveLength(3);
 });
 
 it('creates a profile in the shared bot store before showing it in the Mini App', async () => {

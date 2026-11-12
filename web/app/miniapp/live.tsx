@@ -36,6 +36,7 @@ const premiumReasons: Record<string, string> = {
   premium_required: 'Для поиска нужен Telegram Premium.',
   telegram_auth_required: 'Требуется повторная авторизация Telegram.',
   free_quota_exhausted: 'Бесплатная квота Telegram исчерпана.',
+  premium_busy: 'Другой Premium-поиск уже выполняется.',
   telegram_or_search_failure: 'Telegram не выполнил поиск.',
   time_limit_reached: 'Поиск остановлен по лимиту времени; найденные вакансии сохранены.',
   no_recent_candidates: 'По этой роли свежих сообщений не найдено.',
@@ -131,6 +132,7 @@ export default function LiveMiniapp({ initData, csrfToken = '', onLogout }: { in
   const [templates, setTemplates] = useState<CandidateTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState('');
   const [run, setRun] = useState<CandidateRun | null>(null);
+  const [runs, setRuns] = useState<CandidateRun[]>([]);
   const [results, setResults] = useState<CandidateVacancy[]>([]);
   const [olderDays, setOlderDays] = useState(7);
   const [maxOlderDays, setMaxOlderDays] = useState(30);
@@ -171,7 +173,13 @@ export default function LiveMiniapp({ initData, csrfToken = '', onLogout }: { in
   const refreshRun = useCallback(async (id: string) => {
     const [nextRun, nextResults] = await Promise.all([api.run(id), api.results(id)]);
     setRun(nextRun);
+    setRuns(current => [nextRun, ...current.filter(item => item.id !== nextRun.id)]);
     setResults(nextResults.items);
+  }, [api]);
+  const refreshRuns = useCallback(async () => {
+    const data = await api.runs();
+    setRuns(data.items);
+    setRun(current => current ? data.items.find(item => item.id === current.id) ?? current : data.items[0] ?? null);
   }, [api]);
 
   useEffect(() => {
@@ -185,6 +193,7 @@ export default function LiveMiniapp({ initData, csrfToken = '', onLogout }: { in
         setSaved(archive.items);
         setTemplates(availableTemplates.items);
         setSelectedTemplate(availableTemplates.items[0]?.id ?? '');
+        setRuns(runs.items);
         setRun(runs.items[0] ?? null);
         setOlderDays(settings.older_days);
         setMaxOlderDays(settings.max_older_days);
@@ -201,6 +210,11 @@ export default function LiveMiniapp({ initData, csrfToken = '', onLogout }: { in
     const interval = window.setInterval(() => { void refreshRun(run.id).catch(report); }, 5000);
     return () => window.clearInterval(interval);
   }, [api, run?.id, run?.status, refreshRun]);
+  useEffect(() => {
+    if (!runs.some(item => ['queued', 'running'].includes(item.status))) return;
+    const interval = window.setInterval(() => { void refreshRuns().catch(report); }, 5000);
+    return () => window.clearInterval(interval);
+  }, [runs, refreshRuns]);
   useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(''), 3000); return () => window.clearTimeout(timer); }, [toast]);
   useEffect(() => {
     const stored = window.localStorage.getItem('miniapp-live-theme');
@@ -285,6 +299,7 @@ export default function LiveMiniapp({ initData, csrfToken = '', onLogout }: { in
       const intent = `web-${crypto.randomUUID()}`;
       const started = await api.startRun(selectedTemplate, intent);
       setRun(started);
+      setRuns(current => [started, ...current.filter(item => item.id !== started.id)]);
       setResults([]);
       showToast('Поиск поставлен в очередь');
     } catch (reason) { report(reason); }
@@ -292,7 +307,12 @@ export default function LiveMiniapp({ initData, csrfToken = '', onLogout }: { in
   };
   const cancelPremium = async () => {
     if (!run) return;
-    try { setRun(await api.cancelRun(run.id)); showToast('Поиск отменён'); }
+    try {
+      const cancelled = await api.cancelRun(run.id);
+      setRun(cancelled);
+      setRuns(current => [cancelled, ...current.filter(item => item.id !== cancelled.id)]);
+      showToast('Поиск отменён');
+    }
     catch (reason) { report(reason); }
   };
   const loadMore = async () => {
@@ -304,6 +324,11 @@ export default function LiveMiniapp({ initData, csrfToken = '', onLogout }: { in
   };
   const filteredFeed = feed.filter(item => `${item.title} ${item.company} ${item.tags.join(' ')}`.toLocaleLowerCase('ru').includes(query.toLocaleLowerCase('ru')));
   const statusText = run?.status === 'queued' ? 'В очереди' : run?.status === 'running' ? premiumPhases[run.phase ?? ''] ?? 'Идёт поиск' : run?.status === 'completed' ? 'Поиск завершён' : run?.status === 'cancelled' ? 'Поиск отменён' : run?.status === 'completed_with_errors' ? 'Завершён с ошибками' : run?.status === 'failed' ? 'Ошибка поиска' : 'Поиск не запущен';
+  const isRunActive = !!run && ['queued', 'running'].includes(run.status);
+  const hasActiveRun = runs.some(item => ['queued', 'running'].includes(item.status));
+  const runStatusTone = run?.status === 'completed' ? 'success' : run?.status === 'completed_with_errors' || run?.status === 'failed' ? 'error' : run?.status === 'cancelled' ? 'muted' : 'active';
+  const runMetrics = run?.metrics ?? {};
+  const runDate = (value?: string) => value && !Number.isNaN(new Date(value).getTime()) ? new Date(value).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Время неизвестно';
 
   function VacancyCard({ item, premium = false }: { item: CandidateVacancy; premium?: boolean }) {
     const initial = (item.company || 'В')[0].toUpperCase();
@@ -340,7 +365,51 @@ export default function LiveMiniapp({ initData, csrfToken = '', onLogout }: { in
         </>}
         {screen === 'saved' && <><section className="ma-page-heading"><div><span className="ma-overline">ТВОЯ КОЛЛЕКЦИЯ</span><h1>Сохранённые <span className="ma-heading-count">{saved.length}</span></h1><p>Вакансии останутся здесь при переключении профиля.</p></div><span className="ma-heading-decoration"><Glyph size={25}>♧</Glyph></span></section>{saved.length ? <div className="ma-vacancy-grid">{saved.map(item => <VacancyCard key={item.vacancy_id} item={item}/>)}</div> : <div className="ma-empty"><span><Glyph size={27}>♧</Glyph></span><h3>Здесь пока пусто</h3><p>Нажми на закладку у интересной вакансии.</p><button type="button" onClick={() => openScreen('feed')}>Смотреть вакансии →</button></div>}</>}
         {screen === 'profiles' && <><section className="ma-page-heading"><div><span className="ma-overline">НАСТРОЙ ПОИСК ПОД СЕБЯ</span><h1>Мои профили</h1><p>Для ленты и уведомлений активным может быть только один профиль.</p></div><button className="ma-primary-button" type="button" onClick={() => setEditor(initialEditor())}><Glyph size={19}>＋</Glyph> Новый профиль</button></section><div className="ma-profile-list">{me.profiles.map(profile => <article className={`ma-profile-card ${profile.is_active ? 'is-active' : ''}`} key={profile.profile_id}><div className="ma-profile-leading"><div className="ma-profile-icon"><Glyph size={22}>♙</Glyph></div><div><div className="ma-profile-title-row"><h2>{profile.name}</h2>{profile.is_active && <span className="ma-active-badge"><span/> Активный</span>}</div><p>{directionLabel(profile.direction_id)} · {roleLabel(profile.role_id)}</p></div></div><div className="ma-profile-chips"><span>{profile.preferences.seniority?.length ? profile.preferences.seniority.map(grade => grade[0].toUpperCase() + grade.slice(1)).join(', ') : 'Любой грейд'}</span>{(profile.preferences.stacks ?? []).length > 0 && <span>{profile.preferences.stacks?.map(stackLabel).join(', ')}</span>}{(profile.preferences.required_skills ?? []).slice(0, 3).map(skill => <span key={skill}>{skill}</span>)}<span>{deliveryLabels[profile.preferences.delivery_mode ?? 'immediate']}</span></div><div className="ma-profile-actions"><button type="button" className="ma-profile-edit" onClick={() => setEditor(editorFrom(profile))}><Glyph size={16}>✎</Glyph> Изменить</button>{!profile.is_active && <button type="button" className="ma-profile-activate" disabled={busy} onClick={() => void activateProfile(profile.profile_id)}>Сделать активным →</button>}</div></article>)}</div>{me.profiles.length === 0 && <div className="ma-empty"><span><Glyph size={27}>♙</Glyph></span><h3>Создай первый профиль</h3><p>Выбери направление, роль и навыки, чтобы получить личную ленту.</p><button type="button" onClick={() => setEditor(initialEditor())}>Создать профиль →</button></div>}<div className="ma-tip"><span><Glyph>♧</Glyph></span><div><strong>Уведомления работают по активному профилю</strong><p>Выбери, как часто получать новые совпадения: сразу, раз в час или только при открытии ленты.</p></div></div></>}
-        {screen === 'premium' && <><section className="ma-page-heading ma-premium-heading"><div><span className="ma-overline">РАСШИРЕННЫЙ ПОИСК</span><h1>Premium поиск <span className="ma-title-spark">✦</span></h1><p>Проверенные вакансии из истории Telegram по активному профилю.</p></div><span className="ma-premium-icon"><Glyph size={25}>✦</Glyph></span></section><div className="ma-premium-layout"><div className="ma-premium-main"><div className="ma-premium-card"><div className="ma-card-step"><span>01</span><div><h2>Проверь настройки поиска</h2><p>Поиск использует снимок активного профиля на момент запуска.</p></div></div><div className="ma-premium-fields"><div><label>Активный профиль</label><button type="button" className="ma-input-button" onClick={() => openScreen('profiles')}><span className="ma-input-profile"><Glyph size={17}>♙</Glyph>{active?.name ?? 'Выбери профиль'}</span><Glyph size={17}>›</Glyph></button></div><div><label htmlFor="ma-live-template">Шаблон запроса</label><select id="ma-live-template" value={selectedTemplate} onChange={event => setSelectedTemplate(event.target.value)} disabled={!templates.length}>{templates.length ? templates.map(item => <option key={item.id} value={item.id}>{item.label}</option>) : <option value="">Нет шаблонов</option>}</select></div></div><div className="ma-query-preview"><span>ПРЕДПРОСМОТР ЗАПРОСА</span><strong>{templates.find(item => item.id === selectedTemplate)?.query ?? 'Выбери активный профиль'}</strong><p>Telegram Premium · 7 дней · до 50 подтверждённых совпадений</p></div><div className="ma-premium-action-row"><button className="ma-primary-button" type="button" disabled={!active || !me.premium_enabled || !selectedTemplate || busy || !!run && ['queued', 'running'].includes(run.status)} onClick={() => void startPremium()}><Glyph>✦</Glyph> Запустить поиск</button><span>{me.premium_enabled ? 'Без недельной квоты приложения; результаты доступны до завершения' : 'Premium поиск сейчас недоступен'}</span></div></div>{run && <div className="ma-search-progress-card"><div className="ma-progress-top"><span className="ma-progress-icon"><Glyph>⌕</Glyph></span><div><strong>{statusText}</strong><p>Подтверждено вакансий: {run.confirmed_count}</p><div className="ma-premium-stats" aria-label="Статистика поиска"><span>Просмотрено: {run.metrics?.scanned ?? 0}</span><span>Найдено: {run.metrics?.found ?? 0}</span><span>В анализе: {run.metrics?.pending ?? 0}</span><span>Принято: {run.metrics?.accepted ?? 0}</span><span>Отклонено: {run.metrics?.rejected ?? 0}</span><span>Ошибки: {run.metrics?.errors ?? 0}</span></div>{run.error_reason && <p role="alert">{premiumReasons[run.error_reason] ?? "Поиск завершился с ошибкой."}</p>}</div><button className="ma-text-action" type="button" aria-label="Обновить поиск" onClick={() => void refreshRun(run.id).catch(report)}><Glyph size={17}>↻</Glyph></button></div>{['queued', 'running'].includes(run.status) && <><div className="ma-progress-track"><div className="ma-live-progress-indeterminate"/></div><button type="button" onClick={() => void cancelPremium()}>Отменить поиск</button></>}</div>}{results.length > 0 && <><div className="ma-section-heading ma-premium-results-heading"><div><span className="ma-overline">РЕЗУЛЬТАТЫ</span><h2>Найденные вакансии <span className="ma-heading-count">{results.length}</span></h2></div></div><div className="ma-vacancy-grid ma-premium-results">{results.map(item => <VacancyCard key={item.id} item={item} premium/>)}</div></>}</div><aside className="ma-premium-aside"><div className="ma-how-card"><span className="ma-how-icon"><Glyph>✦</Glyph></span><h3>Как это работает</h3><div className="ma-how-step"><b>1</b><p>Выбери активный профиль и шаблон запроса.</p></div><div className="ma-how-step"><b>2</b><p>Проверь запрос и запусти поиск по истории.</p></div><div className="ma-how-step"><b>3</b><p>Изучи результаты и сохрани интересное.</p></div></div><div className="ma-premium-notice"><Glyph>ⓘ</Glyph><p>Поиск выполняет существующий live worker. Уведомления по найденным вакансиям отдельно не запускаются.</p></div></aside></div></>}
+        {screen === 'premium' && <>
+          <section className="ma-page-heading ma-premium-heading">
+            <div><span className="ma-overline">ПОИСК ПО ИСТОРИИ TELEGRAM</span><h1>Premium поиск</h1><p>Запускай поиск по активному профилю и следи за каждым этапом.</p></div>
+            <span className="ma-premium-icon"><Glyph size={23}>✦</Glyph></span>
+          </section>
+          <div className="ma-premium-workspace">
+            <div className="ma-premium-main">
+              <section className="ma-premium-card">
+                <div className="ma-premium-card-heading"><div><span className="ma-overline">НОВЫЙ ЗАПУСК</span><h2>Настройки поиска</h2></div><span className="ma-run-limit">7 дней <i/> до 50 совпадений</span></div>
+                <div className="ma-premium-fields">
+                  <div><label>Активный профиль</label><button type="button" className="ma-input-button" onClick={() => openScreen('profiles')}><span className="ma-input-profile"><Glyph size={17}>♙</Glyph>{active?.name ?? 'Выбери профиль'}</span><Glyph size={17}>›</Glyph></button></div>
+                  <div><label htmlFor="ma-live-template">Шаблон запроса</label><select id="ma-live-template" value={selectedTemplate} onChange={event => setSelectedTemplate(event.target.value)} disabled={!templates.length}>{templates.length ? templates.map(item => <option key={item.id} value={item.id}>{item.label}</option>) : <option value="">Нет шаблонов</option>}</select></div>
+                </div>
+                <div className="ma-query-preview"><span>ПОИСКОВЫЙ ЗАПРОС</span><strong>{templates.find(item => item.id === selectedTemplate)?.query ?? 'Выбери активный профиль'}</strong></div>
+                <div className="ma-premium-action-row"><button className="ma-primary-button" type="button" disabled={!active || !me.premium_enabled || !selectedTemplate || busy || hasActiveRun} onClick={() => void startPremium()}><Glyph>✦</Glyph> Запустить поиск</button><span>{!me.premium_enabled ? 'Premium поиск сейчас недоступен.' : hasActiveRun ? 'Дождись завершения текущего прохода.' : 'Используется снимок активного профиля на момент запуска.'}</span></div>
+              </section>
+
+              {run ? <section className="ma-search-progress-card" aria-labelledby="ma-run-title">
+                <div className="ma-run-header"><div><span className="ma-overline">ТЕКУЩИЙ ЗАПУСК</span><h2 id="ma-run-title">{run.query || 'Поиск вакансий'}</h2><p>Запущен {runDate(run.created_at)}</p></div><div className="ma-run-header-actions"><span className={`ma-run-status is-${runStatusTone}`}><i/>{statusText}</span><button className="ma-text-action" type="button" aria-label="Обновить статус" onClick={() => void refreshRun(run.id).catch(report)}><Glyph size={17}>↻</Glyph></button></div></div>
+                <div className="ma-run-timeline" aria-label="Этапы поиска">
+                  {[['Запрос принят', 0], ['Поиск в Telegram', 1], ['Анализ вакансий', 2], ['Готово', 3]].map(([label, index]) => {
+                    const step = Number(index);
+                    const phase = run.phase ?? '';
+                    const currentStep = !isRunActive ? 3 : run.status === 'queued' ? 0 : phase === 'analyzing' || phase === 'llm_retry' ? 2 : phase === 'quota_check' ? 0 : 1;
+                    const stepState = step < currentStep || !isRunActive && run.status === 'completed' ? 'done' : step === currentStep && isRunActive ? 'current' : !isRunActive && run.status !== 'completed' && step === 3 ? 'stopped' : '';
+                    return <div className={`ma-run-step ${stepState}`} key={label}><span>{stepState === 'done' ? '✓' : step + 1}</span><b>{label}</b></div>;
+                  })}
+                </div>
+                {isRunActive && <div className="ma-run-live-note"><span className="ma-pulse-dot"/> Обновляется автоматически каждые 5 секунд <button type="button" onClick={() => void cancelPremium()}>Отменить</button></div>}
+                {run.error_reason && <div className="ma-run-error" role="alert"><Glyph size={18}>ⓘ</Glyph><div><strong>{run.status === 'completed_with_errors' ? 'Поиск завершён не полностью' : 'Не удалось выполнить поиск'}</strong><p>{premiumReasons[run.error_reason] ?? premiumReasons.premium_search_failed}</p></div></div>}
+                <div className="ma-run-metrics" aria-label="Статистика запуска">
+                  {[["Просмотрено", runMetrics.scanned ?? 0], ["Найдено", runMetrics.found ?? 0], ["В анализе", runMetrics.pending ?? 0], ["Подтверждено", run.confirmed_count], ["Отклонено", runMetrics.rejected ?? 0], ["Ошибки", runMetrics.errors ?? 0]].map(([label, value]) => <div className="ma-run-metric" key={String(label)}><span>{label}</span><strong>{Number(value).toLocaleString('ru-RU')}</strong></div>)}
+                </div>
+                {run.source_states && Object.keys(run.source_states).length > 0 && <div className="ma-source-status"><span>ИСТОЧНИКИ</span>{Object.entries(run.source_states).map(([source, state]) => <div key={source}><i className={state.status === 'completed' ? 'is-ok' : state.status === 'failed' ? 'is-error' : ''}/><strong>{source === 'premium' ? 'Telegram Premium' : source}</strong><small>{state.reason ? premiumReasons[state.reason] ?? state.reason : state.status === 'completed' ? 'Завершён' : state.status === 'failed' ? 'Ошибка' : state.status === 'running' ? 'В работе' : state.status === 'queued' ? 'В очереди' : state.status === 'unavailable' ? 'Недоступен' : state.status}</small></div>)}</div>}
+              </section> : <section className="ma-run-empty"><span><Glyph size={22}>⌕</Glyph></span><div><strong>Запусков пока нет</strong><p>После старта здесь появится ход поиска и его результаты.</p></div></section>}
+
+              {run && <section className="ma-run-history" aria-labelledby="ma-history-title"><div className="ma-run-history-heading"><div><span className="ma-overline">ИСТОРИЯ</span><h2 id="ma-history-title">Последние запуски</h2></div><button className="ma-text-action" type="button" onClick={() => void refreshRuns().catch(report)}><Glyph size={16}>↻</Glyph><span>Обновить</span></button></div>
+                {runs.length ? <div className="ma-run-history-list">{runs.map(item => <button className={`ma-history-item ${item.id === run.id ? 'is-selected' : ''}`} type="button" key={item.id} aria-current={item.id === run.id ? 'true' : undefined} onClick={() => { setRun(item); void api.results(item.id).then(data => setResults(data.items)).catch(report); }}><span className={`ma-history-dot is-${item.status === 'completed' ? 'success' : item.status === 'failed' || item.status === 'completed_with_errors' ? 'error' : ['queued', 'running'].includes(item.status) ? 'active' : 'muted'}`}/><span className="ma-history-copy"><strong>{item.query || 'Поиск вакансий'}</strong><small>{runDate(item.created_at)} · {item.confirmed_count} подтверждено</small></span><span className="ma-history-label">{item.status === 'completed' ? 'Готово' : item.status === 'completed_with_errors' ? 'С ошибками' : item.status === 'failed' ? 'Ошибка' : item.status === 'cancelled' ? 'Отменён' : item.status === 'queued' ? 'В очереди' : item.status === 'running' ? 'В работе' : item.status}</span><Glyph size={16}>›</Glyph></button>)}</div> : <p className="ma-history-empty">История появится после первого запуска.</p>}
+              </section>}
+
+              {run && <section className="ma-premium-results-section"><div className="ma-section-heading ma-premium-results-heading"><div><span className="ma-overline">РЕЗУЛЬТАТЫ ЗАПУСКА</span><h2>Подтверждённые вакансии <span className="ma-heading-count">{results.length}</span></h2></div></div>{results.length > 0 ? <div className="ma-vacancy-grid ma-premium-results">{results.map(item => <VacancyCard key={item.id} item={item} premium/>)}</div> : <div className="ma-results-empty">{isRunActive ? 'Подтверждённые совпадения появятся здесь по мере обработки.' : 'В этом запуске нет подтверждённых вакансий.'}</div>}</section>}
+            </div>
+            <aside className="ma-premium-aside"><div className="ma-how-card"><span className="ma-how-icon"><Glyph>✦</Glyph></span><h3>Параметры прохода</h3><div className="ma-how-step"><b>7</b><p>Последних дней истории Telegram.</p></div><div className="ma-how-step"><b>50</b><p>Подтверждённых совпадений максимум.</p></div><div className="ma-how-step"><b>↻</b><p>Статус и счётчики обновляются автоматически во время работы.</p></div></div><div className="ma-premium-notice"><Glyph>ⓘ</Glyph><p>Найденные подтверждённые вакансии сохраняются в общий реестр по мере обработки.</p></div></aside>
+          </div>
+        </>}
       </div>
     </main>
     <nav className="ma-mobile-nav" aria-label="Основные разделы">{navigation.map(item => <button key={item.id} type="button" className={screen === item.id ? 'active' : ''} onClick={() => openScreen(item.id)}><Glyph size={20}>{item.icon}</Glyph><span>{item.id === 'feed' ? 'Лента' : item.id === 'saved' ? 'Сохранено' : item.id === 'profiles' ? 'Профили' : 'Premium'}</span></button>)}</nav>
