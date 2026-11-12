@@ -37,6 +37,9 @@ export type CandidateRun = {
   created_at: string;
   query: string;
   confirmed_count: number;
+  phase?: string | null;
+  metrics?: Record<string, number>;
+  error_reason?: string | null;
   source_states: Record<string, { status: string; reason?: string | null }>;
 };
 

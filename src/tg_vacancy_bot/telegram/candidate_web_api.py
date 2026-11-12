@@ -10,6 +10,7 @@ import time
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 from urllib.parse import parse_qsl
 
@@ -23,6 +24,7 @@ from tg_vacancy_bot.candidate_catalog import (
 )
 from tg_vacancy_bot.models import NOT_SPECIFIED
 from tg_vacancy_bot.premium_search.settings import catalog_search_allowed
+from tg_vacancy_bot.premium_search.store import PremiumSearchStore
 from tg_vacancy_bot.premium_search.templates import compose_query, list_templates
 from tg_vacancy_bot.registry import RegistryMatch, VacancyRegistry
 from tg_vacancy_bot.search.store import SearchStore
@@ -225,8 +227,23 @@ def _saved_view(vacancy) -> dict:
     }
 
 
+@lru_cache(maxsize=8)
+def _premium_store(path: str) -> PremiumSearchStore:
+    return PremiumSearchStore(path)
+
+
 def _run_view(run: dict, search: SearchStore, user_id: int) -> dict:
     results = search.list_results(run['id'], owner=f'candidate:{user_id}', limit=1)
+    child = None
+    premium_path = Path(search.path).parent / 'premium_search.sqlite3'
+    if premium_path.exists():
+        premium = _premium_store(str(premium_path))
+        child = premium.find_request(f'candidate:{user_id}', 'search:' + run['id'])
+    metrics = dict(child['metrics']) if child else {}
+    if child:
+        metrics['pending'] = premium.list_results(
+            child['search_run_id'], limit=1, status='pending'
+        )['total']
     return {
         'id': run['id'],
         'status': run['status'],
@@ -234,6 +251,10 @@ def _run_view(run: dict, search: SearchStore, user_id: int) -> dict:
         'query': run['query'],
         'confirmed_count': results['total'],
         'source_states': run['source_states'],
+        'phase': child['phase'] if child else None,
+        'metrics': metrics,
+        'error_reason': (child['error_reason'] if child else None)
+        or run['source_states'].get('premium', {}).get('reason'),
     }
 
 

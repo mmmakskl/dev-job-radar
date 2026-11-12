@@ -71,12 +71,9 @@ def install_routes(
             for value in os.getenv('CANDIDATE_BOT_ALLOWED_USER_IDS', '').split(',')
             if value.strip().isdigit()
         }
-        catalog_enabled = bool(
-            admin_id
-            and admin_id in allowed_user_ids
-            and os.getenv('CANDIDATE_CATALOG_SEARCH_ENABLED', '').casefold()
-            in {'1', 'true', 'yes', 'on'}
-        )
+        # The catalog is an admin search capability. Candidate rollout flags
+        # control candidate access and must not hide admin filters.
+        catalog_enabled = bool(admin_id and admin_id in allowed_user_ids)
         from tg_vacancy_bot.candidate_catalog import CATALOG
 
         return dict(

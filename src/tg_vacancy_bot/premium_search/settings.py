@@ -38,7 +38,7 @@ def catalog_search_allowed(owner: str) -> bool:
         'on',
     }
     flag = flag or bool(getattr(config, 'CANDIDATE_CATALOG_SEARCH_ENABLED', False))
-    if not enabled() or not flag:
+    if not enabled():
         return False
     if owner.startswith('admin:'):
         try:
@@ -58,6 +58,8 @@ def catalog_search_allowed(owner: str) -> bool:
         }
         allowed.update(getattr(config, 'CANDIDATE_BOT_ALLOWED_USER_IDS', ()))
         return admin_id == configured_admin and admin_id in allowed
+    if not flag:
+        return False
     if not owner.startswith('candidate:'):
         return False
     try:
