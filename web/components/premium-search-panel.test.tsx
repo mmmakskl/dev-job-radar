@@ -26,6 +26,19 @@ describe('Premium search',()=>{
     expect(await screen.findByRole('link',{name:/открыть вакансию в telegram/i})).toHaveAttribute('href','https://t.me/public_jobs/1');
     expect(screen.getByRole('combobox',{name:'Действия с вакансией «Go developer»'})).toHaveTextContent('Опубликовать');
   });
+  it('queues a source directly and shows feedback on the vacancy',async()=>{
+    render(<PremiumSearchPanel capabilities={capabilities}/>);
+    fireEvent.change(await screen.findByRole('combobox',{name:'Действия с вакансией «Go developer»'}),{target:{value:'add_public_source'}});
+    await waitFor(()=>expect(premiumApi.action).toHaveBeenCalledWith('r1','add_public_source'));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(await screen.findByText(/Добавление источника поставлено в очередь/)).toBeInTheDocument();
+  });
+  it('shows a source error beside the vacancy',async()=>{
+    vi.mocked(premiumApi.action).mockRejectedValue(new Error('Источник недоступен'));
+    render(<PremiumSearchPanel capabilities={capabilities}/>);
+    fireEvent.change(await screen.findByRole('combobox',{name:'Действия с вакансией «Go developer»'}),{target:{value:'add_public_source'}});
+    expect(await screen.findByRole('alert')).toHaveTextContent('Источник недоступен');
+  });
   it.each(['accepted','review','saved'])('confirms publication of a %s card',async(status)=>{
     vi.mocked(premiumApi.results).mockResolvedValue({items:[{...result,status,confidence:60}],total:1,offset:0,limit:25});
     render(<PremiumSearchPanel capabilities={capabilities}/>);

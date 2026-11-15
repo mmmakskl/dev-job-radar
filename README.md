@@ -45,6 +45,8 @@ ADMIN_STATIC_DIR="$PWD/web/out" PYTHONPATH=src venv/bin/python -m uvicorn tg_vac
 
 Open `http://127.0.0.1:8000`, sign in, and configure the Telegram sources. `TARGET_CHANNELS` is an optional one-time bootstrap for an empty settings database. Run `make history` to process past messages. Do not run authorization, history, and live monitoring concurrently against the same Telegram session.
 
+In Premium search results, choosing “Добавить канал в источники” queues the source action immediately and shows its status on the vacancy. The channel becomes available to monitoring after the required restart.
+
 ## Candidate Bot and Mini App
 
 1. Create a bot through Telegram, add it as an administrator to the configured channel, and set `CANDIDATE_BOT_ENABLED=true`, `CANDIDATE_BOT_TOKEN`, `CANDIDATE_BOT_CHANNEL`, and `CANDIDATE_BOT_ALLOWED_USER_IDS` in `.env`.
