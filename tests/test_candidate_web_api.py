@@ -520,3 +520,48 @@ def test_source_text_requires_access_and_preserves_full_text(tmp_path, monkeypat
         ).status_code
         == 404
     )
+
+
+def test_feed_filters_apply_before_pagination_without_editing_profile(
+    tmp_path, monkeypatch
+):
+    from dataclasses import replace
+
+    client = _client(tmp_path, monkeypatch)
+    store = CandidateStore(str(tmp_path / 'candidate_bot.sqlite3'))
+    profile = store.create_profile(
+        1,
+        name='Go',
+        direction_id='development',
+        specialization_id='backend',
+        role_id='backend_developer',
+        preferences={'profile_contract': 'catalog-v3'},
+    )
+    registry = VacancyRegistry(store.path)
+    base = decision_for('development', 'backend', 'backend_developer', 'Go', 'Go role')
+    for index, work_format in enumerate(['Office', 'Remote', 'Remote']):
+        registry.ingest(
+            vacancy_id=f'filter_{index}',
+            post_link=f'https://t.me/jobs/{index}',
+            decision=replace(
+                base, analysis=replace(base.analysis, work_format=work_format)
+            ),
+            published_at=f'2026-10-0{4-index}T08:00:00+00:00',
+            eligible_at='2026-10-04T08:01:00+00:00',
+            raw_text='Go developer',
+        )
+    headers = _headers(1)
+    page = client.get(
+        '/api/v1/candidate/feed?formats=remote&limit=1&offset=1', headers=headers
+    )
+    assert page.status_code == 200
+    assert page.json()['total'] == 2
+    assert [item['vacancy_id'] for item in page.json()['items']] == ['filter_2']
+    assert client.get('/api/v1/candidate/feed', headers=headers).json()['total'] == 3
+    assert store.get_profile(1, profile.profile_id).version == profile.version
+    assert (
+        client.get(
+            '/api/v1/candidate/feed?formats=invalid', headers=headers
+        ).status_code
+        == 422
+    )

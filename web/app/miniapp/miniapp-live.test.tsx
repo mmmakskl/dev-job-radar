@@ -242,7 +242,9 @@ it('edits profile filters and loads the complete vacancy text', async () => {
     return response({}, 404);
   }));
   render(<MiniappPage/>);
-  fireEvent.click(await screen.findByRole('button', { name: /Настроить фильтры/ }));
+  await screen.findByText('Live vacancy');
+  fireEvent.click(within(screen.getByRole('navigation', { name: 'Навигация' })).getByRole('button', { name: 'Мои профили' }));
+  fireEvent.click(screen.getByRole('button', { name: /Изменить/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Формат работы' }));
   fireEvent.click(screen.getByRole('checkbox', { name: 'Удалённо' }));
   fireEvent.click(screen.getByRole('button', { name: 'Регион' }));
@@ -253,4 +255,25 @@ it('edits profile filters and loads the complete vacancy text', async () => {
   await waitFor(() => expect(submitted).toMatchObject({ formats: ['remote'], geography: ['europe'], vacancy_languages: ['en'] }));
   fireEvent.click(await screen.findByRole('button', { name: 'Live vacancy' }));
   expect(await screen.findByText(/Вторая строка/)).toBeInTheDocument();
+});
+
+it('filters the feed without changing the profile', async () => {
+  const calls: string[] = [];
+  vi.stubGlobal('fetch', vi.fn((input: string, init?: RequestInit) => {
+    calls.push(`${init?.method ?? 'GET'} ${input}`);
+    if (input.endsWith('/me')) return response({ user: { id: 1, first_name: 'Tester' }, profiles: [liveProfile], active_profile_id: 'p1', premium_enabled: true });
+    if (input.endsWith('/feed/settings')) return response({ older_days: 7, max_older_days: 30 });
+    if (input.includes('/feed')) return response({ items: [liveVacancy], total: 1 });
+    if (input.endsWith('/saved') || input.endsWith('/premium/templates') || input.endsWith('/premium/runs')) return response({ items: [] });
+    return response({}, 404);
+  }));
+  render(<MiniappPage/>);
+  await screen.findByText('Live vacancy');
+  expect(screen.queryByText('Фильтры профиля')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Фильтры' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Формат работы' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Удалённо' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Показать вакансии' }));
+  await waitFor(() => expect(calls.some(call => call.includes('formats=remote'))).toBe(true));
+  expect(calls.some(call => call.startsWith('PUT ') && call.includes('/profiles/'))).toBe(false);
 });

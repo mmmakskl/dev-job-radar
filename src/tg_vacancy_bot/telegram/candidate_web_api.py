@@ -23,6 +23,7 @@ from tg_vacancy_bot.candidate_catalog import (
     validate_profile_path,
 )
 from tg_vacancy_bot.models import NOT_SPECIFIED
+from tg_vacancy_bot.profile_matcher import match_candidate_filters
 from tg_vacancy_bot.premium_search.settings import catalog_search_allowed
 from tg_vacancy_bot.premium_search.store import PremiumSearchStore
 from tg_vacancy_bot.premium_search.templates import compose_query, list_templates
@@ -456,11 +457,23 @@ def install_routes(app, *, candidate_path: str, search_path: str) -> None:
         bucket: Literal['all', 'new', 'older', 'undated'] = 'all',
         offset: int = Query(default=0, ge=0),
         limit: int = Query(default=20, ge=1, le=50),
+        formats: list[Literal['remote', 'hybrid', 'office']] = Query(default=[]),
+        geography: list[Literal['russia', 'europe', 'usa', 'cis', 'asia']] = Query(
+            default=[]
+        ),
+        vacancy_languages: list[Literal['ru', 'en', 'other']] = Query(default=[]),
         owner: int = Depends(user_id),
     ):
         if candidates().get_active_profile(owner) is None:
             return {'items': [], 'total': 0, 'offset': offset, 'limit': limit}
-        if bucket == 'all':
+        filters = {
+            'candidate_filter_version': 1,
+            'formats': formats,
+            'geography': geography,
+            'vacancy_languages': vacancy_languages,
+        }
+        filtered = bool(formats or geography or vacancy_languages)
+        if bucket == 'all' and not filtered:
             matches = registry().list_personal_matches(
                 owner, limit=limit, offset=offset
             )
@@ -472,6 +485,15 @@ def install_routes(app, *, candidate_path: str, search_path: str) -> None:
             available = registry().list_personal_matches(owner)
             matches = []
             for match in available:
+                if (
+                    filtered
+                    and match_candidate_filters(match.analysis, filters).status
+                    == 'no_match'
+                ):
+                    continue
+                if bucket == 'all':
+                    matches.append(match)
+                    continue
                 published = candidates()._trusted_published_datetime(match.published_at)
                 if (
                     (bucket == 'undated' and published is None)

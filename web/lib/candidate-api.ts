@@ -69,6 +69,8 @@ export type ProfilePayload = {
   delivery_mode: 'immediate' | 'hourly' | 'manual';
 };
 
+export type FeedFilters = { formats: string[]; geography: string[]; vacancyLanguages: string[] };
+
 export class CandidateApi {
   constructor(private readonly initData: string, private readonly csrfToken = '') {}
 
@@ -93,8 +95,12 @@ export class CandidateApi {
   }
 
   me() { return this.request<CandidateMe>('/me'); }
-  feed(bucket: 'all' | 'new' | 'older' | 'undated', offset = 0, limit = 20) {
-    return this.request<{ items: CandidateVacancy[]; total: number }>(`/feed?bucket=${bucket}&offset=${offset}&limit=${limit}`);
+  feed(bucket: 'all' | 'new' | 'older' | 'undated', offset = 0, limit = 20, filters?: FeedFilters) {
+    const params = new URLSearchParams({ bucket, offset: String(offset), limit: String(limit) });
+    filters?.formats.forEach(value => params.append('formats', value));
+    filters?.geography.forEach(value => params.append('geography', value));
+    filters?.vacancyLanguages.forEach(value => params.append('vacancy_languages', value));
+    return this.request<{ items: CandidateVacancy[]; total: number }>(`/feed?${params}`);
   }
   feedSettings() { return this.request<{ older_days: number; max_older_days: number }>('/feed/settings'); }
   setOlderDays(older_days: number) { return this.request<{ older_days: number; max_older_days: number }>('/feed/settings', { method: 'PUT', body: JSON.stringify({ older_days }) }); }

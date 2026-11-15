@@ -150,6 +150,10 @@
 .ma-feed-heading h2{font-size:clamp(25px,2.2vw,32px);line-height:1.2}
 .ma-feed-heading .ma-heading-count{display:inline-block;white-space:nowrap}
 @media(max-width:700px){.ma-feed-heading h2{font-size:clamp(22px,5.5vw,27px);letter-spacing:-.035em}}
+.ma-feed-filter-button{border:1px solid var(--ma-line);background:var(--ma-surface);color:var(--ma-ink);padding:9px 14px;border-radius:8px;font-size:12px;font-weight:650}
+.ma-feed-filter-panel{margin:14px 0;padding:18px;border:1px solid var(--ma-line);border-radius:12px;background:var(--ma-surface)}
+.ma-feed-filter-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.ma-feed-filter-actions{display:flex;justify-content:flex-end;gap:12px;margin-top:16px}.ma-feed-filter-actions>button:not(.ma-primary-button){border:0;background:transparent;color:var(--ma-muted);padding:8px}.ma-feed-filter-panel>p{margin:12px 0 0;color:var(--ma-muted);font-size:11px}
+@media(max-width:700px){.ma-feed-filter-fields{grid-template-columns:1fr}.ma-feed-filter-button{flex:none}.ma-feed-filter-panel{padding:14px}}
 
 .ma-profile-filter-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; margin-bottom: 16px; border: 1px solid var(--ma-line); border-radius: 16px; background: var(--ma-surface, #fff); font-size: 13px; }
 .ma-profile-filter-bar span { opacity: .65; }

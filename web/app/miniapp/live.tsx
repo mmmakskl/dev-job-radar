@@ -11,6 +11,7 @@ import {
   type CandidateTemplate,
   type CandidateVacancy,
   type ProfilePayload,
+  type FeedFilters,
 } from '../../lib/candidate-api';
 
 type Screen = 'feed' | 'saved' | 'profiles' | 'premium';
@@ -147,6 +148,10 @@ export default function LiveMiniapp({ initData, csrfToken = '', onLogout }: { in
   const [screen, setScreen] = useState<Screen>('feed');
   const [bucket, setBucket] = useState<Bucket>('all');
   const [query, setQuery] = useState('');
+  const [feedFilters, setFeedFilters] = useState<FeedFilters>({ formats: [], geography: [], vacancyLanguages: [] });
+  const [draftFilters, setDraftFilters] = useState<FeedFilters>({ formats: [], geography: [], vacancyLanguages: [] });
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [openFeedMulti, setOpenFeedMulti] = useState<keyof FeedFilters | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const [editor, setEditor] = useState<Editor | null>(null);
   const [openMulti, setOpenMulti] = useState<'stacks' | 'grades' | 'formats' | 'geography' | 'vacancyLanguages' | null>(null);
@@ -182,10 +187,10 @@ export default function LiveMiniapp({ initData, csrfToken = '', onLogout }: { in
   const showToast = (message: string) => setToast(message);
 
   const refreshFeed = useCallback(async (nextBucket: Bucket = bucket) => {
-    const data = await api.feed(nextBucket);
+    const data = await api.feed(nextBucket, 0, 20, feedFilters);
     setFeed(data.items);
     setFeedTotal(data.total);
-  }, [api, bucket]);
+  }, [api, bucket, feedFilters]);
   const refreshSaved = useCallback(async () => setSaved((await api.saved()).items), [api]);
   const refreshTemplates = useCallback(async () => {
     const data = await api.templates();
@@ -347,7 +352,7 @@ export default function LiveMiniapp({ initData, csrfToken = '', onLogout }: { in
   };
   const loadMore = async () => {
     try {
-      const next = await api.feed(bucket, feed.length);
+      const next = await api.feed(bucket, feed.length, 20, feedFilters);
       setFeed(current => [...current, ...next.items]);
       setFeedTotal(next.total);
     } catch (reason) { report(reason); }
@@ -387,7 +392,8 @@ export default function LiveMiniapp({ initData, csrfToken = '', onLogout }: { in
       <div className="ma-content" key={screen}>{error && <div className="ma-live-error" role="alert"><span>{error}</span><button type="button" aria-label="Закрыть ошибку" onClick={() => setError('')}>×</button></div>}
         {screen === 'feed' && <>
           <div className="ma-section-heading ma-feed-heading"><div><span className="ma-overline">ВАКАНСИИ</span><h2>Подходящие вакансии <span className="ma-heading-count">{feedTotal}</span></h2><p>Профиль <button type="button" onClick={() => openScreen('profiles')}><span>{active?.name ?? 'не выбран'}</span> ›</button></p></div><button className="ma-text-action" type="button" aria-label="Обновить вакансии" onClick={() => void refreshFeed().catch(report)}><Glyph size={16}>↻</Glyph><span>Обновить</span></button></div>
-          {tip('feed', tips.feed)}{active && <div className="ma-profile-filter-bar"><div><strong>Фильтры профиля</strong><span> {active.preferences.candidate_filter_version === 1 ? ([...(active.preferences.formats ?? []), ...(active.preferences.geography ?? []), ...(active.preferences.vacancy_languages ?? [])].map(value => Object.values(filterOptions).flat().find(option => option.value === value)?.label ?? value).join(' · ') || 'Любой формат, регион и язык') : 'Любой формат, регион и язык'}</span></div><button type="button" onClick={() => setEditor(editorFrom(active))}>Настроить фильтры →</button></div>}<div className="ma-feed-toolbar"><div className="ma-filters" role="tablist" aria-label="Период вакансий">{([['all', 'Для меня'], ['new', 'Новые · 24 ч'], ['older', 'Ранее'], ['undated', 'Без даты']] as const).map(([id, label]) => <button key={id} role="tab" aria-selected={bucket === id} type="button" className={bucket === id ? 'selected' : ''} onClick={() => chooseBucket(id)}>{label}</button>)}</div><label className="ma-search-box"><Glyph size={16}>⌕</Glyph><input aria-label="Поиск по текущей выдаче" placeholder="Поиск в выдаче" value={query} onChange={event => setQuery(event.target.value)}/></label></div>
+          {tip('feed', tips.feed)}<div className="ma-feed-toolbar"><div className="ma-filters" role="tablist" aria-label="Период вакансий">{([['all', 'Для меня'], ['new', 'Новые · 24 ч'], ['older', 'Ранее'], ['undated', 'Без даты']] as const).map(([id, label]) => <button key={id} role="tab" aria-selected={bucket === id} type="button" className={bucket === id ? 'selected' : ''} onClick={() => chooseBucket(id)}>{label}</button>)}</div><label className="ma-search-box"><Glyph size={16}>⌕</Glyph><input aria-label="Поиск по текущей выдаче" placeholder="Поиск в выдаче" value={query} onChange={event => setQuery(event.target.value)}/></label><button type="button" className="ma-feed-filter-button" aria-expanded={filtersOpen} onClick={() => { setDraftFilters(feedFilters); setFiltersOpen(value => !value); }}>Фильтры {Object.values(feedFilters).flat().length > 0 && `· ${Object.values(feedFilters).flat().length}`}</button></div>
+          {filtersOpen && <section className="ma-feed-filter-panel" aria-label="Фильтры выдачи"><div className="ma-feed-filter-fields">{([['formats', 'Формат работы'], ['geography', 'Регион'], ['vacancyLanguages', 'Язык вакансии']] as const).map(([key, label]) => <MultiSelect key={key} label={label} options={filterOptions[key]} selected={draftFilters[key]} onChange={values => setDraftFilters(current => ({ ...current, [key]: values }))} open={openFeedMulti === key} onToggle={() => setOpenFeedMulti(current => current === key ? null : key)}/>)}</div><div className="ma-feed-filter-actions"><button type="button" onClick={() => setDraftFilters({ formats: [], geography: [], vacancyLanguages: [] })}>Сбросить</button><button type="button" className="ma-primary-button" onClick={() => { void api.feed(bucket, 0, 20, draftFilters).then(data => { setFeedFilters(draftFilters); setFeed(data.items); setFeedTotal(data.total); setFiltersOpen(false); setOpenFeedMulti(null); }).catch(report); }}>Показать вакансии</button></div><p>Фильтры действуют только в этой выдаче и не меняют профиль.</p></section>}
           {bucket === 'older' && <div className="ma-live-period"><label htmlFor="ma-older-days">Показать за последние</label><select id="ma-older-days" value={olderDays} onChange={event => void updateOlderDays(Number(event.target.value))}>{[3, 7, 14, 30, olderDays].filter((days, index, all) => days <= maxOlderDays && all.indexOf(days) === index).sort((a, b) => a - b).map(days => <option key={days} value={days}>{days} дней</option>)}</select></div>}
           {filteredFeed.length ? <div className="ma-vacancy-grid">{filteredFeed.map(item => <VacancyCard key={item.vacancy_id} item={item}/>)}</div> : <div className="ma-empty"><span><Glyph size={26}>⌕</Glyph></span><h3>Пока нет вакансий по этим условиям</h3><p>{active ? 'Попробуй другой период или дождись новых совпадений.' : 'Сначала создай активный профиль.'}</p><button type="button" onClick={() => openScreen('profiles')}>Мои профили →</button></div>}
           {feed.length < feedTotal && <button className="ma-live-more" type="button" onClick={() => void loadMore()}>Показать ещё</button>}

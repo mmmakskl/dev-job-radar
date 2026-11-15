@@ -9,7 +9,7 @@ from typing import Literal
 
 from tg_vacancy_bot.candidate_catalog import PROFILE_CONTRACT
 from tg_vacancy_bot.llm.universal import UniversalDecision
-from tg_vacancy_bot.models import NOT_SPECIFIED
+from tg_vacancy_bot.models import NOT_SPECIFIED, VacancyAnalysis
 from tg_vacancy_bot.telegram.candidate_store import CandidateProfile
 
 MatchStatus = Literal["match", "no_match", "review"]
@@ -404,9 +404,15 @@ def _match_current(
         return ProfileMatch(
             'no_match', 'skill_missing', conflicting_fields=('required_skills',)
         )
+    return match_candidate_filters(decision.analysis, preferences)
+
+
+def match_candidate_filters(
+    analysis: VacancyAnalysis, preferences: dict
+) -> ProfileMatch:
+    """Apply optional vacancy filters without changing the saved profile."""
     missing = []
     if preferences.get('candidate_filter_version') == 1:
-        analysis = decision.analysis
         for field, actual in (
             ('formats', _values(analysis.work_format)),
             ('vacancy_languages', _values(analysis.vacancy_language)),
