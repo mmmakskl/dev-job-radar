@@ -458,3 +458,65 @@ def test_miniapp_page_allows_telegram_bridge_and_retired_preview_is_gone(
     assert 'https://telegram.org' in miniapp.headers['content-security-policy']
     assert client.get('/miniapp-preview/').status_code == 404
     assert client.get('/').headers['x-frame-options'] == 'DENY'
+
+
+def test_profile_filters_round_trip_and_reject_invalid_values(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    owner = _headers(1)
+    payload = {
+        **_profile_payload(),
+        'formats': ['remote', 'hybrid'],
+        'geography': ['europe', 'usa'],
+        'vacancy_languages': ['ru', 'en'],
+    }
+    response = client.post('/api/v1/candidate/profiles', headers=owner, json=payload)
+    assert response.status_code == 201
+    prefs = response.json()['preferences']
+    assert prefs['candidate_filter_version'] == 1
+    assert prefs['formats'] == ['remote', 'hybrid']
+    assert prefs['geography'] == ['europe', 'usa']
+    assert prefs['vacancy_languages'] == ['ru', 'en']
+    assert (
+        client.post(
+            '/api/v1/candidate/profiles',
+            headers=owner,
+            json={**payload, 'formats': ['invalid']},
+        ).status_code
+        == 422
+    )
+
+
+def test_source_text_requires_access_and_preserves_full_text(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    client = _client(tmp_path, monkeypatch)
+    owner = _headers(1)
+    store = CandidateStore(str(tmp_path / 'candidate_bot.sqlite3'))
+    store.create_profile(
+        1,
+        name='Backend',
+        direction_id='development',
+        specialization_id='backend',
+        role_id='backend_developer',
+        preferences={'profile_contract': 'catalog-v3'},
+    )
+    registry = VacancyRegistry(store.path)
+    raw = '  Ищем Go специалиста.\n' + 'Полное описание.\n' * 500
+    registry.ingest(
+        vacancy_id='jobs_42',
+        post_link='https://t.me/jobs/42',
+        decision=decision_for(
+            'development', 'backend', 'backend_developer', 'Go', 'Go developer'
+        ),
+        eligible_at=datetime.now(timezone.utc),
+        raw_text=raw,
+    )
+    response = client.get('/api/v1/candidate/vacancies/jobs_42/text', headers=owner)
+    assert response.status_code == 200
+    assert response.json()['text'] == raw
+    assert (
+        client.get(
+            '/api/v1/candidate/vacancies/jobs_42/text', headers=_headers(2)
+        ).status_code
+        == 404
+    )

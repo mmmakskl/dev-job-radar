@@ -6,6 +6,10 @@ export type CandidateProfile = {
   is_active: boolean;
   version: number;
   preferences: {
+    candidate_filter_version?: number;
+    formats?: string[];
+    geography?: string[];
+    vacancy_languages?: string[];
     seniority?: string[];
     stacks?: string[];
     primary_language?: string;
@@ -55,6 +59,9 @@ export type ProfilePayload = {
   name: string;
   direction_id: string;
   role_id: string;
+  formats: string[];
+  geography: string[];
+  vacancy_languages: string[];
   seniority: string[];
   stacks: string[];
   required_skills: string[];
@@ -91,6 +98,7 @@ export class CandidateApi {
   }
   feedSettings() { return this.request<{ older_days: number; max_older_days: number }>('/feed/settings'); }
   setOlderDays(older_days: number) { return this.request<{ older_days: number; max_older_days: number }>('/feed/settings', { method: 'PUT', body: JSON.stringify({ older_days }) }); }
+  vacancyText(id: string) { return this.request<{ text: string | null }>(`/vacancies/${encodeURIComponent(id)}/text`); }
   saved() { return this.request<{ items: CandidateVacancy[] }>('/saved'); }
   save(vacancyId: string) { return this.request<{ saved: boolean }>(`/saved/${encodeURIComponent(vacancyId)}`, { method: 'PUT' }); }
   unsave(vacancyId: string) { return this.request<{ saved: boolean }>(`/saved/${encodeURIComponent(vacancyId)}`, { method: 'DELETE' }); }

@@ -55,6 +55,9 @@ class ProfileInput(BaseModel):
     required_skills: list[str] = Field(default_factory=list, max_length=20)
     excluded_skills: list[str] = Field(default_factory=list, max_length=20)
     delivery_mode: Literal['immediate', 'hourly', 'manual'] = 'immediate'
+    formats: list[Literal['remote', 'hybrid', 'office']] | None = None
+    geography: list[Literal['russia', 'europe', 'usa', 'cis', 'asia']] | None = None
+    vacancy_languages: list[Literal['ru', 'en', 'other']] | None = None
 
 
 class ProfileUpdate(ProfileInput):
@@ -133,6 +136,22 @@ def _preferences(body: ProfileInput, current: dict | None = None) -> dict:
     if 'stacks' in body.model_fields_set:
         existing.pop('primary_language', None)
         existing.pop('additional_languages', None)
+    if any(
+        field in body.model_fields_set
+        for field in ('formats', 'geography', 'vacancy_languages')
+    ):
+        if existing.get('candidate_filter_version') != 1:
+            existing['legacy_candidate_filters'] = {
+                key: existing.get(key, [])
+                for key in ('formats', 'geography', 'vacancy_languages')
+            }
+            for key in ('formats', 'geography', 'vacancy_languages'):
+                existing[key] = []
+        for key in ('formats', 'geography', 'vacancy_languages'):
+            value = getattr(body, key)
+            if value is not None:
+                existing[key] = value
+        existing['candidate_filter_version'] = 1
     return {
         **existing,
         'profile_contract': PROFILE_CONTRACT,
@@ -501,6 +520,19 @@ def install_routes(app, *, candidate_path: str, search_path: str) -> None:
                 _saved_view(item) for item in candidates().list_for_user(owner, 'saved')
             ]
         }
+
+    @app.get(PREFIX + '/vacancies/{vacancy_id}/text')
+    def vacancy_source_text(vacancy_id: str, owner: int = Depends(user_id)):
+        matches = registry().list_personal_matches(
+            owner, vacancy_ids={vacancy_id}, limit=1
+        )
+        saved_ids = {
+            item.vacancy_id for item in candidates().list_for_user(owner, 'saved')
+        }
+        if not matches and vacancy_id not in saved_ids:
+            raise HTTPException(404, 'Вакансия недоступна')
+        vacancy = registry().get(vacancy_id)
+        return {'text': vacancy.raw_text if vacancy and vacancy.raw_text else None}
 
     @app.put(PREFIX + '/saved/{vacancy_id}')
     def save(vacancy_id: str, owner: int = Depends(user_id)):

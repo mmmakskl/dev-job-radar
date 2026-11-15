@@ -229,3 +229,28 @@ it('sends selected backend stacks and multiple grades when saving a profile', as
     stacks: ['go', 'cpp'], seniority: ['middle', 'senior'],
   }));
 });
+
+it('edits profile filters and loads the complete vacancy text', async () => {
+  let submitted: Record<string, unknown> | undefined;
+  vi.stubGlobal('fetch', vi.fn((input: string, init?: RequestInit) => {
+    if (input.endsWith('/me')) return response({ user: { id: 1, first_name: 'Tester' }, profiles: [liveProfile], active_profile_id: 'p1', premium_enabled: true });
+    if (input.endsWith('/profiles/p1') && init?.method === 'PUT') { submitted = JSON.parse(String(init.body)); return response(liveProfile); }
+    if (input.endsWith('/vacancies/live-1/text')) return response({ text: 'Полный текст\nВторая строка' });
+    if (input.endsWith('/feed/settings')) return response({ older_days: 7, max_older_days: 30 });
+    if (input.includes('/feed')) return response({ items: [liveVacancy], total: 1 });
+    if (input.endsWith('/saved') || input.endsWith('/premium/templates') || input.endsWith('/premium/runs')) return response({ items: [] });
+    return response({}, 404);
+  }));
+  render(<MiniappPage/>);
+  fireEvent.click(await screen.findByRole('button', { name: /Настроить фильтры/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Формат работы' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Удалённо' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Регион' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Европа' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Язык вакансии' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Английский' }));
+  fireEvent.click(screen.getByRole('button', { name: /Сохранить профиль/ }));
+  await waitFor(() => expect(submitted).toMatchObject({ formats: ['remote'], geography: ['europe'], vacancy_languages: ['en'] }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Live vacancy' }));
+  expect(await screen.findByText(/Вторая строка/)).toBeInTheDocument();
+});
