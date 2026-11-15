@@ -94,7 +94,7 @@ def normalize_result(
     profile_snapshot: dict | None = None,
 ) -> dict:
     """Keep rejected candidates in the audit while exposing only verified sources."""
-    text = str(getattr(message, 'message', '') or '').strip()
+    text = str(getattr(message, 'message', '') or '')
     values = dict(
         raw_text=text,
         text_hash=build_text_hash(text),
@@ -150,7 +150,7 @@ def normalize_result(
     )
     if date is not None and not isinstance(date, datetime):
         return dict(values, status='rejected', decision_reason='invalid_date')
-    if not text:
+    if not text.strip():
         return dict(values, status='review', decision_reason='empty_text')
     if date is not None and date < datetime.now(timezone.utc) - timedelta(
         days=period_days

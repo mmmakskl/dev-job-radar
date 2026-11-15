@@ -78,6 +78,85 @@ def _contains_skill(text: str, skill: str) -> bool:
     )
 
 
+REGION_ALIASES = {
+    'russia': ('russia', 'россия', 'рф', 'москва', 'moscow'),
+    'europe': (
+        'europe',
+        'европа',
+        'европе',
+        'eu',
+        'ес',
+        'germany',
+        'германия',
+        'france',
+        'франция',
+        'uk',
+        'великобритания',
+        'poland',
+        'польша',
+        'spain',
+        'испания',
+        'portugal',
+        'португалия',
+    ),
+    'usa': (
+        'usa',
+        'us',
+        'united states',
+        'сша',
+        'соединенные штаты',
+        'соединённые штаты',
+    ),
+    'cis': (
+        'казахстан',
+        'kazakhstan',
+        'беларусь',
+        'belarus',
+        'армения',
+        'armenia',
+        'снг',
+        'cis',
+    ),
+    'asia': ('asia', 'азия', 'азии', 'india', 'индия', 'china', 'китай'),
+}
+
+
+def _regions(values: list[str]) -> set[str]:
+    result = set()
+    for value in values:
+        text = _norm(value)
+        for region, aliases in REGION_ALIASES.items():
+            if any(_contains_skill(text, _norm(alias)) for alias in aliases):
+                result.add(region)
+    return result
+
+
+def _vacancy_languages(value: str) -> list[str]:
+    text = _norm(value)
+    if not text or text in {_norm(NOT_SPECIFIED), 'unknown', 'und', 'неизвестно'}:
+        return []
+    found = []
+    for language, aliases in {
+        'ru': ('ru', 'russian', 'русский', 'русском'),
+        'en': ('en', 'english', 'английский', 'английском'),
+        'other': (
+            'de',
+            'german',
+            'немецкий',
+            'fr',
+            'french',
+            'французский',
+            'spanish',
+            'испанский',
+            'other',
+            'другой',
+        ),
+    }.items():
+        if any(_contains_skill(text, _norm(alias)) for alias in aliases):
+            found.append(language)
+    return found
+
+
 def profile_text_prefilter_reason(preferences: dict, source_text: str) -> str | None:
     """Apply only text filters that the current profile matcher also enforces."""
     normalized_text = _norm(source_text)
@@ -325,7 +404,50 @@ def _match_current(
         return ProfileMatch(
             'no_match', 'skill_missing', conflicting_fields=('required_skills',)
         )
-    return ProfileMatch('match', 'criteria_match', matched_fields=('role',))
+    missing = []
+    if preferences.get('candidate_filter_version') == 1:
+        analysis = decision.analysis
+        for field, actual in (
+            ('formats', _values(analysis.work_format)),
+            ('vacancy_languages', _values(analysis.vacancy_language)),
+        ):
+            selected = _values(preferences.get(field, []))
+            if not selected:
+                continue
+            if field == 'vacancy_languages':
+                actual = _vacancy_languages(analysis.vacancy_language)
+            if not actual:
+                missing.append(field)
+            elif not _has_any(actual, selected):
+                return ProfileMatch(
+                    'no_match', field + '_conflict', conflicting_fields=(field,)
+                )
+        selected_regions = set(preferences.get('geography', []))
+        if selected_regions:
+            # Hiring restrictions take precedence over an office location.
+            geo = _values(analysis.hiring_geography)
+            if not geo:
+                geo = _values([analysis.country, analysis.city])
+            if any(
+                _contains_skill(value, word)
+                for value in geo
+                for word in ('except', 'excluding', 'кроме', 'исключая')
+            ):
+                missing.append('geography')
+            elif any(value in {'worldwide', 'world', 'весь мир'} for value in geo):
+                pass
+            elif not (regions := _regions(geo)):
+                missing.append('geography')
+            elif not regions.intersection(selected_regions):
+                return ProfileMatch(
+                    'no_match', 'geography_conflict', conflicting_fields=('geography',)
+                )
+    return ProfileMatch(
+        'match',
+        'criteria_match',
+        matched_fields=('role',),
+        missing_fields=tuple(missing),
+    )
 
 
 def match_profiles(

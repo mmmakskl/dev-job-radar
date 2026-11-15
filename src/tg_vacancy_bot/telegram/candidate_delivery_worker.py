@@ -23,6 +23,7 @@ from tg_vacancy_bot.telegram.candidate_delivery import (
     delivery_key,
     plan_deliveries,
 )
+from tg_vacancy_bot.telegram.candidate_store import callback_key_for
 
 
 def personal_card(match) -> CardInput:
@@ -306,7 +307,22 @@ class CandidateDeliveryWorker:
                                 continue
                             try:
                                 result = await self.api.send_message(
-                                    user_id, rendered.text, parse_mode='HTML'
+                                    user_id,
+                                    rendered.text,
+                                    parse_mode='HTML',
+                                    reply_markup={
+                                        'inline_keyboard': [
+                                            [
+                                                {
+                                                    'text': f'Полный текст {index + 1}',
+                                                    'callback_data': f'v:t:{callback_key_for(vacancy_id)}',
+                                                }
+                                            ]
+                                            for index, vacancy_id in enumerate(
+                                                rendered.vacancy_ids
+                                            )
+                                        ]
+                                    },
                                 )
                             except BotApiRejected:
                                 self.store.transition(token, 'sending', 'pending')
@@ -387,7 +403,20 @@ class CandidateDeliveryWorker:
                     continue
                 try:
                     response = await self.api.send_message(
-                        user_id, rendered.text, parse_mode='HTML'
+                        user_id,
+                        rendered.text,
+                        parse_mode='HTML',
+                        reply_markup={
+                            'inline_keyboard': [
+                                [
+                                    {
+                                        'text': f'Полный текст {index + 1}',
+                                        'callback_data': f'v:t:{callback_key_for(vacancy_id)}',
+                                    }
+                                ]
+                                for index, vacancy_id in enumerate(rendered.vacancy_ids)
+                            ]
+                        },
                     )
                 except BotApiRejected:
                     self.store.transition(token, 'sending', 'pending')

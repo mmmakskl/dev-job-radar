@@ -207,8 +207,9 @@ def test_unknown_fields_omitted_and_title_falls_back() -> None:
     text = format_card(
         card(analysis=analysis, post_link=None, matched_profiles=()), now=NOW
     )
-    assert text.startswith("<b>Вакансия</b>\n🕒 ")
-    assert NOT_SPECIFIED not in text
+    assert text.startswith("<b>Вакансия</b>\nНе указано: формат, география")
+    assert "Краткое описание отсутствует" in text
+    assert "Краткое описание отсутствует" in text
 
 
 def test_required_stack_first_six_unique_and_profiles_deduplicated() -> None:

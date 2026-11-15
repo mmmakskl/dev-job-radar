@@ -1267,3 +1267,13 @@ def test_legacy_premium_analysis_respects_shared_daily_quota(monkeypatch):
     )
     with pytest.raises(universal.AnalysisUnavailable, match='daily_limit'):
         asyncio.run(analyze_premium_text('Hiring Golang'))
+
+
+def test_normalize_result_preserves_source_whitespace():
+    raw = '\n  Go developer\nResponsibilities: build APIs.  \n'
+    result = normalize_result(message(text=raw), channel(), 7)
+    assert result['raw_text'] == raw
+    assert (
+        normalize_result(message(text=' \n '), channel(), 7)['decision_reason']
+        == 'empty_text'
+    )

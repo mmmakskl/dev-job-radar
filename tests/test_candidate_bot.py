@@ -292,7 +292,7 @@ def complete_draft(bot, api, store, *, delivery_mode=None):
             press(bot, api, bot._choices(draft)[0][1])
         elif step == 'stacks':
             press(bot, api, 'Готово')
-        elif step == 'seniority':
+        elif step in {'seniority', 'formats', 'geography', 'vacancy_languages'}:
             press(bot, api, 'Все')
         elif step == 'required_skills':
             press(bot, api, 'Готово')
@@ -319,6 +319,8 @@ def create_roleless_profile(bot, api, store, direction, technology):
         press(bot, api, technology)
         press(bot, api, 'Готово')
     press(bot, api, 'Все')
+    for _ in range(3):
+        press(bot, api, 'Все')
     press(bot, api, technology)
     press(bot, api, 'Готово')
     press(bot, api, 'Пропустить')
@@ -441,6 +443,8 @@ def test_short_profile_wizard_and_advanced_settings_preserve_timezone(tmp_path):
     press(bot, api, 'Senior')
     press(bot, api, 'Middle')
     press(bot, api, 'Готово')
+    for _ in range(3):
+        press(bot, api, 'Все')
     press(bot, api, 'Go')
     press(bot, api, 'Ввести через запятую')
     asyncio.run(bot.handle_update(message(1, 'gRPC, Docker')))
@@ -484,8 +488,8 @@ def test_edit_old_profile_keeps_legacy_matching_and_delivery_preferences(tmp_pat
     updated = store.get_profile(1, old.profile_id)
     assert updated.preferences['profile_contract'] == 'catalog-v3'
     assert updated.preferences['timezone'] == 'Europe/Berlin'
-    assert updated.preferences['formats'] == ['remote']
-    assert updated.preferences['geography'] == ['Россия']
+    assert updated.preferences['formats'] == []
+    assert updated.preferences['geography'] == []
     assert updated.version == old.version + 1
 
 
@@ -502,6 +506,8 @@ def test_new_profile_uses_catalog_technology_pages_and_edits_one_message(tmp_pat
     press(bot, api, 'Go')
     press(bot, api, 'Готово')
     press(bot, api, 'Все')
+    for _ in range(3):
+        press(bot, api, 'Все')
     press(bot, api, 'Go')
     assert store.get_profile_draft(1)['values']['preferences']['required_skills'] == [
         'go'
@@ -534,7 +540,7 @@ def test_grade_format_are_multi_select_and_all_means_no_filter(tmp_path):
     ]
     press(bot, api, 'Все')
     assert store.get_profile_draft(1)['values']['preferences']['seniority'] == []
-    assert store.get_profile_draft(1)['step'] == 'required_skills'
+    assert store.get_profile_draft(1)['step'] == 'formats'
 
 
 def test_vacancy_text_language_has_exactly_one_skip_button_and_is_not_programming_language(
@@ -561,7 +567,7 @@ def test_vacancy_text_language_has_exactly_one_skip_button_and_is_not_programmin
         draft = store.get_profile_draft(1)
     rows = api.messages[-1][2]['reply_markup']['inline_keyboard']
     labels = [button['text'] for row in rows for button in row]
-    assert labels.count('Пропустить') == 1
+    assert labels.count('Готово') == 1
     assert 'язык объявления, а не язык программирования' in api.messages[-1][1].lower()
 
 
@@ -633,3 +639,66 @@ def test_wizard_replaces_uneditable_message_and_persists_new_message_id(tmp_path
     assert len(api.messages) == 3
     assert draft['message_id'] == 3 and draft['message_id'] != old_id
     assert 'Роль' in api.messages[-1][1]
+
+
+def test_full_text_callback_sends_every_character(tmp_path):
+    from types import SimpleNamespace
+
+    store, _ = make_store(tmp_path)
+    api = FakeBotApi()
+    text = '😀abc' * 2000
+    registry = SimpleNamespace(
+        list_personal_matches=lambda user_id: [
+            SimpleNamespace(callback_key='key', vacancy_id='id')
+        ],
+        get=lambda vacancy_id: SimpleNamespace(raw_text=text),
+    )
+    bot = CandidateBot(api, store, {1}, registry=registry)
+    asyncio.run(bot.handle_update(callback(1, 'v:t:key')))
+    assert ''.join(item[1] for item in api.messages) == text
+    assert all(len(item[1].encode('utf-16-le')) // 2 <= 4096 for item in api.messages)
+
+
+def test_profile_filters_are_multiselect_and_saved(tmp_path):
+    store, _ = make_store(tmp_path)
+    api = FakeBotApi()
+    bot = CandidateBot(api, store, {1})
+    asyncio.run(bot.handle_update(message(1, '/profiles')))
+    press(bot, api, 'Создать профиль')
+    press(bot, api, 'Дизайн')
+    press(bot, api, 'Продуктовый дизайнер')
+    press(bot, api, 'Все')
+    press(bot, api, 'Удалённо')
+    press(bot, api, 'Гибрид')
+    press(bot, api, 'Готово')
+    press(bot, api, 'Европа')
+    press(bot, api, 'США')
+    press(bot, api, 'Готово')
+    press(bot, api, 'Русский')
+    press(bot, api, 'Английский')
+    press(bot, api, 'Готово')
+    complete_draft(bot, api, store)
+    press(bot, api, 'Сохранить профиль')
+    prefs = store.list_profiles(1)[0].preferences
+    assert prefs['formats'] == ['remote', 'hybrid']
+    assert prefs['geography'] == ['europe', 'usa']
+    assert prefs['vacancy_languages'] == ['ru', 'en']
+
+
+def test_full_text_requires_current_personal_match_and_handles_missing(tmp_path):
+    from types import SimpleNamespace
+
+    store, _ = make_store(tmp_path)
+    api = FakeBotApi()
+    registry = SimpleNamespace(
+        list_personal_matches=lambda user_id: [
+            SimpleNamespace(callback_key='allowed', vacancy_id='id')
+        ],
+        get=lambda vacancy_id: SimpleNamespace(raw_text=None),
+    )
+    bot = CandidateBot(api, store, {1}, registry=registry)
+    asyncio.run(bot.handle_update(callback(1, 'v:t:other')))
+    assert not api.messages
+    assert api.answers[-1][1] == 'Вакансия недоступна.'
+    asyncio.run(bot.handle_update(callback(1, 'v:t:allowed')))
+    assert api.messages[-1][1] == 'Описание в источнике отсутствует.'

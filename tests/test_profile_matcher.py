@@ -231,3 +231,71 @@ def test_roleless_profiles_match_direction_grade_ranges_and_format_alternatives(
         preferences={**candidate.preferences, 'seniority': ['senior']},
     )
     assert match_profile(vacancy, candidate).status == 'no_match'
+
+
+def test_current_filters_exclude_known_conflicts_and_keep_unknown():
+    from tg_vacancy_bot.candidate_catalog import PROFILE_CONTRACT
+
+    selected = profile(
+        profile_contract=PROFILE_CONTRACT,
+        candidate_filter_version=1,
+        formats=['Remote'],
+        geography=['europe'],
+        vacancy_languages=['en'],
+    )
+    vacancy = decision()
+    assert match_profile(vacancy, selected).status == 'match'
+    vacancy = replace(
+        vacancy,
+        analysis=SimpleNamespace(**{**vars(vacancy.analysis), 'work_format': 'Office'}),
+    )
+    assert match_profile(vacancy, selected).status == 'no_match'
+    vacancy = replace(
+        vacancy,
+        analysis=SimpleNamespace(
+            **{
+                **vars(vacancy.analysis),
+                'work_format': 'Не указано',
+                'vacancy_language': 'Не указано',
+                'hiring_geography': 'Не указано',
+            }
+        ),
+    )
+    result = match_profile(vacancy, selected)
+    assert result.status == 'match'
+    assert set(result.missing_fields) == {'formats', 'geography', 'vacancy_languages'}
+
+
+def test_current_legacy_filter_values_are_not_activated():
+    from tg_vacancy_bot.candidate_catalog import PROFILE_CONTRACT
+
+    selected = profile(profile_contract=PROFILE_CONTRACT, formats=['Office'])
+    assert match_profile(decision(), selected).status == 'match'
+
+
+def test_current_region_restriction_and_language_are_independent():
+    from tg_vacancy_bot.candidate_catalog import PROFILE_CONTRACT
+
+    selected = profile(
+        profile_contract=PROFILE_CONTRACT,
+        candidate_filter_version=1,
+        geography=['europe'],
+        vacancy_languages=['en'],
+    )
+    vacancy = decision()
+    analysis = vars(vacancy.analysis)
+    europe = replace(
+        vacancy, analysis=SimpleNamespace(**{**analysis, 'hiring_geography': 'Germany'})
+    )
+    assert match_profile(europe, selected).status == 'match'
+    usa = replace(
+        vacancy, analysis=SimpleNamespace(**{**analysis, 'hiring_geography': 'USA'})
+    )
+    assert match_profile(usa, selected).reason_code == 'geography_conflict'
+    russian = replace(
+        europe,
+        analysis=SimpleNamespace(
+            **{**vars(europe.analysis), 'vacancy_language': 'Русский'}
+        ),
+    )
+    assert match_profile(russian, selected).reason_code == 'vacancy_languages_conflict'

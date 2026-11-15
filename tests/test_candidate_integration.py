@@ -687,3 +687,91 @@ def test_concurrent_private_save_never_overwrites_ingestion_card(tmp_path):
         list(executor.map(write, (True, False)))
     cards = store.list_for_user(2, 'undated')
     assert len(cards) == 1 and cards[0].title == 'Shared'
+
+
+def test_filtered_feed_delivery_and_full_source_round_trip(tmp_path):
+    store = CandidateStore(str(tmp_path / 'candidate.sqlite3'))
+    registry = VacancyRegistry(store.path)
+    profile = store.create_profile(
+        1,
+        name='Filtered backend',
+        direction_id='development',
+        specialization_id='backend',
+        role_id='backend_developer',
+        preferences={
+            'profile_contract': 'catalog-v3',
+            'candidate_filter_version': 1,
+            'formats': ['remote'],
+            'geography': ['europe'],
+            'vacancy_languages': ['en'],
+            'delivery_mode': 'immediate',
+        },
+    )
+    base = _validate(_payload())
+    base = replace(
+        base,
+        classifications=(
+            {
+                'direction_id': 'development',
+                'specialization_id': 'backend',
+                'role_id': 'backend_developer',
+                'confidence': 95,
+            },
+        ),
+        confidence=95,
+        needs_review=False,
+    )
+    now = datetime.now(timezone.utc)
+    source = '  Hiring Go developer in Germany.\n' + '😀 Build reliable APIs.\n' * 300
+    for number, work_format, geography, language in (
+        (1, 'Remote', 'Germany', 'English'),
+        (2, 'Office', 'Germany', 'English'),
+        (3, 'Не указано', 'Не указано', 'Не указано'),
+    ):
+        decision = replace(
+            base,
+            analysis=replace(
+                base.analysis,
+                work_format=work_format,
+                country='Не указано',
+                city='Не указано',
+                hiring_geography=geography,
+                vacancy_language=language,
+            ),
+        )
+        registry.ingest(
+            vacancy_id=f'filtered_{number}',
+            post_link=f'https://t.me/jobs/{number}',
+            decision=decision,
+            eligible_at=now,
+            published_at=now,
+            raw_text=source,
+        )
+    matches = registry.list_personal_matches(1)
+    assert {match.vacancy_id for match in matches} == {'filtered_1', 'filtered_3'}
+    api = FakeBotApi()
+    bot = CandidateBot(api, store, {1}, registry=registry)
+    asyncio.run(bot.handle_update(message(1, 'Для меня')))
+    assert '1 / 2' in api.messages[-1][1]
+    buttons = api.messages[-1][2]['reply_markup']['inline_keyboard']
+    full_text_callback = next(
+        b['callback_data']
+        for row in buttons
+        for b in row
+        if b['text'] == 'Полный текст'
+    )
+    api.messages.clear()
+    asyncio.run(bot.handle_update(callback(1, full_text_callback)))
+    assert ''.join(item[1] for item in api.messages) == source
+    api.messages.clear()
+    asyncio.run(worker(api, registry).tick(now + timedelta(minutes=1)))
+    assert len(api.messages) == 2
+    assert all(
+        'Полный текст' in str(item[2].get('reply_markup')) for item in api.messages
+    )
+    updated_preferences = {**profile.preferences, 'formats': ['office']}
+    store.update_profile(1, profile.profile_id, preferences=updated_preferences)
+    assert {m.vacancy_id for m in registry.list_personal_matches(1)} == {
+        'filtered_2',
+        'filtered_3',
+    }

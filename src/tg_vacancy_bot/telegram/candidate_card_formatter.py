@@ -226,6 +226,18 @@ def format_card(
     )
     if location:
         lines.append("📍 " + _plain(" · ".join(location), budget=300))
+    unknown = []
+    if not _known(analysis.work_format):
+        unknown.append('формат')
+    if not any(
+        _known(value)
+        for value in (analysis.city, analysis.country, analysis.hiring_geography)
+    ):
+        unknown.append('география')
+    if not _known(analysis.vacancy_language):
+        unknown.append('язык вакансии')
+    if unknown:
+        lines.append('Не указано: ' + ', '.join(unknown))
     grades = list(
         dict.fromkeys(
             value
@@ -247,6 +259,8 @@ def format_card(
     summary = _known(analysis.summary)
     if summary:
         lines.append(_plain(summary, budget=500, chars=240))
+    else:
+        lines.append('Краткое описание отсутствует; проверьте полный текст источника.')
     profiles = _profile_names(card.matched_profiles)
     if profiles:
         lines.append("🎯 Профили: " + _plain(profiles, budget=650))

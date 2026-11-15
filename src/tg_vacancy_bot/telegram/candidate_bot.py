@@ -61,6 +61,9 @@ PROFILE_STEPS = (
     'direction_id',
     'role_id',
     'seniority',
+    'formats',
+    'geography',
+    'vacancy_languages',
     'required_skills',
     'excluded_skills',
     'delivery_mode',
@@ -73,6 +76,9 @@ STEP_LABELS = dict(
             'Направление',
             'Роль',
             'Грейд',
+            'Формат работы',
+            'Регион',
+            'Язык вакансии',
             'Ключевые навыки',
             'Исключить слова',
             'Уведомления',
@@ -205,12 +211,11 @@ SPECIALIZATION_LABELS = {
     'onec_administration': 'Администрирование 1С',
 }
 GEOGRAPHY_CHOICES = [
-    ('worldwide', 'Весь мир'),
-    ('Россия', 'Россия'),
-    ('Казахстан', 'Казахстан'),
-    ('Беларусь', 'Беларусь'),
-    ('ЕС', 'ЕС'),
-    ('__custom__', 'Другая страна'),
+    ('russia', 'Россия'),
+    ('europe', 'Европа'),
+    ('usa', 'США'),
+    ('cis', 'СНГ кроме России'),
+    ('asia', 'Азия'),
 ]
 TECHNOLOGY_LABELS = {
     **LANGUAGE_LABELS,
@@ -282,11 +287,16 @@ def _technology_label(value: str) -> str:
     return value.replace('_', ' ').strip().title()
 
 
-def personal_keyboard(callback_key: str) -> dict:
+def personal_keyboard(callback_key: str, *, full_text: bool = True) -> dict:
     return {
         'inline_keyboard': [
             [
                 {'text': 'Сохранить', 'callback_data': f'v:s:{callback_key}'},
+                *(
+                    [{'text': 'Полный текст', 'callback_data': f'v:t:{callback_key}'}]
+                    if full_text
+                    else []
+                ),
             ]
         ]
     }
@@ -584,7 +594,7 @@ class CandidateBot:
             'saved': 'Сохранённые вакансии',
         }[bucket]
         content = f'<i>{feed_title} · {index + 1} / {total}</i>\n\n{content}'
-        keyboard = personal_keyboard(callback_key)
+        keyboard = personal_keyboard(callback_key, full_text=bucket != 'saved')
         if total > 1:
             controls = []
             if index > 0:
@@ -819,6 +829,39 @@ class CandidateBot:
         if not isinstance(data, str):
             return
         parts = data.split(':')
+        if len(parts) == 3 and parts[:2] == ['v', 't']:
+            matches = (
+                await asyncio.to_thread(self.registry.list_personal_matches, user_id)
+                if self.registry is not None
+                else []
+            )
+            match = next(
+                (item for item in matches if item.callback_key == parts[2]), None
+            )
+            vacancy = (
+                await asyncio.to_thread(self.registry.get, match.vacancy_id)
+                if match
+                else None
+            )
+            if vacancy is None:
+                await self.api.answer_callback_query(
+                    callback_id, 'Вакансия недоступна.'
+                )
+                return
+            await self.api.answer_callback_query(callback_id, 'Открываю полный текст.')
+            text = vacancy.raw_text or 'Описание в источнике отсутствует.'
+            chunk = ''
+            units = 0
+            for char in text:
+                size = 2 if ord(char) > 0xFFFF else 1
+                if units + size > 4096:
+                    await self.api.send_message(user_id, chunk)
+                    chunk, units = '', 0
+                chunk += char
+                units += size
+            if chunk:
+                await self.api.send_message(user_id, chunk)
+            return
         if parts[0] == 'b' and len(parts) in {3, 5}:
             source = callback.get('message') or {}
             chat = source.get('chat') or {}
@@ -976,7 +1019,7 @@ class CandidateBot:
                 'vacancy_languages': [
                     ('ru', 'Русский'),
                     ('en', 'Английский'),
-                    ('__all__', 'Любой'),
+                    ('other', 'Другой'),
                 ],
             }.get(step, [])
         return []
@@ -1031,6 +1074,25 @@ class CandidateBot:
                 'Исключить слова: '
                 + (', '.join(prefs.get('excluded_skills', [])) or 'нет')
             )
+            for key, label, choices in (
+                ('formats', 'Формат', FORMAT_LABELS),
+                ('geography', 'Регион', dict(GEOGRAPHY_CHOICES)),
+                (
+                    'vacancy_languages',
+                    'Язык вакансии',
+                    {'ru': 'Русский', 'en': 'Английский', 'other': 'Другой'},
+                ),
+            ):
+                selected = (
+                    prefs.get(key, [])
+                    if prefs.get('candidate_filter_version') == 1
+                    else []
+                )
+                lines.append(
+                    label
+                    + ': '
+                    + (', '.join(choices.get(v, v) for v in selected) or 'любой')
+                )
             return '\n'.join(lines)[:3500]
         selected_stacks = list(prefs.get('stacks', []))
         selected_stacks.extend(
@@ -1249,6 +1311,14 @@ class CandidateBot:
                 'preferences': dict(values.get('preferences', {})),
             }
             values['preferences']['profile_contract'] = PROFILE_CONTRACT
+            if values['preferences'].get('candidate_filter_version') != 1:
+                values['preferences']['legacy_candidate_filters'] = {
+                    key: values['preferences'].get(key, [])
+                    for key in ('formats', 'geography', 'vacancy_languages')
+                }
+                for key in ('formats', 'geography', 'vacancy_languages'):
+                    values['preferences'][key] = []
+            values['preferences']['candidate_filter_version'] = 1
             values['preferences'].pop('needs_role_selection', None)
             if profile is not None:
                 preferences = values['preferences']
@@ -1388,14 +1458,14 @@ class CandidateBot:
                     'required_skills',
                     'formats',
                     'geography',
+                    'vacancy_languages',
                     'additional_languages',
                     'legacy_stacks',
                 }:
                     rows.append([button('Готово', 'next')])
-                if step in {'seniority', 'formats'}:
+                if step in {'seniority', 'formats', 'geography', 'vacancy_languages'}:
                     rows.append([button('Все', 'all')])
                 if step in {
-                    'vacancy_languages',
                     'primary_language',
                     'required_skills',
                     'excluded_skills',
@@ -1498,7 +1568,7 @@ class CandidateBot:
             if draft.get('profile_id') is None:
                 values['name'] = ''
             draft['page'] = 0
-        elif step in {'stacks', 'seniority', 'formats'}:
+        elif step in {'stacks', 'seniority', 'formats', 'vacancy_languages'}:
             key = step
             selected = list(values['preferences'].get(key, []))
             if value == '__all__':
@@ -1697,7 +1767,7 @@ class CandidateBot:
                 if step in {'direction_id', 'role_id'}:
                     self._set_draft_value(draft, value)
                     self._advance(draft)
-                elif step in {'primary_language', 'vacancy_languages', 'delivery_mode'}:
+                elif step in {'primary_language', 'delivery_mode'}:
                     self._set_draft_value(draft, value)
                     self._advance(draft)
                 elif step == 'geography' and value == '__custom__':
@@ -1729,6 +1799,7 @@ class CandidateBot:
                     'formats',
                     'additional_languages',
                     'legacy_stacks',
+                    'vacancy_languages',
                 }:
                     self._set_draft_value(draft, value)
                 else:
@@ -1757,8 +1828,16 @@ class CandidateBot:
                 draft['input_prompt'] = (
                     'Введите свои значения через запятую. Примеры не добавляются автоматически.'
                 )
-            elif action == 'all' and step in {'seniority', 'formats'}:
-                self._set_draft_value(draft, '__all__')
+            elif action == 'all' and step in {
+                'seniority',
+                'formats',
+                'geography',
+                'vacancy_languages',
+            }:
+                self._set_draft_value(
+                    draft,
+                    [] if step in {'geography', 'vacancy_languages'} else '__all__',
+                )
                 self._advance(draft)
             elif action == 'skip' and step in {
                 'primary_language',
@@ -1783,6 +1862,7 @@ class CandidateBot:
                 'required_skills',
                 'formats',
                 'geography',
+                'vacancy_languages',
                 'additional_languages',
                 'legacy_stacks',
             }:

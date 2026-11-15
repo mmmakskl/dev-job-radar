@@ -30,7 +30,7 @@ from tg_vacancy_bot.telegram.candidate_store import (
     callback_key_for,
 )
 
-MATCHER_VERSION = 'profile-match.v6'
+MATCHER_VERSION = 'profile-match.v7'
 REGISTRY_VERSION = 2
 
 

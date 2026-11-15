@@ -416,6 +416,8 @@ class CandidateStore:
                 'primary_language',
                 'profile_contract',
                 'needs_role_selection',
+                'candidate_filter_version',
+                'legacy_candidate_filters',
             }
         )
         if unknown:
@@ -429,6 +431,12 @@ class CandidateStore:
             values[field] = list(dict.fromkeys(x.strip() for x in value))
         if values.get('profile_contract') not in {None, PROFILE_CONTRACT}:
             raise ValueError('Unsupported profile contract')
+        if values.get('candidate_filter_version') not in {None, 1}:
+            raise ValueError('Unsupported candidate filter version')
+        if 'legacy_candidate_filters' in values and not isinstance(
+            values['legacy_candidate_filters'], dict
+        ):
+            raise ValueError('Invalid legacy candidate filters')
         primary_language = values.get('primary_language')
         allowed_languages = {
             'go',
