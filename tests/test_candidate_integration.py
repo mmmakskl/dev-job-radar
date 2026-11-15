@@ -570,6 +570,26 @@ def test_two_delivery_workers_racing_send_once(tmp_path):
     assert len(api.messages) == 1
 
 
+@pytest.mark.parametrize('history', [False, True])
+def test_delivery_keeps_source_links_in_text_without_buttons(tmp_path, history):
+    _, registry, _, decision = setup(tmp_path, 'hourly')
+    ingest(registry, decision, 'jobs_1')
+    ingest(registry, decision, 'jobs_2')
+    api = FakeBotApi()
+    runner = worker(api, registry)
+
+    if history:
+        asyncio.run(runner.deliver_history(NOW))
+    else:
+        asyncio.run(runner.tick(NOW))
+
+    assert len(api.messages) == 1
+    _, text, options = api.messages[0]
+    assert 'https://t.me/jobs/1' in text
+    assert 'https://t.me/jobs/2' in text
+    assert not options.get('reply_markup')
+
+
 def test_profile_mode_edit_during_send_revalidates_remaining_pages(tmp_path):
     store, registry, profile, decision = setup(tmp_path)
     ingest(registry, decision, 'jobs_1')
@@ -766,9 +786,8 @@ def test_filtered_feed_delivery_and_full_source_round_trip(tmp_path):
     api.messages.clear()
     asyncio.run(worker(api, registry).tick(now + timedelta(minutes=1)))
     assert len(api.messages) == 2
-    assert all(
-        'Полный текст' in str(item[2].get('reply_markup')) for item in api.messages
-    )
+    assert all(not item[2].get('reply_markup') for item in api.messages)
+    assert all('https://t.me/jobs/' in item[1] for item in api.messages)
     updated_preferences = {**profile.preferences, 'formats': ['office']}
     store.update_profile(1, profile.profile_id, preferences=updated_preferences)
     assert {m.vacancy_id for m in registry.list_personal_matches(1)} == {
