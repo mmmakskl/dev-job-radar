@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import LiveMiniapp from './live';
+import OrbitMark from './orbit-mark';
 import { browserLogin, browserLogout, browserSession } from '../../lib/candidate-api';
 import './miniapp.css';
 
@@ -77,7 +78,7 @@ export default function MiniappPage() {
   };
 
   if (access.mode === 'checking') {
-    return <main className="miniapp ma-live-loading">Проверяем вход…</main>;
+    return <main className="miniapp ma-live-loading ma-orbit-splash"><div className="ma-splash-mark"><OrbitMark size={92} animated/></div><span>RADAR</span><p>Загружаем вакансии</p></main>;
   }
   if (access.mode === 'telegram') {
     return <LiveMiniapp initData={access.initData}/>;
@@ -87,11 +88,11 @@ export default function MiniappPage() {
   }
   return <main className="miniapp ma-browser-login">
     <div className="ma-login-shell">
-      <div className="ma-login-brand"><span className="ma-brand-mark" aria-hidden="true"><span/><span/><span/><span/></span><strong>radar<span>.</span></strong></div>
+      <div className="ma-login-brand"><OrbitMark size={48}/><strong>radar<span>.</span></strong></div>
       <section className="ma-login-card" aria-labelledby="ma-login-title">
-        <span className="ma-login-overline">ВХОД НА САЙТ</span>
-        <h1 id="ma-login-title">Твои вакансии — на большом экране</h1>
-        <p>Войди через своего Telegram-бота. Профили, лента и сохранённые вакансии будут теми же, что в Mini App.</p>
+        <span className="ma-login-overline">ВХОД</span>
+        <h1 id="ma-login-title">Подходящие вакансии.<br/>В одном месте.</h1>
+        <p>Войдите через Telegram. Профили, вакансии и сохранённое синхронизируются с ботом.</p>
         <ol className="ma-login-steps">
           <li><span>1</span><div>Открой чат с ботом и отправь <strong>/login</strong></div></li>
           <li><span>2</span><div>Скопируй одноразовый код из его ответа</div></li>

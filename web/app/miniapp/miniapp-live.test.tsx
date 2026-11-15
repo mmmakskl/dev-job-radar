@@ -38,7 +38,7 @@ it('shows one-time-code sign in outside Telegram without sample vacancies', asyn
 
   render(<MiniappPage/>);
 
-  expect(await screen.findByRole('heading', { name: /Твои вакансии — на большом экране/ })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: /Подходящие вакансии.*В одном месте/ })).toBeInTheDocument();
   expect(screen.getByLabelText('Код из Telegram')).toBeInTheDocument();
   expect(screen.queryByText('Go Backend Developer')).not.toBeInTheDocument();
   expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -169,7 +169,31 @@ it('creates a profile in the shared bot store before showing it in the Mini App'
   fireEvent.change(screen.getByRole('combobox', { name: 'Вид разработки' }), { target: { value: 'frontend_developer' } });
   fireEvent.click(screen.getByRole('button', { name: /Сохранить профиль/ }));
   await waitFor(() => expect(created).toBe(true));
+  await screen.findByText('Live vacancy');
+  fireEvent.click(within(screen.getByRole('navigation', { name: 'Навигация' })).getByRole('button', { name: 'Мои профили' }));
   expect(await screen.findByText('Frontend Role')).toBeInTheDocument();
+});
+
+it('starts first-time users in profile setup and opens the feed after saving', async () => {
+  let created = false;
+  vi.stubGlobal('fetch', vi.fn((input: string, init?: RequestInit) => {
+    if (input.endsWith('/me')) return response({
+      user: { id: 1, first_name: 'Tester' }, profiles: created ? [liveProfile] : [],
+      active_profile_id: created ? 'p1' : null, premium_enabled: true,
+    });
+    if (input.endsWith('/profiles') && init?.method === 'POST') { created = true; return response(liveProfile, 201); }
+    if (input.endsWith('/feed/settings')) return response({ older_days: 7, max_older_days: 30 });
+    if (input.includes('/feed')) return response({ items: created ? [liveVacancy] : [], total: created ? 1 : 0 });
+    if (input.endsWith('/saved') || input.endsWith('/premium/templates') || input.endsWith('/premium/runs')) return response({ items: [] });
+    return response({}, 404);
+  }));
+  render(<MiniappPage/>);
+  expect(await screen.findByRole('dialog', { name: 'Что вам подходит?' })).toBeInTheDocument();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Название профиля' }), { target: { value: 'Go Backend' } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Вид разработки' }), { target: { value: 'backend_developer' } });
+  fireEvent.click(screen.getByRole('button', { name: /Открыть вакансии/ }));
+  expect(await screen.findByText('Live vacancy')).toBeInTheDocument();
+  expect(screen.queryByRole('dialog', { name: 'Что вам подходит?' })).not.toBeInTheDocument();
 });
 
 it('sends selected backend stacks and multiple grades when saving a profile', async () => {
